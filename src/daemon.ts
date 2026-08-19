@@ -10,6 +10,7 @@ import { loadConfig, type BrokerConfig } from "./config.js";
 import { createHttpHandler, makeCallInstance } from "./http.js";
 import { LocalHerdr, type HerdrEndpoint } from "./local-attach.js";
 import { Registry } from "./registry.js";
+import { ParentLink } from "./south.js";
 import { ChildrenStore, clearLock, ensureAdminToken, readLock, writeLock } from "./state.js";
 import { TunnelHub } from "./tunnel.js";
 import { attachUpgradeHandling } from "./ws-server.js";
@@ -68,7 +69,31 @@ export async function startDaemon(opts: DaemonOptions): Promise<DaemonHandle | u
   await local.start();
 
   const hub = new TunnelHub();
-  const handler = createHttpHandler({ registry, local, hub, children, config, adminToken });
+  let link: ParentLink | undefined;
+  const startLink = (cfg: BrokerConfig) => {
+    link?.stop();
+    link = undefined;
+    if (cfg.parent) {
+      link = new ParentLink({
+        address: cfg.parent.address,
+        secret: cfg.parent.secret,
+        name: cfg.parent.name,
+        local,
+        registry,
+        remoteDeny: cfg.policy.remote_deny,
+      });
+      link.start();
+    }
+  };
+  const handler = createHttpHandler({
+    registry,
+    local,
+    hub,
+    children,
+    config,
+    adminToken,
+    onReload: () => startLink({ ...loadConfig(opts.configDir), ...opts.configOverrides }),
+  });
 
   const lastColon = config.listen.lastIndexOf(":");
   const host = config.listen.slice(0, lastColon);
@@ -101,7 +126,8 @@ export async function startDaemon(opts: DaemonOptions): Promise<DaemonHandle | u
   const port = (server.address() as AddressInfo).port;
   writeLock(opts.stateDir, { pid: process.pid, listen: `${host}:${port}` });
 
-  // Task 9 wires ParentLink here; Task 11 wires Projection here.
+  startLink(config);
+  // Task 11 wires Projection here.
 
   const scheme = config.tls ? "https" : "http";
   return {
@@ -115,6 +141,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<DaemonHandle | u
     config,
     local,
     async close() {
+      link?.stop();
       local.stop();
       for (const name of hub.names()) hub.disconnect(name);
       await new Promise<void>((resolve) => server.close(() => resolve()));
