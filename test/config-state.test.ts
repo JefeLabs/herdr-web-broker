@@ -77,3 +77,17 @@ test("lockfile round-trips and clears", () => {
   clearLock(d);
   assert.equal(readLock(d), undefined);
 });
+
+test("ChildrenStore tolerates corrupt JSON and returns empty", () => {
+  const d = dir();
+  writeFileSync(join(d, "children.json"), "not json{");
+  const store = new ChildrenStore(d);
+  assert.equal(store.get("x"), undefined);
+  assert.deepEqual(store.names(), []);
+});
+
+test("readLock tolerates corrupt JSON and returns undefined", () => {
+  const d = dir();
+  writeFileSync(join(d, "daemon.lock"), "not json{");
+  assert.equal(readLock(d), undefined);
+});

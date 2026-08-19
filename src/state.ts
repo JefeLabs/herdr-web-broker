@@ -4,7 +4,11 @@ import { mintSecret } from "./auth.js";
 
 function readJson<T>(path: string, fallback: T): T {
   if (!existsSync(path)) return fallback;
-  return JSON.parse(readFileSync(path, "utf8")) as T;
+  try {
+    return JSON.parse(readFileSync(path, "utf8")) as T;
+  } catch {
+    return fallback;
+  }
 }
 
 export class ChildrenStore {
