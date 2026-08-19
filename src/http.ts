@@ -195,8 +195,12 @@ export function createHttpHandler(deps: HttpDeps) {
     // POST /parent/{i}/sessions/{s}/agents — spawn a team agent (spec §2.1)
     if (parts.length === 5 && parts[4] === "agents" && req.method === "POST") {
       const body = await readBody(req);
-      const timeout = typeof body.timeout_ms === "number" ? body.timeout_ms : 30_000;
-      const result = await callInstance(instance, session, "broker.agent.spawn", body, timeout + 5000);
+      // Clamp before it reaches setTimeout anywhere downstream — an
+      // unclamped value overflows Node's 32-bit timer delay and fires
+      // ~immediately instead of after the requested wait.
+      const t = Math.min(Math.max(typeof body.timeout_ms === "number" ? body.timeout_ms : 30_000, 1_000), 600_000);
+      body.timeout_ms = t;
+      const result = await callInstance(instance, session, "broker.agent.spawn", body, t + 30_000);
       json(res, 201, result as Record<string, unknown>);
       return;
     }
@@ -232,9 +236,10 @@ export function createHttpHandler(deps: HttpDeps) {
     // POST .../agents/{pane}/ask — structured answer via file-drop (spec §2.5)
     if (parts.length === 7 && parts[4] === "agents" && parts[6] === "ask" && req.method === "POST") {
       const body = await readBody(req);
-      const timeout = typeof body.timeout_ms === "number" ? body.timeout_ms : 120_000;
+      const t = Math.min(Math.max(typeof body.timeout_ms === "number" ? body.timeout_ms : 120_000, 1_000), 600_000);
+      body.timeout_ms = t;
       const params = { ...body, pane_id: decodeURIComponent(parts[5]) };
-      json(res, 200, await callInstance(instance, session, "broker.agent.ask", params, timeout + 5000));
+      json(res, 200, await callInstance(instance, session, "broker.agent.ask", params, t + 45_000));
       return;
     }
 

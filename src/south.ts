@@ -128,7 +128,15 @@ export class ParentLink {
       this.#send({ type: "res", id: frame.id, result });
     } catch (e) {
       const err = e instanceof BrokerError ? e : new BrokerError("upstream_error", String(e));
-      this.#send({ type: "res", id: frame.id, error: { code: err.code, message: err.message } });
+      this.#send({
+        type: "res",
+        id: frame.id,
+        error: {
+          code: err.code,
+          message: err.message,
+          ...(Object.keys(err.details).length ? { details: err.details } : {}),
+        },
+      });
     }
   }
 

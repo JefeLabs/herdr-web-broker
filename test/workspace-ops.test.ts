@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { BrokerError } from "../src/errors.js";
 import { LocalHerdr } from "../src/local-attach.js";
@@ -320,6 +320,52 @@ test("ask: a late-landing valid answer is still parsed after the poll loop exits
     })) as { answer: unknown; parse_error?: boolean };
     assert.deepEqual(out.answer, { late: true });
     assert.equal(out.parse_error, undefined);
+  } finally {
+    await t.teardown();
+  }
+});
+
+test("ask: a valid but oversized answer file is capped by the byte limit, not parsed in full (spec §6)", async () => {
+  const t = await setup();
+  try {
+    const cwd = scratchRepo();
+    t.deps.index.set("default", "w1", { cwd });
+    let file = "";
+    t.fake.handlers.set("agent.prompt", (p) => {
+      file = extractAnswerPath(cwd, (p as { text: string }).text);
+      const pad = "x".repeat(900 * 1024);
+      setTimeout(() => writeFileSync(file, JSON.stringify({ pad })), 50);
+      return { type: "prompted" };
+    });
+    const out = (await runBrokerMethod(t.deps, "default", "broker.agent.ask", {
+      pane_id: "w1:p1",
+      prompt: "count things",
+      timeout_ms: 5000,
+    })) as { answer: null; raw: string; truncated: boolean; full_bytes: number; parse_error?: boolean };
+    assert.equal(out.answer, null);
+    assert.equal(out.truncated, true);
+    assert.ok(out.full_bytes > 768 * 1024, `full_bytes was ${out.full_bytes}`);
+    assert.ok(Buffer.byteLength(out.raw, "utf8") <= 768 * 1024);
+    assert.equal(out.parse_error, undefined);
+    assert.equal(existsSync(file), false, "the oversized answer file is deleted");
+  } finally {
+    await t.teardown();
+  }
+});
+
+test("ask: an answers dir that escapes the workspace via a symlink is rejected (spec §2.5 step 5)", async () => {
+  const t = await setup();
+  try {
+    const cwd = scratchRepo();
+    const outside = tmpDir();
+    mkdirSync(join(cwd, ".herdr"), { recursive: true });
+    symlinkSync(outside, join(cwd, ".herdr", "answers"));
+    t.deps.index.set("default", "w1", { cwd });
+    t.fake.handlers.set("agent.prompt", () => ({ type: "prompted" }));
+    await assert.rejects(
+      runBrokerMethod(t.deps, "default", "broker.agent.ask", { pane_id: "w1:p1", prompt: "x", timeout_ms: 1000 }),
+      (e: BrokerError) => e.code === "unknown_workspace",
+    );
   } finally {
     await t.teardown();
   }

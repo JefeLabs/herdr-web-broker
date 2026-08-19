@@ -24,7 +24,12 @@ export type TunnelFrame =
     }
   | { type: "welcome"; name: string; proto: number }
   | { type: "req"; id: string; session: string; method: string; params?: unknown; timeout_ms?: number }
-  | { type: "res"; id: string; result?: unknown; error?: { code: string; message: string } }
+  | {
+      type: "res";
+      id: string;
+      result?: unknown;
+      error?: { code: string; message: string; details?: Record<string, unknown> };
+    }
   | { type: "event"; event: TunnelEvent };
 
 interface Pending {
@@ -87,7 +92,7 @@ export class ChildConnection {
       if (!pending) return;
       this.#pending.delete(frame.id);
       clearTimeout(pending.timer);
-      if (frame.error) pending.reject(new BrokerError(frame.error.code, frame.error.message));
+      if (frame.error) pending.reject(new BrokerError(frame.error.code, frame.error.message, frame.error.details ?? {}));
       else pending.resolve(frame.result);
     } else if (frame.type === "event") {
       const e = frame.event;

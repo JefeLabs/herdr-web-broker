@@ -234,6 +234,27 @@ test("broker.* over the tunnel executes in the child's ops and returns through r
   }
 });
 
+test("BrokerError.details survives the tunnel round-trip (spec §2.1 partial-failure envelope)", async () => {
+  const parts = await bootPair();
+  try {
+    const cwd = scratchRepo();
+    parts.fakeChild.handlers.set("workspace.create", () => ({ root_pane: { pane_id: "w9:p1" } }));
+    // no agent.start handler → the child's herdr answers a not_found error,
+    // which broker.agent.spawn wraps with the orphaned workspace_id/pane_id.
+    const res = await authed(parts.parent.base, "/parent/laptop/sessions/default/agents", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ kind: "copilot", cwd }),
+    });
+    assert.ok(res.status >= 400, `expected a failure status, got ${res.status}`);
+    const body = (await res.json()) as { workspace_id?: string; pane_id?: string };
+    assert.equal(body.workspace_id, "w9");
+    assert.equal(body.pane_id, "w9:p1");
+  } finally {
+    await teardown(parts);
+  }
+});
+
 test("broker.repo.* in remote_deny fast-fails at the parent", async () => {
   const parts = await bootPair(["broker.repo.*"]);
   try {

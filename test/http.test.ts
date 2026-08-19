@@ -219,6 +219,23 @@ test("POST .../agents spawns and answers 201; bad bodies answer 400", async () =
   await teardown(t);
 });
 
+test("POST .../agents with an absurd timeout_ms is clamped instead of overflowing setTimeout (spec route timeout clamp)", async () => {
+  const t = await setup();
+  const cwd = scratchRepo();
+  t.fake.handlers.set("workspace.create", () => ({ root_pane: { pane_id: "w2:p1" } }));
+  t.fake.handlers.set("agent.start", () => ({ type: "agent_started" }));
+  const res = await t.authed("/parent/runtime/sessions/default/agents", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ kind: "copilot", cwd, timeout_ms: 1e15 }),
+  });
+  assert.equal(res.status, 201);
+  const body = (await res.json()) as { workspace_id: string; pane_id: string };
+  assert.equal(body.workspace_id, "w2");
+  assert.equal(body.pane_id, "w2:p1");
+  await teardown(t);
+});
+
 test("GET .../workspaces shows the team roster and discovered repos after a spawn", async () => {
   const t = await setup();
   const cwd = scratchRepo();

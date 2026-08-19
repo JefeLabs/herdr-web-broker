@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, rmSync, statSync } from "node:fs";
-import { isAbsolute, join } from "node:path";
+import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, statSync } from "node:fs";
+import { isAbsolute, join, sep } from "node:path";
 import { BrokerError } from "./errors.js";
 import { DIFF_CAP_BYTES, discoverRepos, repoDiff, repoTree, resolveRepo } from "./git-exec.js";
 import type { LocalHerdr } from "./local-attach.js";
@@ -210,6 +210,33 @@ async function spawn(deps: OpsDeps, session: string, p: Record<string, unknown>)
   return { workspace_id: workspaceId, pane_id: paneId, agent: name, status: foldStatus(entry?.agent_status) };
 }
 
+type AnswerRead =
+  | { kind: "ok"; answer: unknown }
+  | { kind: "oversize"; raw: string; full_bytes: number }
+  | { kind: "parse_error"; raw: string };
+
+/** Reads the answer file, applying the 768KB cap (spec §6) before parsing —
+ * a valid answer over the cap is a size condition, not a syntax one, so it
+ * must never fall through to parse_error. */
+function readAnswerFile(file: string): AnswerRead {
+  const size = statSync(file).size;
+  const buf = readFileSync(file);
+  if (size > DIFF_CAP_BYTES) {
+    return { kind: "oversize", raw: buf.subarray(0, DIFF_CAP_BYTES).toString("utf8"), full_bytes: size };
+  }
+  try {
+    return { kind: "ok", answer: JSON.parse(buf.toString("utf8")) };
+  } catch {
+    return { kind: "parse_error", raw: buf.toString("utf8") };
+  }
+}
+
+function toAskResult(res: AnswerRead): unknown {
+  if (res.kind === "ok") return { answer: res.answer };
+  if (res.kind === "oversize") return { answer: null, raw: res.raw, truncated: true, full_bytes: res.full_bytes };
+  return { answer: null, raw: res.raw, parse_error: true };
+}
+
 /** File-drop handshake (spec §2.5): the answer travels through the
  * filesystem the agent and this process share — never through the terminal
  * renderer. The registry's pane status provides an early exit when the
@@ -232,6 +259,14 @@ async function ask(deps: OpsDeps, session: string, p: Record<string, unknown>): 
   const id = randomBytes(8).toString("hex");
   const dir = join(cwd, ".herdr", "answers");
   mkdirSync(dir, { recursive: true });
+  // A repo that commits .herdr/answers as a symlink pointing outside the
+  // workspace must not let us readFileSync/rmSync through it (spec §2.5
+  // step 5) — resolve both sides through symlinks before comparing.
+  const realDir = realpathSync(dir);
+  const realCwd = realpathSync(cwd);
+  if (realDir !== realCwd && !realDir.startsWith(realCwd + sep)) {
+    throw new BrokerError("unknown_workspace", "workspace answers dir escapes the workspace");
+  }
   const file = join(dir, `${id}.json`);
   const text =
     `${prompt}\n\n` +
@@ -247,15 +282,13 @@ async function ask(deps: OpsDeps, session: string, p: Record<string, unknown>): 
   let idleSince: number | undefined;
   while (Date.now() < deadline) {
     if (existsSync(file)) {
-      const rawText = readFileSync(file, "utf8");
-      try {
-        const answer = JSON.parse(rawText) as unknown;
+      const res = readAnswerFile(file);
+      if (res.kind !== "parse_error") {
         rmSync(file, { force: true });
-        return { answer };
-      } catch {
-        // possibly mid-write — keep polling; the deadline or the status
-        // grace decides when to give up and report parse_error
+        return toAskResult(res);
       }
+      // possibly mid-write — keep polling; the deadline or the status
+      // grace decides when to give up and report parse_error
     }
     const status = deps.registry.get("runtime")?.sessions[session]?.agents.find((a) => a.id === pane)?.status;
     if (status === "working" || status === "blocked") {
@@ -273,16 +306,9 @@ async function ask(deps: OpsDeps, session: string, p: Record<string, unknown>): 
     // One last parse attempt: the file may have finished landing in the gap
     // between the loop's last poll and this check — a late-but-valid answer
     // must not be discarded as a parse_error.
-    const buf = readFileSync(file);
-    let answer: unknown;
-    try {
-      answer = JSON.parse(buf.toString("utf8"));
-    } catch {
-      rmSync(file, { force: true });
-      return { answer: null, raw: buf.subarray(0, DIFF_CAP_BYTES).toString("utf8"), parse_error: true };
-    }
+    const res = readAnswerFile(file);
     rmSync(file, { force: true });
-    return { answer };
+    return toAskResult(res);
   }
   throw new BrokerError("upstream_timeout", `agent produced no answer within ${budget}ms`, { pane_id: pane });
 }
