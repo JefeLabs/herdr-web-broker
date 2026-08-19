@@ -141,3 +141,32 @@ export async function repoTree(repoDir: string): Promise<{ tree: TreeNode; trunc
   const truncated = all.length > TREE_CAP_ENTRIES;
   return { tree: foldTree(basename(repoDir), truncated ? all.slice(0, TREE_CAP_ENTRIES) : all), truncated };
 }
+
+export interface DiffResult {
+  branch: string;
+  status: { path: string; state: string }[];
+  diff: string;
+  truncated: boolean;
+  full_bytes?: number;
+}
+
+/** status from porcelain -z (rename/copy entries carry the ORIGINAL path as
+ * a second NUL field — skip it); diff is staged+unstaged vs base|HEAD with
+ * --no-ext-diff so a hostile repo's diff driver can't execute (spec §6). */
+export async function repoDiff(repoDir: string, base?: string): Promise<DiffResult> {
+  if (base !== undefined) validateRef(base);
+  const branch = await git(repoDir, ["rev-parse", "--abbrev-ref", "HEAD"]).then((s) => s.trim()).catch(() => "unborn");
+  const porcelain = await git(repoDir, ["status", "--porcelain=v1", "-z"]);
+  const tokens = porcelain.split("\0").filter(Boolean);
+  const status: { path: string; state: string }[] = [];
+  for (let i = 0; i < tokens.length; i++) {
+    const xy = tokens[i].slice(0, 2);
+    status.push({ path: tokens[i].slice(3), state: xy === "??" ? "?" : (xy.trim()[0] ?? "M") });
+    if (xy[0] === "R" || xy[0] === "C") i++;
+  }
+  let diff = branch === "unborn" ? "" : await git(repoDir, ["diff", "--no-ext-diff", base ?? "HEAD"]);
+  const full = Buffer.byteLength(diff);
+  const truncated = full > DIFF_CAP_BYTES;
+  if (truncated) diff = Buffer.from(diff).subarray(0, DIFF_CAP_BYTES).toString("utf8");
+  return { branch, status, diff, truncated, ...(truncated ? { full_bytes: full } : {}) };
+}

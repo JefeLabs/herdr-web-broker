@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdirSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { BrokerError } from "../src/errors.js";
-import { discoverRepos, foldTree, git, repoTree, resolveRepo, validateRef } from "../src/git-exec.js";
+import { discoverRepos, foldTree, git, repoDiff, repoTree, resolveRepo, validateRef } from "../src/git-exec.js";
 import { scratchRepo, sh, tmpDir } from "./util.js";
 
 test("git() returns stdout and maps failures to git_error", async () => {
@@ -100,4 +100,46 @@ test("repoTree: tracked + untracked-not-ignored, never .git or ignored files", a
   const names = (tree.children ?? []).map((c) => c.name).sort();
   assert.deepEqual(names, [".gitignore", "a.txt", "src"]);
   assert.equal(truncated, false);
+});
+
+test("repoDiff: modified + untracked in status; unified diff covers staged and unstaged", async () => {
+  const repo = scratchRepo();
+  writeFileSync(join(repo, "a.txt"), "two\n"); // unstaged modify
+  writeFileSync(join(repo, "new.txt"), "n\n"); // untracked
+  const d = await repoDiff(repo);
+  assert.equal(d.branch, "main");
+  assert.deepEqual(
+    d.status.sort((x, y) => x.path.localeCompare(y.path)),
+    [{ path: "a.txt", state: "M" }, { path: "new.txt", state: "?" }],
+  );
+  assert.match(d.diff, /-one\n\+two/);
+  assert.equal(d.diff.includes("new.txt"), false); // untracked listed, not inlined
+  assert.equal(d.truncated, false);
+});
+
+test("repoDiff: renames don't corrupt the status parse (porcelain -z two-field entries)", async () => {
+  const repo = scratchRepo();
+  sh(repo, ["mv", "a.txt", "b.txt"]);
+  const d = await repoDiff(repo);
+  assert.equal(d.status.length, 1);
+  assert.equal(d.status[0].state, "R");
+  assert.equal(d.status[0].path, "b.txt");
+});
+
+test("repoDiff: ?base= diffs against that ref; bad refs are bad_request", async () => {
+  const repo = scratchRepo();
+  writeFileSync(join(repo, "a.txt"), "two\n");
+  sh(repo, ["commit", "-aqm", "second"]);
+  const d = await repoDiff(repo, "HEAD~1");
+  assert.match(d.diff, /-one\n\+two/);
+  await assert.rejects(repoDiff(repo, "-rf"), (e: BrokerError) => e.code === "bad_request");
+});
+
+test("repoDiff: oversized diffs truncate under the cap with full_bytes reported", async () => {
+  const repo = scratchRepo();
+  writeFileSync(join(repo, "a.txt"), "x".repeat(1_100_000) + "\n");
+  const d = await repoDiff(repo);
+  assert.equal(d.truncated, true);
+  assert.ok(Buffer.byteLength(d.diff) <= 768 * 1024);
+  assert.ok((d.full_bytes ?? 0) > 1_000_000);
 });
