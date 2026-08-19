@@ -42,6 +42,7 @@ async function bootPair(parentDeny?: string[]): Promise<Parts> {
       },
       localEndpoints: [{ session: "default", socketPath: fakeParent.socketPath }],
       herdrVersion: "0.8.0-test",
+      projectionDir: tmpDir(),
     }))!;
     partial.parent = parent;
 
@@ -62,6 +63,7 @@ async function bootPair(parentDeny?: string[]): Promise<Parts> {
       },
       localEndpoints: [{ session: "default", socketPath: fakeChild.socketPath }],
       herdrVersion: "0.8.0-test",
+      projectionDir: tmpDir(),
     }))!;
     partial.child = child;
 
@@ -191,6 +193,7 @@ test("child reconnects after a parent restart on the same port", async () => {
       configOverrides: { listen: `127.0.0.1:${port}`, client_tokens: [{ name: "t", token: "tok" }] },
       localEndpoints: [{ session: "default", socketPath: parts.fakeParent.socketPath }],
       herdrVersion: "0.8.0-test",
+      projectionDir: tmpDir(),
     }))!;
     // The child's old secret is unknown to parent2 → its retries are refused, staying offline.
     await new Promise((r) => setTimeout(r, 100));

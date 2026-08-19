@@ -16,6 +16,7 @@ async function boot() {
     configOverrides: { listen: "127.0.0.1:0", client_tokens: [{ name: "t", token: "tok" }] },
     localEndpoints: [{ session: "default", socketPath: fake.socketPath }],
     herdrVersion: "0.8.0-test",
+    projectionDir: tmpDir(),
   });
   return { fake, stateDir, handle: handle! };
 }
@@ -40,6 +41,7 @@ test("second daemon against the same state dir yields to the healthy first", asy
     configOverrides: { listen: "127.0.0.1:0" },
     localEndpoints: [],
     herdrVersion: "0.8.0-test",
+    projectionDir: tmpDir(),
   });
   assert.equal(second, undefined);
   await handle.close();
@@ -57,6 +59,7 @@ test("a stale lock is replaced", async () => {
     configOverrides: { listen: "127.0.0.1:0" },
     localEndpoints: [],
     herdrVersion: "0.8.0-test",
+    projectionDir: tmpDir(),
   });
   assert.ok(again);
   await again.close();
@@ -76,6 +79,7 @@ test("a failed boot (port already in use) stops the local attach it started", as
         configOverrides: { listen: `${handleA.host}:${handleA.port}` },
         localEndpoints: [{ session: "default", socketPath: fakeB.socketPath }],
         herdrVersion: "0.8.0-test",
+        projectionDir: tmpDir(),
       }),
     (err: NodeJS.ErrnoException) => {
       assert.equal(err.code, "EADDRINUSE");
@@ -106,6 +110,7 @@ test("tls config serves https when openssl is available", async (t) => {
     configOverrides: { listen: "127.0.0.1:0", tls: { cert, key } },
     localEndpoints: [],
     herdrVersion: "0.8.0-test",
+    projectionDir: tmpDir(),
   });
   assert.ok(handle!.base.startsWith("https://"));
   await handle!.close();

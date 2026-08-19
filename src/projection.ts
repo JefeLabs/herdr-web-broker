@@ -51,9 +51,26 @@ export class Projection {
     const server = createServer((sock) => {
       const dec = new NdjsonDecoder();
       sock.on("data", (chunk) => {
-        for (const raw of dec.push(chunk)) {
+        let frames: unknown[];
+        try {
+          frames = dec.push(chunk);
+        } catch {
+          // An inbound local client must never crash the daemon: a malformed
+          // line closes just this connection, not the projected socket.
+          sock.destroy();
+          return;
+        }
+        for (const raw of frames) {
           const frame = raw as { id?: string; method?: string; params?: unknown };
-          if (typeof frame.method !== "string") continue;
+          if (typeof frame.method !== "string") {
+            sock.write(
+              encodeFrame({
+                id: frame.id,
+                error: { code: "bad_request", message: "frame needs a string 'method'" },
+              }),
+            );
+            continue;
+          }
           const child = this.opts.hub.get(instance);
           const call = child
             ? child.request(session, frame.method, frame.params ?? {})

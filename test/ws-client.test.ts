@@ -16,6 +16,7 @@ async function boot() {
     configOverrides: { listen: "127.0.0.1:0", client_tokens: [{ name: "t", token: "tok" }] },
     localEndpoints: [{ session: "default", socketPath: fake.socketPath }],
     herdrVersion: "0.8.0-test",
+    projectionDir: tmpDir(),
   }))!;
   return { fake, handle };
 }
