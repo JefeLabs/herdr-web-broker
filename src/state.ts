@@ -50,6 +50,45 @@ export class ChildrenStore {
   }
 }
 
+export interface WorkspaceMeta {
+  cwd: string;
+  label?: string;
+}
+
+/** workspace_id → cwd memory per session, following the ChildrenStore
+ * pattern: file-backed so daemon restarts don't forget which working set a
+ * spawned team belongs to (spec §4 fallback source). */
+export class WorkspaceIndex {
+  #path: string;
+
+  constructor(stateDir: string) {
+    mkdirSync(stateDir, { recursive: true });
+    this.#path = join(stateDir, "workspaces.json");
+  }
+
+  #read(): Record<string, Record<string, WorkspaceMeta>> {
+    return readJson(this.#path, {});
+  }
+
+  #write(data: Record<string, Record<string, WorkspaceMeta>>): void {
+    writeFileSync(this.#path, JSON.stringify(data, null, 2) + "\n");
+  }
+
+  get(session: string, workspaceId: string): WorkspaceMeta | undefined {
+    return this.#read()[session]?.[workspaceId];
+  }
+
+  set(session: string, workspaceId: string, meta: WorkspaceMeta): void {
+    const data = this.#read();
+    (data[session] ??= {})[workspaceId] = meta;
+    this.#write(data);
+  }
+
+  all(session: string): Record<string, WorkspaceMeta> {
+    return this.#read()[session] ?? {};
+  }
+}
+
 export function ensureAdminToken(stateDir: string): string {
   mkdirSync(stateDir, { recursive: true });
   const path = join(stateDir, "admin-token");
