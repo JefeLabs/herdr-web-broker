@@ -11,6 +11,12 @@ export interface HerdrEndpoint {
   socketPath: string;
 }
 
+/** Same working|blocked|idle coercion herdr's agent.list and its streamed
+ * status events both need — anything not recognized settles to idle. */
+function coerceStatus(status: unknown): AgentStatus {
+  return status === "working" || status === "blocked" ? status : "idle";
+}
+
 /** ASSUMPTION (validated by live smoke, spec Global note): agent.list returns
  * { agents: [{ id, title, status }] } with status ∈ working|blocked|idle. */
 export function mapAgentList(result: unknown): AgentInfo[] {
@@ -19,7 +25,7 @@ export function mapAgentList(result: unknown): AgentInfo[] {
   return r.agents.map((a) => ({
     id: String(a.id ?? ""),
     title: String(a.title ?? ""),
-    status: (a.status === "working" || a.status === "blocked" ? a.status : "idle") as AgentStatus,
+    status: coerceStatus(a.status),
   }));
 }
 
@@ -28,8 +34,9 @@ export function mapAgentList(result: unknown): AgentInfo[] {
  * wraps emitEvent() payloads in { event }, matching this shape. */
 export function mapHerdrEvent(frame: unknown): { agent: AgentInfo } | undefined {
   const f = frame as { event?: { type?: string; agent?: AgentInfo } };
-  if (f?.event?.type === "pane.agent_status_changed" && f.event.agent) {
-    return { agent: f.event.agent };
+  const agent = f?.event?.agent;
+  if (f?.event?.type === "pane.agent_status_changed" && agent) {
+    return { agent: { ...agent, status: coerceStatus(agent.status) } };
   }
   return undefined;
 }
@@ -127,6 +134,7 @@ class SessionConn {
 
 export class LocalHerdr {
   #conns = new Map<string, SessionConn>();
+  #connecting = new Set<string>();
   #timer?: NodeJS.Timeout;
   #stopped = false;
 
@@ -154,7 +162,8 @@ export class LocalHerdr {
     if (this.#stopped) return;
     const endpoints = this.opts.endpoints ?? discoverEndpoints(this.opts);
     for (const ep of endpoints) {
-      if (this.#conns.has(ep.session)) continue;
+      if (this.#conns.has(ep.session) || this.#connecting.has(ep.session)) continue;
+      this.#connecting.add(ep.session);
       const conn = new SessionConn(
         ep.session,
         ep.socketPath,
@@ -163,12 +172,21 @@ export class LocalHerdr {
           if (mapped) this.opts.registry.applyAgentStatus("runtime", ep.session, mapped.agent);
         },
         () => {
-          this.#conns.delete(ep.session);
-          if (!this.#stopped) this.opts.registry.applySessionRemoved("runtime", ep.session);
+          // Only the conn actually registered for this session can retire
+          // it — a socket that never made it past connect() (see below)
+          // must not evict/re-remove a session it was never part of.
+          if (this.#conns.get(ep.session) === conn) {
+            this.#conns.delete(ep.session);
+            if (!this.#stopped) this.opts.registry.applySessionRemoved("runtime", ep.session);
+          }
         },
       );
       try {
         await conn.connect();
+        if (this.#stopped) {
+          conn.close();
+          return;
+        }
         this.#conns.set(ep.session, conn);
         await conn
           .rpc("events.subscribe", {
@@ -179,6 +197,8 @@ export class LocalHerdr {
         this.opts.registry.applySessionAdded("runtime", { name: ep.session, agents });
       } catch {
         // socket not connectable right now; next rescan retries
+      } finally {
+        this.#connecting.delete(ep.session);
       }
     }
   }
