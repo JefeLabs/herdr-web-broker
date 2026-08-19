@@ -202,6 +202,10 @@ async function spawn(deps: OpsDeps, session: string, p: Record<string, unknown>)
     if (!stat.isDirectory()) throw new BrokerError("bad_request", `'cwd' is not a directory: ${cwd}`);
   }
 
+  // Env spec §5: resolve first — a failing hook must not leave an orphan
+  // workspace behind.
+  const injected = await deps.env.resolveForSpawn(session, kind);
+
   const created = (await deps.local.request(session, "workspace.create", { cwd, ...(label ? { label } : {}) }, 15_000)) as {
     root_pane?: { pane_id?: unknown };
   };
@@ -211,6 +215,28 @@ async function spawn(deps: OpsDeps, session: string, p: Record<string, unknown>)
   }
   const workspaceId = paneId.split(":")[0];
   deps.index.set(session, workspaceId, { cwd, ...(label ? { label } : {}) });
+
+  if (Object.keys(injected).length > 0) {
+    const drop = deps.env.writeDropFile(injected);
+    try {
+      await deps.local.request(
+        session,
+        "pane.send_input",
+        // Source-and-delete: only the PATH transits the PTY (env spec §5).
+        { pane_id: paneId, text: ` . ${drop}; rm -f ${drop}`, keys: ["Enter"] },
+        10_000,
+      );
+      await new Promise((r) => setTimeout(r, deps.envSettleMs ?? 300));
+    } catch (e) {
+      rmSync(drop, { force: true });
+      const err = e instanceof BrokerError ? e : new BrokerError("upstream_error", String(e));
+      throw new BrokerError(err.code, `env injection failed: ${err.message}`, {
+        ...err.details,
+        workspace_id: workspaceId,
+        pane_id: paneId,
+      });
+    }
+  }
 
   const name = typeof p.name === "string" ? p.name : kind;
   const timeoutMs = typeof p.timeout_ms === "number" ? p.timeout_ms : undefined;

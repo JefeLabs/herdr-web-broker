@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { EnvRegistry } from "../src/env-registry.js";
 import { BrokerError } from "../src/errors.js";
@@ -395,6 +395,80 @@ test("ask: a blocked agent pauses the grace countdown instead of triggering an e
     );
     await pending;
     assert.ok(Date.now() - started >= 900, "waited out the full budget instead of grace-exiting while blocked");
+  } finally {
+    await t.teardown();
+  }
+});
+
+function armSpawnFake(fake: FakeHerdr): void {
+  fake.handlers.set("workspace.create", () => ({ root_pane: { pane_id: "w9:p1" } }));
+  fake.handlers.set("pane.send_input", () => ({ type: "ok" }));
+  fake.handlers.set("agent.start", () => ({ type: "ok" }));
+}
+
+test("spawn injects resolved env via drop file + send_input before agent.start", async () => {
+  const t = await setup();
+  try {
+    armSpawnFake(t.fake);
+    t.deps.env.set("COPILOT_GITHUB_TOKEN", "sekret-token", { kind: "copilot" });
+    const cwd = scratchRepo();
+    await runBrokerMethod(t.deps, "default", "broker.agent.spawn", { kind: "copilot", cwd });
+    const order = t.fake.received.map((r) => r.method).filter((m) =>
+      ["workspace.create", "pane.send_input", "agent.start"].includes(m));
+    assert.deepEqual(order, ["workspace.create", "pane.send_input", "agent.start"]);
+    const sent = t.fake.received.find((r) => r.method === "pane.send_input")!.params as { pane_id: string; text: string; keys: string[] };
+    assert.equal(sent.pane_id, "w9:p1");
+    assert.deepEqual(sent.keys, ["Enter"]);
+    assert.match(sent.text, /^ \. .*envdrop.*\.sh; rm -f /);
+    assert.ok(!sent.text.includes("sekret-token"), "value must never transit the PTY");
+  } finally {
+    await t.teardown();
+  }
+});
+
+test("spawn skips injection entirely when nothing resolves", async () => {
+  const t = await setup();
+  try {
+    armSpawnFake(t.fake);
+    await runBrokerMethod(t.deps, "default", "broker.agent.spawn", { kind: "copilot", cwd: scratchRepo() });
+    assert.ok(!t.fake.received.some((r) => r.method === "pane.send_input"));
+  } finally {
+    await t.teardown();
+  }
+});
+
+test("spawn: failing hook aborts before any workspace is created", async () => {
+  const t = await setup();
+  try {
+    armSpawnFake(t.fake);
+    t.deps.env = new EnvRegistry({
+      stateDir: tmpDir(),
+      hooks: [{ name: "MUST_HAVE", kind: "copilot", command: [process.execPath, "-e", "process.exit(1)"] }],
+    });
+    await assert.rejects(
+      runBrokerMethod(t.deps, "default", "broker.agent.spawn", { kind: "copilot", cwd: scratchRepo() }),
+      (e: BrokerError) => e.code === "env_hook_failed",
+    );
+    assert.ok(!t.fake.received.some((r) => r.method === "workspace.create"));
+  } finally {
+    await t.teardown();
+  }
+});
+
+test("spawn: send_input failure removes the drop file and fails the spawn", async () => {
+  const t = await setup();
+  try {
+    armSpawnFake(t.fake);
+    t.fake.handlers.delete("pane.send_input");
+    const stateDir = tmpDir();
+    t.deps.env = new EnvRegistry({ stateDir: stateDir });
+    t.deps.env.set("TOKEN", "v", {});
+    await assert.rejects(
+      runBrokerMethod(t.deps, "default", "broker.agent.spawn", { kind: "copilot", cwd: scratchRepo() }),
+      (e: BrokerError) => e.details.pane_id === "w9:p1",
+    );
+    assert.ok(!t.fake.received.some((r) => r.method === "agent.start"), "agent must not start unauthenticated");
+    assert.deepEqual(readdirSync(join(stateDir, "envdrop")), [], "drop file cleaned up");
   } finally {
     await t.teardown();
   }
