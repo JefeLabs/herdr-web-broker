@@ -18,6 +18,9 @@ export interface OpsDeps {
   askGraceMs?: number;
   /** test override for post-injection shell settle */
   envSettleMs?: number;
+  /** cold-pane agent.start retry pacing (agent_pane_busy) */
+  paneBusyRetries?: number;
+  paneBusyDelayMs?: number;
 }
 
 export function isBrokerMethod(method: string): boolean {
@@ -240,18 +243,31 @@ async function spawn(deps: OpsDeps, session: string, p: Record<string, unknown>)
 
   const name = typeof p.name === "string" ? p.name : kind;
   const timeoutMs = typeof p.timeout_ms === "number" ? p.timeout_ms : undefined;
-  try {
-    await deps.local.request(
-      session,
-      "agent.start",
-      { name, kind, pane_id: paneId, ...(args ? { args } : {}), ...(timeoutMs ? { timeout_ms: timeoutMs } : {}) },
-      (timeoutMs ?? 30_000) + 5000,
-    );
-  } catch (e) {
-    // The workspace exists — hand its id back so the client can retry into
-    // it with mode B instead of leaking it (spec §2.1).
-    const err = e instanceof BrokerError ? e : new BrokerError("upstream_error", String(e));
-    throw new BrokerError(err.code, err.message, { ...err.details, workspace_id: workspaceId, pane_id: paneId });
+  // agent_pane_busy on a fresh pane means the shell hasn't reached its
+  // prompt yet (slow login zsh) — herdr's refusal is the only verified
+  // readiness signal, so retry the SAME pane instead of failing out to a
+  // client whose mode-B retry would leak a new workspace per attempt.
+  const busyRetries = deps.paneBusyRetries ?? 4;
+  const busyDelayMs = deps.paneBusyDelayMs ?? 1000;
+  for (let attempt = 0; ; attempt++) {
+    try {
+      await deps.local.request(
+        session,
+        "agent.start",
+        { name, kind, pane_id: paneId, ...(args ? { args } : {}), ...(timeoutMs ? { timeout_ms: timeoutMs } : {}) },
+        (timeoutMs ?? 30_000) + 5000,
+      );
+      break;
+    } catch (e) {
+      const err = e instanceof BrokerError ? e : new BrokerError("upstream_error", String(e));
+      if (err.code === "agent_pane_busy" && attempt < busyRetries) {
+        await new Promise((r) => setTimeout(r, busyDelayMs));
+        continue;
+      }
+      // The workspace exists — hand its id back so the client can retry into
+      // it with mode B instead of leaking it (spec §2.1).
+      throw new BrokerError(err.code, err.message, { ...err.details, workspace_id: workspaceId, pane_id: paneId });
+    }
   }
 
   const raw = (await deps.local.request(session, "agent.list", {}, 5000).catch(() => ({}))) as {

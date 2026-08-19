@@ -8,7 +8,7 @@ import { LocalHerdr } from "../src/local-attach.js";
 import { Registry } from "../src/registry.js";
 import { WorkspaceIndex } from "../src/state.js";
 import { isBrokerMethod, runBrokerMethod, type OpsDeps } from "../src/workspace-ops.js";
-import { FakeHerdr } from "./fake-herdr.js";
+import { FakeHerdr, FakeHerdrError } from "./fake-herdr.js";
 import { scratchRepo, sh, tmpDir } from "./util.js";
 
 async function setup(): Promise<{ fake: FakeHerdr; deps: OpsDeps; teardown: () => Promise<void> }> {
@@ -34,6 +34,7 @@ async function setup(): Promise<{ fake: FakeHerdr; deps: OpsDeps; teardown: () =
     askPollMs: 25,
     askGraceMs: 150,
     envSettleMs: 5,
+    paneBusyDelayMs: 5,
   };
   return {
     fake,
@@ -197,6 +198,68 @@ test("spawn partial failure: agent.start error carries the orphaned workspace_id
       (e: BrokerError) => e.details.workspace_id === "w4" && e.details.pane_id === "w4:p1",
     );
     assert.ok(t.deps.index.get("default", "w4"), "the orphaned workspace stays in the index for a mode-B retry");
+  } finally {
+    await t.teardown();
+  }
+});
+
+test("spawn retries agent.start on agent_pane_busy until the cold pane's shell is ready", async () => {
+  const t = await setup();
+  try {
+    t.fake.handlers.set("workspace.create", () => ({ root_pane: { pane_id: "w5:p1" } }));
+    let starts = 0;
+    t.fake.handlers.set("agent.start", () => {
+      if (++starts < 3) throw new FakeHerdrError("agent_pane_busy", "agent target pane w5:p1 is not an available shell");
+      return { type: "agent_started" };
+    });
+    const out = (await runBrokerMethod(t.deps, "default", "broker.agent.spawn", {
+      kind: "copilot",
+      cwd: scratchRepo(),
+    })) as { workspace_id: string; pane_id: string };
+    assert.equal(out.pane_id, "w5:p1");
+    assert.equal(starts, 3, "agent.start retried on the SAME pane until herdr accepted it");
+    const creates = t.fake.received.filter((r) => r.method === "workspace.create");
+    assert.equal(creates.length, 1, "retries must not create more workspaces");
+  } finally {
+    await t.teardown();
+  }
+});
+
+test("spawn gives up after bounded agent_pane_busy retries, still handing back the workspace for mode B", async () => {
+  const t = await setup();
+  t.deps.paneBusyRetries = 2;
+  try {
+    t.fake.handlers.set("workspace.create", () => ({ root_pane: { pane_id: "w6:p1" } }));
+    let starts = 0;
+    t.fake.handlers.set("agent.start", () => {
+      starts++;
+      throw new FakeHerdrError("agent_pane_busy", "agent target pane w6:p1 is not an available shell");
+    });
+    await assert.rejects(
+      runBrokerMethod(t.deps, "default", "broker.agent.spawn", { kind: "copilot", cwd: scratchRepo() }),
+      (e: BrokerError) =>
+        e.code === "agent_pane_busy" && e.details.workspace_id === "w6" && e.details.pane_id === "w6:p1",
+    );
+    assert.equal(starts, 3, "initial attempt + paneBusyRetries, then give up");
+  } finally {
+    await t.teardown();
+  }
+});
+
+test("spawn does not retry agent.start on non-busy errors", async () => {
+  const t = await setup();
+  try {
+    t.fake.handlers.set("workspace.create", () => ({ root_pane: { pane_id: "w7:p1" } }));
+    let starts = 0;
+    t.fake.handlers.set("agent.start", () => {
+      starts++;
+      throw new FakeHerdrError("invalid_request", "unknown agent kind");
+    });
+    await assert.rejects(
+      runBrokerMethod(t.deps, "default", "broker.agent.spawn", { kind: "copilot", cwd: scratchRepo() }),
+      (e: BrokerError) => e.code === "invalid_request",
+    );
+    assert.equal(starts, 1, "a real error must fail fast, not burn the retry budget");
   } finally {
     await t.teardown();
   }

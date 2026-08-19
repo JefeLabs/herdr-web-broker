@@ -7,6 +7,18 @@ interface Frame {
   params?: unknown;
 }
 
+/** Throw from a handler to make the fake answer a real-shaped error frame
+ * (herdr 0.8.0 replies {id, error: {code, message}} and closes, same as a
+ * success). */
+export class FakeHerdrError extends Error {
+  constructor(
+    readonly code: string,
+    message: string,
+  ) {
+    super(message);
+  }
+}
+
 /** Real-shaped herdr agent entry (herdr 0.8.0 agent.list vocabulary). */
 export interface FakeAgent {
   pane_id: string;
@@ -57,8 +69,14 @@ export class FakeHerdr {
       return; // connection stays open as an event channel
     }
     const handler = this.handlers.get(frame.method);
-    if (handler) sock.write(encodeFrame({ id: frame.id, result: handler(frame.params) }));
-    else
+    if (handler) {
+      try {
+        sock.write(encodeFrame({ id: frame.id, result: handler(frame.params) }));
+      } catch (e) {
+        const code = e instanceof FakeHerdrError ? e.code : "internal_error";
+        sock.write(encodeFrame({ id: frame.id, error: { code, message: String((e as Error).message ?? e) } }));
+      }
+    } else
       sock.write(
         encodeFrame({
           id: frame.id,
