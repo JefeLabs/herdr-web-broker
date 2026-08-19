@@ -198,3 +198,106 @@ test("spawn partial failure: agent.start error carries the orphaned workspace_id
     await t.teardown();
   }
 });
+
+function extractAnswerPath(cwd: string, text: unknown): string {
+  const m = /\.herdr\/answers\/([a-f0-9]{16})\.json/.exec(String(text));
+  assert.ok(m, "prompt text names an answer file");
+  return join(cwd, ".herdr", "answers", `${m![1]}.json`);
+}
+
+test("ask: agent writes the answer file; broker returns parsed JSON and deletes it", async () => {
+  const t = await setup();
+  try {
+    const cwd = scratchRepo();
+    t.deps.index.set("default", "w1", { cwd });
+    t.fake.handlers.set("agent.prompt", (p) => {
+      const file = extractAnswerPath(cwd, (p as { text: string }).text);
+      setTimeout(() => writeFileSync(file, '{"ok":true,"n":2}'), 50);
+      return { type: "prompted" };
+    });
+    const out = (await runBrokerMethod(t.deps, "default", "broker.agent.ask", {
+      pane_id: "w1:p1",
+      prompt: "count things",
+      timeout_ms: 5000,
+    })) as { answer: unknown };
+    assert.deepEqual(out.answer, { ok: true, n: 2 });
+    const prompted = t.fake.received.find((r) => r.method === "agent.prompt");
+    assert.equal((prompted?.params as { target: string }).target, "copilot");
+  } finally {
+    await t.teardown();
+  }
+});
+
+test("ask: invalid JSON in the answer file surfaces as parse_error with capped raw", async () => {
+  const t = await setup();
+  try {
+    const cwd = scratchRepo();
+    t.deps.index.set("default", "w1", { cwd });
+    t.fake.handlers.set("agent.prompt", (p) => {
+      writeFileSync(extractAnswerPath(cwd, (p as { text: string }).text), "not json");
+      return { type: "prompted" };
+    });
+    const out = (await runBrokerMethod(t.deps, "default", "broker.agent.ask", {
+      pane_id: "w1:p1",
+      prompt: "x",
+      timeout_ms: 1000,
+    })) as { answer: null; raw: string; parse_error: boolean };
+    assert.equal(out.parse_error, true);
+    assert.equal(out.raw, "not json");
+    assert.equal(out.answer, null);
+  } finally {
+    await t.teardown();
+  }
+});
+
+test("ask: no answer file within timeout_ms is upstream_timeout", async () => {
+  const t = await setup();
+  try {
+    t.deps.index.set("default", "w1", { cwd: scratchRepo() });
+    t.fake.handlers.set("agent.prompt", () => ({ type: "prompted" }));
+    await assert.rejects(
+      runBrokerMethod(t.deps, "default", "broker.agent.ask", { pane_id: "w1:p1", prompt: "x", timeout_ms: 1000 }),
+      (e: BrokerError) => e.code === "upstream_timeout",
+    );
+  } finally {
+    await t.teardown();
+  }
+});
+
+test("ask: agent that finishes without writing exits early via the status grace, not the full budget", async () => {
+  const t = await setup();
+  try {
+    t.deps.index.set("default", "w1", { cwd: scratchRepo() });
+    t.fake.handlers.set("agent.prompt", () => ({ type: "prompted" }));
+    const started = Date.now();
+    const pending = assert.rejects(
+      runBrokerMethod(t.deps, "default", "broker.agent.ask", { pane_id: "w1:p1", prompt: "x", timeout_ms: 60_000 }),
+      (e: BrokerError) => e.code === "upstream_timeout",
+    );
+    // drive the status through the registry the way SessionEvents would
+    t.deps.registry.applyAgentStatus("runtime", "default", { id: "w1:p1", title: "copilot", status: "working" });
+    await new Promise((r) => setTimeout(r, 100));
+    t.deps.registry.applyAgentStatus("runtime", "default", { id: "w1:p1", title: "copilot", status: "idle" });
+    await pending;
+    assert.ok(Date.now() - started < 10_000, "returned early, not after the 60s budget");
+  } finally {
+    await t.teardown();
+  }
+});
+
+test("ask: unknown cwd is unknown_workspace; unknown pane is bad_request", async () => {
+  const t = await setup();
+  try {
+    await assert.rejects(
+      runBrokerMethod(t.deps, "default", "broker.agent.ask", { pane_id: "w9:p1", prompt: "x" }),
+      (e: BrokerError) => e.code === "unknown_workspace",
+    );
+    t.deps.index.set("default", "w1", { cwd: scratchRepo() });
+    await assert.rejects(
+      runBrokerMethod(t.deps, "default", "broker.agent.ask", { pane_id: "w1:p9", prompt: "x" }),
+      (e: BrokerError) => e.code === "bad_request",
+    );
+  } finally {
+    await t.teardown();
+  }
+});

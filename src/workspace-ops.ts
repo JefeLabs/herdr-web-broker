@@ -1,7 +1,8 @@
-import { statSync } from "node:fs";
-import { isAbsolute } from "node:path";
+import { randomBytes } from "node:crypto";
+import { existsSync, mkdirSync, readFileSync, rmSync, statSync } from "node:fs";
+import { isAbsolute, join } from "node:path";
 import { BrokerError } from "./errors.js";
-import { discoverRepos, repoDiff, repoTree, resolveRepo } from "./git-exec.js";
+import { DIFF_CAP_BYTES, discoverRepos, repoDiff, repoTree, resolveRepo } from "./git-exec.js";
 import type { LocalHerdr } from "./local-attach.js";
 import type { Registry } from "./registry.js";
 import type { WorkspaceIndex } from "./state.js";
@@ -209,6 +210,67 @@ async function spawn(deps: OpsDeps, session: string, p: Record<string, unknown>)
   return { workspace_id: workspaceId, pane_id: paneId, agent: name, status: foldStatus(entry?.agent_status) };
 }
 
+/** File-drop handshake (spec §2.5): the answer travels through the
+ * filesystem the agent and this process share — never through the terminal
+ * renderer. The registry's pane status provides an early exit when the
+ * agent finishes without writing. */
 async function ask(deps: OpsDeps, session: string, p: Record<string, unknown>): Promise<unknown> {
-  throw new BrokerError("bad_request", "broker.agent.ask not implemented yet (plan Task 9)");
+  const pane = str(p.pane_id, "pane_id");
+  const prompt = str(p.prompt, "prompt");
+  const budget = Math.min(Math.max(typeof p.timeout_ms === "number" ? p.timeout_ms : 120_000, 1_000), 600_000);
+  const workspaceId = pane.split(":")[0];
+  const cwd = await resolveCwd(deps, session, workspaceId);
+
+  const raw = (await deps.local.request(session, "agent.list", {}, 10_000)) as {
+    agents?: Array<Record<string, unknown>>;
+  };
+  const entry = raw.agents?.find((a) => a.pane_id === pane);
+  if (!entry) throw new BrokerError("bad_request", `no agent in pane '${pane}'`);
+  const target = typeof entry.name === "string" && entry.name ? entry.name : String(entry.agent ?? "");
+  if (!target) throw new BrokerError("upstream_error", `agent in pane '${pane}' has no addressable name`);
+
+  const id = randomBytes(8).toString("hex");
+  const dir = join(cwd, ".herdr", "answers");
+  mkdirSync(dir, { recursive: true });
+  const file = join(dir, `${id}.json`);
+  const text =
+    `${prompt}\n\n` +
+    `When you are finished, write ONLY the JSON answer to the file ` +
+    `.herdr/answers/${id}.json (relative to ${cwd}). ` +
+    `The file must contain valid JSON and nothing else.`;
+  await deps.local.request(session, "agent.prompt", { target, text }, 30_000);
+
+  const pollMs = deps.askPollMs ?? 500;
+  const graceMs = deps.askGraceMs ?? 10_000;
+  const deadline = Date.now() + budget;
+  let sawWorking = false;
+  let idleSince: number | undefined;
+  while (Date.now() < deadline) {
+    if (existsSync(file)) {
+      const rawText = readFileSync(file, "utf8");
+      try {
+        const answer = JSON.parse(rawText) as unknown;
+        rmSync(file, { force: true });
+        return { answer };
+      } catch {
+        // possibly mid-write — keep polling; the deadline or the status
+        // grace decides when to give up and report parse_error
+      }
+    }
+    const status = deps.registry.get("runtime")?.sessions[session]?.agents.find((a) => a.id === pane)?.status;
+    if (status === "working") {
+      sawWorking = true;
+      idleSince = undefined;
+    } else if (sawWorking) {
+      idleSince ??= Date.now();
+      if (Date.now() - idleSince > graceMs) break;
+    }
+    await new Promise((r) => setTimeout(r, pollMs));
+  }
+  if (existsSync(file)) {
+    const buf = readFileSync(file);
+    rmSync(file, { force: true });
+    return { answer: null, raw: buf.subarray(0, DIFF_CAP_BYTES).toString("utf8"), parse_error: true };
+  }
+  throw new BrokerError("upstream_timeout", `agent produced no answer within ${budget}ms`, { pane_id: pane });
 }
