@@ -24,7 +24,15 @@ export interface WsDeps {
   callInstance?: CallInstance;
 }
 
-export function attachUpgradeHandling(server: Server, deps: WsDeps): void {
+export interface UpgradeHandle {
+  /** Terminates every currently-connected /parent/enroll and /parent/ws
+   * client. http.Server's own closeAllConnections() does not reach these —
+   * a socket handed off via the 'upgrade' event is no longer tracked as an
+   * HTTP connection, only as a ws WebSocketServer client. */
+  closeAllConnections(): void;
+}
+
+export function attachUpgradeHandling(server: Server, deps: WsDeps): UpgradeHandle {
   const enrollWss = new WebSocketServer({ noServer: true });
   const clientWss = new WebSocketServer({ noServer: true });
 
@@ -52,14 +60,32 @@ export function attachUpgradeHandling(server: Server, deps: WsDeps): void {
       socket.destroy();
     }
   });
+
+  return {
+    closeAllConnections() {
+      for (const ws of enrollWss.clients) ws.terminate();
+      for (const ws of clientWss.clients) ws.terminate();
+    },
+  };
 }
 
 function acceptChild(deps: WsDeps, name: string, ws: WebSocket): void {
   const timer = setTimeout(() => ws.close(4000, "hello timeout"), 5000);
   ws.once("message", (data) => {
     clearTimeout(timer);
-    const hello = JSON.parse(String(data)) as TunnelFrame;
-    if (hello.type !== "hello" || hello.proto !== PROTO_VERSION) {
+    let hello: TunnelFrame;
+    try {
+      // An inbound frame must never crash the daemon.
+      hello = JSON.parse(String(data)) as TunnelFrame;
+    } catch {
+      ws.close(4000, "bad hello");
+      return;
+    }
+    if (hello.type !== "hello") {
+      ws.close(4000, "bad hello");
+      return;
+    }
+    if (hello.proto !== PROTO_VERSION) {
       ws.close(4001, "proto_mismatch");
       return;
     }

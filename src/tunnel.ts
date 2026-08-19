@@ -46,7 +46,17 @@ export class ChildConnection {
     private registry: Registry,
     private onGone: () => void,
   ) {
-    ws.on("message", (data) => this.#route(JSON.parse(String(data)) as TunnelFrame));
+    ws.on("message", (data) => {
+      let frame: TunnelFrame;
+      try {
+        // An inbound frame must never crash the daemon.
+        frame = JSON.parse(String(data)) as TunnelFrame;
+      } catch {
+        ws.terminate();
+        return;
+      }
+      this.#route(frame);
+    });
     ws.on("pong", () => (this.#missedPongs = 0));
     this.#heartbeat = setInterval(() => {
       this.#missedPongs += 1;

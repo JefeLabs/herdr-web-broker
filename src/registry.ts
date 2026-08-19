@@ -3,6 +3,13 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 
 export type AgentStatus = "working" | "blocked" | "idle";
 
+/** Same working|blocked|idle coercion applied on the wire — re-applied to
+ * persisted data too, so a hand-tampered registry.json can't push an
+ * unrecognized status into counts() and NaN the rollup. */
+function coerceStatus(status: unknown): AgentStatus {
+  return status === "working" || status === "blocked" ? status : "idle";
+}
+
 export interface AgentInfo {
   id: string;
   title: string;
@@ -47,7 +54,13 @@ export class Registry extends EventEmitter {
     try {
       const data = JSON.parse(readFileSync(this.persistPath, "utf8")) as Record<string, Stored>;
       for (const [name, entry] of Object.entries(data)) {
-        this.#instances.set(name, { ...entry, online: false });
+        const sessions = Object.fromEntries(
+          Object.entries(entry.sessions ?? {}).map(([sessionName, sess]) => [
+            sessionName,
+            { agents: (sess.agents ?? []).map((a) => ({ ...a, status: coerceStatus(a.status) })) },
+          ]),
+        );
+        this.#instances.set(name, { ...entry, sessions, online: false });
       }
     } catch {
       // Corrupt registry.json: start empty (broker-owned state self-heals)
@@ -96,7 +109,7 @@ export class Registry extends EventEmitter {
   applySessionAdded(instance: string, session: SessionSnapshot): void {
     const entry = this.#instances.get(instance);
     if (!entry) return;
-    entry.sessions[session.name] = { agents: session.agents };
+    entry.sessions[session.name] = { agents: [...session.agents] };
     this.#touch(entry);
     this.#flush();
     this.emit("session_added", { instance, session });

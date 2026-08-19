@@ -96,3 +96,34 @@ test("load() tolerates corrupt registry.json and starts empty", () => {
   assert.doesNotThrow(() => r.load());
   assert.deepEqual(r.instances(), []);
 });
+
+test("load() re-coerces a tampered agent status so counts() can't go NaN", () => {
+  const d = mkdtempSync(join(tmpdir(), "hwb-"));
+  const path = join(d, "registry.json");
+  writeFileSync(
+    path,
+    JSON.stringify({
+      laptop: {
+        online: true,
+        as_of: "2026-08-18T00:00:00Z",
+        platform: "macos",
+        herdr_version: "0.8.0",
+        sessions: { default: { agents: [{ id: "a1", title: "x", status: "haunted" }] } },
+      },
+    }),
+  );
+  const r = new Registry(path);
+  r.load();
+  assert.deepEqual(r.counts("laptop"), { working: 0, blocked: 0, idle: 1 });
+});
+
+test("applySessionAdded copies the agents array — mutating the caller's array afterward does not leak in", () => {
+  const r = new Registry();
+  r.replaceSnapshot("laptop", SNAP);
+  const agents: InstanceSnapshot["sessions"][number]["agents"] = [
+    { id: "z1", title: "zed", status: "idle" },
+  ];
+  r.applySessionAdded("laptop", { name: "extra", agents });
+  agents.push({ id: "z2", title: "zed2", status: "working" });
+  assert.equal(r.get("laptop")!.sessions.extra.agents.length, 1);
+});

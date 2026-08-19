@@ -141,6 +141,26 @@ test(
 );
 
 test(
+  "policy: a remote-denied method is refused at the projected socket without ever reaching the child",
+  { skip: process.platform === "win32" },
+  async () => {
+    const parts = await bootPair();
+    try {
+      const { sock, frames } = await dial(parts.sockPath);
+      sock.write(encodeFrame({ id: "d1", method: "server.stop", params: {} }));
+      await waitFor(() => frames.length === 1);
+      const reply = frames[0] as { id: string; error: { code: string } };
+      assert.equal(reply.id, "d1");
+      assert.equal(reply.error.code, "method_denied");
+      assert.equal(parts.fakeChild.received.some((r) => r.method === "server.stop"), false);
+      sock.destroy();
+    } finally {
+      await teardown(parts);
+    }
+  },
+);
+
+test(
   "a well-formed frame missing 'method' answers bad_request instead of timing out silently",
   { skip: process.platform === "win32" },
   async () => {

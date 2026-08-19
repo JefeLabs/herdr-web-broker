@@ -25,3 +25,8 @@ test("decoder throws on malformed JSON line", () => {
   const d = new NdjsonDecoder();
   assert.throws(() => d.push("not json\n"));
 });
+
+test("decoder throws when an unterminated line exceeds the 1MB cap", () => {
+  const d = new NdjsonDecoder();
+  assert.throws(() => d.push("x".repeat(1_048_577)));
+});

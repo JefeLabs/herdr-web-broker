@@ -14,7 +14,7 @@ import { Registry } from "./registry.js";
 import { ParentLink } from "./south.js";
 import { ChildrenStore, clearLock, ensureAdminToken, readLock, writeLock } from "./state.js";
 import { TunnelHub } from "./tunnel.js";
-import { attachUpgradeHandling } from "./ws-server.js";
+import { attachUpgradeHandling, type UpgradeHandle } from "./ws-server.js";
 
 export interface DaemonOptions {
   configDir: string;
@@ -101,6 +101,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<DaemonHandle | u
   const wantPort = Number(config.listen.slice(lastColon + 1));
 
   let server: Server;
+  let upgrade: UpgradeHandle;
   try {
     server = config.tls
       ? createHttpsServer(
@@ -108,7 +109,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<DaemonHandle | u
           handler,
         )
       : createHttpServer(handler);
-    attachUpgradeHandling(server, {
+    upgrade = attachUpgradeHandling(server, {
       children,
       hub,
       registry,
@@ -132,6 +133,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<DaemonHandle | u
     dir: opts.projectionDir ?? join(homedir(), ".config/herdr/remotes"),
     hub,
     registry,
+    remoteDeny: config.policy.remote_deny,
   });
   projection.start();
 
@@ -151,6 +153,14 @@ export async function startDaemon(opts: DaemonOptions): Promise<DaemonHandle | u
       projection.stop();
       local.stop();
       for (const name of hub.names()) hub.disconnect(name);
+      // A lingering client connection must not hang shutdown. Plain HTTP
+      // keep-alive sockets are covered by closeAllConnections(); a socket
+      // handed off via the 'upgrade' event is no longer tracked as an HTTP
+      // connection at all (only ws's WebSocketServer.clients still sees
+      // it), so it needs its own termination or server.close() never calls
+      // its callback.
+      server.closeAllConnections();
+      upgrade.closeAllConnections();
       await new Promise<void>((resolve) => server.close(() => resolve()));
       clearLock(opts.stateDir);
     },

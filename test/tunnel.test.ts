@@ -115,6 +115,62 @@ test("hub.disconnect severs the live tunnel (revocation path)", async () => {
   server.close();
 });
 
+test("enroll: garbage after welcome closes just that connection; a fresh enroll with the same secret still succeeds", async () => {
+  const { registry, server, port } = await setup();
+  const ws = dial(port, "laptop", "sekret");
+  await new Promise((r) => ws.once("open", r));
+  ws.send(JSON.stringify(HELLO));
+  await new Promise((r) => ws.once("message", r)); // welcome
+
+  const closed = new Promise<void>((r) => ws.once("close", () => r()));
+  ws.send("not json");
+  await closed;
+
+  // The daemon is still alive: a fresh enroll with the same secret succeeds.
+  const retry = dial(port, "laptop", "sekret");
+  await new Promise((r) => retry.once("open", r));
+  retry.send(JSON.stringify(HELLO));
+  const welcome = JSON.parse(String(await new Promise((r) => retry.once("message", r))));
+  assert.deepEqual(welcome, { type: "welcome", name: "laptop", proto: PROTO_VERSION });
+  assert.ok(registry.get("laptop")?.online);
+
+  retry.close();
+  await waitFor(() => registry.get("laptop")!.online === false);
+  server.close();
+});
+
+test("enroll: a malformed hello (bad JSON) is closed 4000, not crashed — the daemon serves a fresh enroll after", async () => {
+  const { registry, server, port } = await setup();
+  const ws = dial(port, "laptop", "sekret");
+  await new Promise((r) => ws.once("open", r));
+  const code = await new Promise<number>((r) => {
+    ws.once("close", (c) => r(c));
+    ws.send("not json");
+  });
+  assert.equal(code, 4000);
+
+  const retry = dial(port, "laptop", "sekret");
+  await new Promise((r) => retry.once("open", r));
+  retry.send(JSON.stringify(HELLO));
+  const welcome = JSON.parse(String(await new Promise((r) => retry.once("message", r))));
+  assert.deepEqual(welcome, { type: "welcome", name: "laptop", proto: PROTO_VERSION });
+  retry.close();
+  await waitFor(() => registry.get("laptop")!.online === false);
+  server.close();
+});
+
+test("enroll: a well-formed frame that isn't type 'hello' is closed 4000, reserving 4001 for proto mismatch", async () => {
+  const { server, port } = await setup();
+  const ws = dial(port, "laptop", "sekret");
+  await new Promise((r) => ws.once("open", r));
+  const code = await new Promise<number>((r) => {
+    ws.once("close", (c) => r(c));
+    ws.send(JSON.stringify({ type: "not-hello" }));
+  });
+  assert.equal(code, 4000);
+  server.close();
+});
+
 test("reattach: the stale connection's async close does not mark the freshly reattached child offline", async () => {
   const { registry, hub, server, port } = await setup();
 

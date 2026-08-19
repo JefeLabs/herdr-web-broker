@@ -7,9 +7,12 @@ import { join } from "node:path";
 import { startDaemon } from "../src/daemon.js";
 import { tmpDir } from "./util.js";
 
-/** Validates the two documented herdr-shape assumptions (mapAgentList,
- * mapHerdrEvent) against a real herdr server. Skips unless both a herdr
- * binary and a live default socket exist. */
+/** Proves the daemon can attach to a real herdr and serve requests over it
+ * (connectivity), and — when the live instance actually has agents — that
+ * mapAgentList's shape assumption (id/title/status ∈ working|blocked|idle)
+ * holds against real data. It does not prove events map correctly (no live
+ * status change is triggered) or that every herdr version behaves this way.
+ * Skips unless both a herdr binary and a live default socket exist. */
 test("live smoke: daemon attaches to a real herdr and serves truth", async (t) => {
   const which = spawnSync("herdr", ["--version"], { encoding: "utf8" });
   const socket = process.env.HERDR_SOCKET_PATH ?? join(homedir(), ".config/herdr/herdr.sock");
@@ -35,5 +38,19 @@ test("live smoke: daemon attaches to a real herdr and serves truth", async (t) =
     body: JSON.stringify({ method: "ping" }),
   });
   assert.equal(rpc.status, 200);
+
+  const firstSession = sessions.sessions[0].name;
+  const agentsRes = (await (
+    await fetch(`${handle.base}/parent/runtime/sessions/${firstSession}/agents?fresh=1`, {
+      headers: { authorization: "Bearer tok" },
+    })
+  ).json()) as { agents: { id: unknown; title: unknown; status: unknown }[] };
+  assert.ok(Array.isArray(agentsRes.agents));
+  for (const agent of agentsRes.agents) {
+    assert.equal(typeof agent.id, "string");
+    assert.equal(typeof agent.title, "string");
+    assert.ok(["working", "blocked", "idle"].includes(agent.status as string));
+  }
+
   await handle.close();
 });

@@ -3,7 +3,7 @@ import { BrokerError } from "./errors.js";
 import type { LocalHerdr } from "./local-attach.js";
 import { methodDenied } from "./policy.js";
 import type { Registry } from "./registry.js";
-import { PROTO_VERSION, type TunnelFrame } from "./tunnel.js";
+import { HEARTBEAT_MS, PROTO_VERSION, type TunnelFrame } from "./tunnel.js";
 import { PLUGIN_VERSION } from "./version.js";
 
 const BACKOFF_BASE_MS = 1000;
@@ -16,6 +16,8 @@ export class ParentLink {
   #stopped = false;
   #redial?: NodeJS.Timeout;
   #listeners: Array<() => void> = [];
+  #missedPongs = 0;
+  #heartbeat?: NodeJS.Timeout;
 
   constructor(
     private opts: {
@@ -65,6 +67,18 @@ export class ParentLink {
     });
     this.#ws = ws;
     ws.on("open", () => {
+      // Spec §3: either side reaps a silently-dropped tunnel. The parent
+      // already pings the child (ChildConnection); mirror that here.
+      this.#missedPongs = 0;
+      this.#heartbeat = setInterval(() => {
+        this.#missedPongs += 1;
+        if (this.#missedPongs > 2) {
+          ws.terminate();
+          return;
+        }
+        ws.ping();
+      }, HEARTBEAT_MS);
+      this.#heartbeat.unref();
       void this.opts.local.snapshot().then((snap) => {
         this.#send({
           type: "hello",
@@ -77,8 +91,22 @@ export class ParentLink {
         });
       });
     });
-    ws.on("message", (data) => void this.#route(JSON.parse(String(data)) as TunnelFrame));
-    ws.on("close", () => this.#scheduleRedial());
+    ws.on("pong", () => (this.#missedPongs = 0));
+    ws.on("message", (data) => {
+      let frame: TunnelFrame;
+      try {
+        // An inbound frame must never crash the daemon.
+        frame = JSON.parse(String(data)) as TunnelFrame;
+      } catch {
+        ws.close();
+        return;
+      }
+      void this.#route(frame);
+    });
+    ws.on("close", () => {
+      if (this.#heartbeat) clearInterval(this.#heartbeat);
+      this.#scheduleRedial();
+    });
     ws.on("error", () => ws.close());
   }
 
@@ -117,6 +145,7 @@ export class ParentLink {
   stop(): void {
     this.#stopped = true;
     if (this.#redial) clearTimeout(this.#redial);
+    if (this.#heartbeat) clearInterval(this.#heartbeat);
     for (const off of this.#listeners) off();
     this.#listeners = [];
     this.#ws?.close();

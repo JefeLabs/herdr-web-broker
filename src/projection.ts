@@ -3,6 +3,7 @@ import { createServer, type Server } from "node:net";
 import { join } from "node:path";
 import { BrokerError } from "./errors.js";
 import { encodeFrame, NdjsonDecoder } from "./ndjson.js";
+import { methodDenied } from "./policy.js";
 import type { Registry } from "./registry.js";
 import type { TunnelHub } from "./tunnel.js";
 
@@ -13,7 +14,7 @@ export class Projection {
   #servers = new Map<string, Server>(); // key: `${instance}/${session}`
   #listeners: Array<() => void> = [];
 
-  constructor(private opts: { dir: string; hub: TunnelHub; registry: Registry }) {}
+  constructor(private opts: { dir: string; hub: TunnelHub; registry: Registry; remoteDeny: string[] }) {}
 
   start(): void {
     if (process.platform === "win32") return;
@@ -67,6 +68,20 @@ export class Projection {
               encodeFrame({
                 id: frame.id,
                 error: { code: "bad_request", message: "frame needs a string 'method'" },
+              }),
+            );
+            continue;
+          }
+          // Parent-side fast-fail per spec §2, same as REST/WS — the child
+          // re-enforces its own policy authoritatively (spec §4).
+          if (methodDenied(frame.method, this.opts.remoteDeny)) {
+            sock.write(
+              encodeFrame({
+                id: frame.id,
+                error: {
+                  code: "method_denied",
+                  message: `'${frame.method}' is denied for remote-originated calls`,
+                },
               }),
             );
             continue;

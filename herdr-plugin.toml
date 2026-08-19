@@ -5,7 +5,7 @@ min_herdr_version = "0.8.0"
 description = "REST/WS gateway and parent↔child federation for herdr instances"
 
 [[build]]
-command = ["npm", "install"]
+command = ["npm", "install", "--include=dev"]
 
 [[build]]
 command = ["npm", "run", "build"]

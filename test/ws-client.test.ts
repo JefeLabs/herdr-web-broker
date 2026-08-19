@@ -75,3 +75,41 @@ test("rpc over ws round-trips; events.subscribe acks; events stream unsolicited"
   await handle.close();
   await fake.close();
 });
+
+test("a malformed frame on an authed /parent/ws gets an error reply, not a crash — a fresh rpc still round-trips", async () => {
+  const { fake, handle } = await boot();
+  const ws = new WebSocket(`ws://127.0.0.1:${handle.port}/parent/ws`, {
+    headers: { authorization: "Bearer tok" },
+  });
+  await new Promise((r) => ws.once("open", r));
+  const frames: Record<string, unknown>[] = [];
+  ws.on("message", (data) => frames.push(JSON.parse(String(data))));
+
+  ws.send("not json");
+  await waitFor(() => frames.length > 0);
+  assert.ok((frames[0] as { error?: { code: string } }).error);
+
+  // The daemon is still alive: a fresh rpc on the SAME connection round-trips.
+  ws.send(
+    JSON.stringify({ id: "fresh", instance: "runtime", session: "default", method: "agent.list" }),
+  );
+  await waitFor(() => frames.some((f) => f.id === "fresh"));
+  const reply = frames.find((f) => f.id === "fresh") as { result: { agents: unknown[] } };
+  assert.equal(reply.result.agents.length, 1);
+
+  ws.close();
+  await handle.close();
+  await fake.close();
+});
+
+test("handle.close() does not hang on a lingering client WebSocket", async () => {
+  const { fake, handle } = await boot();
+  const ws = new WebSocket(`ws://127.0.0.1:${handle.port}/parent/ws`, {
+    headers: { authorization: "Bearer tok" },
+  });
+  await new Promise((r) => ws.once("open", r));
+  // Deliberately left open — close() must forcibly reap it, not wait forever
+  // for it to end on its own.
+  await handle.close();
+  await fake.close();
+});
