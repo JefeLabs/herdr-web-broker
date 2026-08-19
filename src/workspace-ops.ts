@@ -1,3 +1,5 @@
+import { statSync } from "node:fs";
+import { isAbsolute } from "node:path";
 import { BrokerError } from "./errors.js";
 import { discoverRepos, repoDiff, repoTree, resolveRepo } from "./git-exec.js";
 import type { LocalHerdr } from "./local-attach.js";
@@ -137,8 +139,74 @@ async function listWorkspaces(deps: OpsDeps, session: string): Promise<unknown> 
   return { workspaces };
 }
 
+/** Mode A (cwd): create a new working set + first team member. Mode B
+ * (workspace_id): grow the team — spec §8.2 fallback, a new workspace with
+ * the same cwd and inherited label, since herdr 0.8.0's pane-create method
+ * is unverified. args go verbatim to agent.start (model/effort flags live
+ * there — the broker never interprets them). */
 async function spawn(deps: OpsDeps, session: string, p: Record<string, unknown>): Promise<unknown> {
-  throw new BrokerError("bad_request", "broker.agent.spawn not implemented yet (plan Task 8)");
+  const kind = str(p.kind, "kind");
+  const hasCwd = typeof p.cwd === "string";
+  const hasWs = typeof p.workspace_id === "string";
+  if (hasCwd === hasWs) {
+    throw new BrokerError("bad_request", "exactly one of 'cwd' and 'workspace_id' is required");
+  }
+  let args: string[] | undefined;
+  if (p.args !== undefined) {
+    if (!Array.isArray(p.args) || !p.args.every((a) => typeof a === "string" && a.length <= 256)) {
+      throw new BrokerError("bad_request", "'args' must be an array of strings of at most 256 chars each");
+    }
+    args = p.args as string[];
+  }
+  let cwd: string;
+  let label = typeof p.label === "string" ? p.label : undefined;
+  if (hasWs) {
+    const sourceId = p.workspace_id as string;
+    cwd = await resolveCwd(deps, session, sourceId);
+    label ??= deps.index.get(session, sourceId)?.label;
+  } else {
+    cwd = p.cwd as string;
+    if (!isAbsolute(cwd)) throw new BrokerError("bad_request", "'cwd' must be an absolute path");
+    let stat;
+    try {
+      stat = statSync(cwd);
+    } catch {
+      throw new BrokerError("bad_request", `'cwd' does not exist: ${cwd}`);
+    }
+    if (!stat.isDirectory()) throw new BrokerError("bad_request", `'cwd' is not a directory: ${cwd}`);
+  }
+
+  const created = (await deps.local.request(session, "workspace.create", { cwd, ...(label ? { label } : {}) }, 15_000)) as {
+    root_pane?: { pane_id?: unknown };
+  };
+  const paneId = typeof created?.root_pane?.pane_id === "string" ? created.root_pane.pane_id : undefined;
+  if (!paneId || !paneId.includes(":")) {
+    throw new BrokerError("upstream_error", "workspace.create returned no root pane");
+  }
+  const workspaceId = paneId.split(":")[0];
+  deps.index.set(session, workspaceId, { cwd, ...(label ? { label } : {}) });
+
+  const name = typeof p.name === "string" ? p.name : kind;
+  const timeoutMs = typeof p.timeout_ms === "number" ? p.timeout_ms : undefined;
+  try {
+    await deps.local.request(
+      session,
+      "agent.start",
+      { name, kind, pane_id: paneId, ...(args ? { args } : {}), ...(timeoutMs ? { timeout_ms: timeoutMs } : {}) },
+      (timeoutMs ?? 30_000) + 5000,
+    );
+  } catch (e) {
+    // The workspace exists — hand its id back so the client can retry into
+    // it with mode B instead of leaking it (spec §2.1).
+    const err = e instanceof BrokerError ? e : new BrokerError("upstream_error", String(e));
+    throw new BrokerError(err.code, err.message, { ...err.details, workspace_id: workspaceId, pane_id: paneId });
+  }
+
+  const raw = (await deps.local.request(session, "agent.list", {}, 5000).catch(() => ({}))) as {
+    agents?: Array<Record<string, unknown>>;
+  };
+  const entry = raw.agents?.find((a) => a.pane_id === paneId);
+  return { workspace_id: workspaceId, pane_id: paneId, agent: name, status: foldStatus(entry?.agent_status) };
 }
 
 async function ask(deps: OpsDeps, session: string, p: Record<string, unknown>): Promise<unknown> {

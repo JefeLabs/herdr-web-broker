@@ -119,3 +119,82 @@ test("broker.repo.tree and broker.repo.diff resolve through the index; unknown c
     await t.teardown();
   }
 });
+
+test("spawn mode A: workspace.create + agent.start, cwd validated and recorded in the index", async () => {
+  const t = await setup();
+  try {
+    const cwd = scratchRepo();
+    t.fake.handlers.set("workspace.create", () => ({ root_pane: { pane_id: "w2:p1" } }));
+    t.fake.handlers.set("agent.start", () => ({ type: "agent_started" }));
+    const out = (await runBrokerMethod(t.deps, "default", "broker.agent.spawn", {
+      kind: "copilot",
+      cwd,
+      label: "demo",
+      args: ["--model", "gpt-5"],
+    })) as { workspace_id: string; pane_id: string; agent: string; status: string };
+    assert.deepEqual(out, { workspace_id: "w2", pane_id: "w2:p1", agent: "copilot", status: "idle" });
+    assert.deepEqual(t.deps.index.get("default", "w2"), { cwd, label: "demo" });
+    const started = t.fake.received.find((r) => r.method === "agent.start");
+    assert.deepEqual(started?.params, { name: "copilot", kind: "copilot", pane_id: "w2:p1", args: ["--model", "gpt-5"] });
+    const created = t.fake.received.find((r) => r.method === "workspace.create");
+    assert.deepEqual(created?.params, { cwd, label: "demo" });
+  } finally {
+    await t.teardown();
+  }
+});
+
+test("spawn validation: kind required; exactly one of cwd/workspace_id; cwd must be an absolute existing dir", async () => {
+  const t = await setup();
+  try {
+    for (const body of [
+      { cwd: "/tmp" },                                   // no kind
+      { kind: "copilot" },                               // neither cwd nor workspace_id
+      { kind: "copilot", cwd: "/x", workspace_id: "w1" },// both
+      { kind: "copilot", cwd: "relative/path" },         // not absolute
+      { kind: "copilot", cwd: join(tmpDir(), "nope") },  // does not exist
+    ]) {
+      await assert.rejects(
+        runBrokerMethod(t.deps, "default", "broker.agent.spawn", body),
+        (e: BrokerError) => e.code === "bad_request",
+        JSON.stringify(body),
+      );
+    }
+  } finally {
+    await t.teardown();
+  }
+});
+
+test("spawn mode B: joins an existing workspace's team — same cwd, inherited label (spec §8.2 fallback)", async () => {
+  const t = await setup();
+  try {
+    const cwd = scratchRepo();
+    t.deps.index.set("default", "w1", { cwd, label: "team-x" });
+    t.fake.handlers.set("workspace.create", () => ({ root_pane: { pane_id: "w3:p1" } }));
+    t.fake.handlers.set("agent.start", () => ({ type: "agent_started" }));
+    const out = (await runBrokerMethod(t.deps, "default", "broker.agent.spawn", {
+      kind: "copilot",
+      workspace_id: "w1",
+    })) as { workspace_id: string };
+    assert.equal(out.workspace_id, "w3");
+    assert.deepEqual(t.deps.index.get("default", "w3"), { cwd, label: "team-x" });
+    const created = t.fake.received.find((r) => r.method === "workspace.create");
+    assert.deepEqual(created?.params, { cwd, label: "team-x" });
+  } finally {
+    await t.teardown();
+  }
+});
+
+test("spawn partial failure: agent.start error carries the orphaned workspace_id (spec §2.1)", async () => {
+  const t = await setup();
+  try {
+    t.fake.handlers.set("workspace.create", () => ({ root_pane: { pane_id: "w4:p1" } }));
+    // no agent.start handler → FakeHerdr answers a not_found error
+    await assert.rejects(
+      runBrokerMethod(t.deps, "default", "broker.agent.spawn", { kind: "copilot", cwd: scratchRepo() }),
+      (e: BrokerError) => e.details.workspace_id === "w4" && e.details.pane_id === "w4:p1",
+    );
+    assert.ok(t.deps.index.get("default", "w4"), "the orphaned workspace stays in the index for a mode-B retry");
+  } finally {
+    await t.teardown();
+  }
+});
