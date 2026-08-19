@@ -1,0 +1,14 @@
+id = "jefelabs.web-broker"
+name = "Web Broker"
+version = "0.1.0"
+min_herdr_version = "0.8.0"
+description = "REST/WS gateway and parent↔child federation for herdr instances"
+
+[[build]]
+command = ["npm", "install"]
+
+[[build]]
+command = ["npm", "run", "build"]
+
+[[startup]]
+command = ["node", "dist/src/daemon.js"]
