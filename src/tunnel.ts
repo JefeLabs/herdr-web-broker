@@ -68,7 +68,6 @@ export class ChildConnection {
       p.reject(new BrokerError("instance_offline", `tunnel to '${this.name}' closed`));
     }
     this.#pending.clear();
-    this.registry.setOffline(this.name);
     this.onGone();
   }
 
@@ -127,7 +126,13 @@ export class TunnelHub {
   attach(name: string, ws: WebSocket, registry: Registry): ChildConnection {
     this.#children.get(name)?.close();
     const conn = new ChildConnection(name, ws, registry, () => {
-      if (this.#children.get(name) === conn) this.#children.delete(name);
+      if (this.#children.get(name) === conn) {
+        this.#children.delete(name);
+        // Only the CURRENT connection's death takes the child offline — a
+        // replaced (stale) connection's async close must not mark a freshly
+        // reattached child offline.
+        registry.setOffline(name);
+      }
     });
     this.#children.set(name, conn);
     return conn;

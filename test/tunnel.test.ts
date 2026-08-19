@@ -114,3 +114,39 @@ test("hub.disconnect severs the live tunnel (revocation path)", async () => {
   await waitFor(() => registry.get("laptop")!.online === false);
   server.close();
 });
+
+test("reattach: the stale connection's async close does not mark the freshly reattached child offline", async () => {
+  const { registry, hub, server, port } = await setup();
+
+  const first = dial(port, "laptop", "sekret");
+  await new Promise((r) => first.once("open", r));
+  first.send(JSON.stringify(HELLO));
+  await new Promise((r) => first.once("message", r));
+
+  // A second enrollment for the same name, while the first is still open, replaces it.
+  const second = dial(port, "laptop", "sekret");
+  await new Promise((r) => second.once("open", r));
+  second.send(JSON.stringify(HELLO));
+  await new Promise((r) => second.once("message", r));
+
+  // The stale (first) connection gets closed asynchronously as part of the replace.
+  await new Promise<void>((r) => first.once("close", () => r()));
+
+  // The freshly reattached child must still read as online — the stale close must not flip it.
+  assert.equal(registry.get("laptop")!.online, true);
+
+  // And the new tunnel actually serves requests.
+  second.once("message", (data) => {
+    const frame = JSON.parse(String(data));
+    if (frame.type === "req") {
+      second.send(JSON.stringify({ type: "res", id: frame.id, result: { agents: [] } }));
+    }
+  });
+  const result = await hub.get("laptop")!.request("default", "agent.list", {});
+  assert.deepEqual(result, { agents: [] });
+
+  // Close the still-live tunnel so no open socket outlives the test.
+  second.close();
+  await waitFor(() => registry.get("laptop")!.online === false);
+  server.close();
+});
