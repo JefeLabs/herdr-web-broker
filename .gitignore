@@ -2,3 +2,5 @@ node_modules/
 dist/
 .screenshots/
 .idea
+/docs/superpowers/plans/
+/docs/superpowers/specs/
