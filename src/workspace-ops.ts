@@ -1,6 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, statSync } from "node:fs";
 import { isAbsolute, join, sep } from "node:path";
+import type { EnvRegistry } from "./env-registry.js";
 import { BrokerError } from "./errors.js";
 import { DIFF_CAP_BYTES, discoverRepos, repoDiff, repoTree, resolveRepo } from "./git-exec.js";
 import type { LocalHerdr } from "./local-attach.js";
@@ -11,9 +12,12 @@ export interface OpsDeps {
   local: LocalHerdr;
   registry: Registry;
   index: WorkspaceIndex;
+  env: EnvRegistry;
   /** test overrides for broker.agent.ask pacing */
   askPollMs?: number;
   askGraceMs?: number;
+  /** test override for post-injection shell settle */
+  envSettleMs?: number;
 }
 
 export function isBrokerMethod(method: string): boolean {
@@ -36,6 +40,27 @@ export async function runBrokerMethod(
   method: string,
   params: unknown,
 ): Promise<unknown> {
+  // Env registry ops are instance-global (env spec §3) — the session only
+  // carried the transport, so they dispatch before the session check.
+  const p0 = (params ?? {}) as Record<string, unknown>;
+  switch (method) {
+    case "broker.env.set": {
+      const scope = {
+        kind: typeof p0.kind === "string" ? p0.kind : undefined,
+        session: typeof p0.session === "string" ? p0.session : undefined,
+      };
+      return { status: "stored", ...deps.env.set(str(p0.name, "name"), str(p0.value, "value"), scope) };
+    }
+    case "broker.env.list":
+      return { vars: deps.env.list() };
+    case "broker.env.delete": {
+      deps.env.delete(str(p0.name, "name"), {
+        kind: typeof p0.kind === "string" ? p0.kind : undefined,
+        session: typeof p0.session === "string" ? p0.session : undefined,
+      });
+      return { status: "deleted" };
+    }
+  }
   if (!deps.local.sessions().includes(session)) {
     throw new BrokerError("unknown_session", `no local session '${session}'`);
   }

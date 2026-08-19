@@ -7,6 +7,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { loadConfig, type BrokerConfig } from "./config.js";
+import { EnvRegistry } from "./env-registry.js";
 import { createHttpHandler, makeCallInstance } from "./http.js";
 import { LocalHerdr, type HerdrEndpoint } from "./local-attach.js";
 import { Projection } from "./projection.js";
@@ -70,7 +71,12 @@ export async function startDaemon(opts: DaemonOptions): Promise<DaemonHandle | u
     sessionsDir: opts.localEndpoints ? undefined : join(homedir(), ".config/herdr/sessions"),
   });
   await local.start();
-  const ops: OpsDeps = { local, registry, index };
+  const ops: OpsDeps = {
+    local,
+    registry,
+    index,
+    env: new EnvRegistry({ stateDir: opts.stateDir, hooks: config.env_hooks, enabled: config.env_registry.enabled }),
+  };
 
   const hub = new TunnelHub();
   let link: ParentLink | undefined;

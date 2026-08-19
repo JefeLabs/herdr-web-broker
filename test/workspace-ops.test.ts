@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { existsSync, mkdirSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { EnvRegistry } from "../src/env-registry.js";
 import { BrokerError } from "../src/errors.js";
 import { LocalHerdr } from "../src/local-attach.js";
 import { Registry } from "../src/registry.js";
@@ -29,8 +30,10 @@ async function setup(): Promise<{ fake: FakeHerdr; deps: OpsDeps; teardown: () =
     local,
     registry,
     index: new WorkspaceIndex(tmpDir()),
+    env: new EnvRegistry({ stateDir: tmpDir() }),
     askPollMs: 25,
     askGraceMs: 150,
+    envSettleMs: 5,
   };
   return {
     fake,

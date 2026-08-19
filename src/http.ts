@@ -165,6 +165,31 @@ export function createHttpHandler(deps: HttpDeps) {
       return;
     }
 
+    // POST/GET /parent/{i}/env, DELETE /parent/{i}/env/{name} — env registry
+    // (env spec §3). Instance-scoped: any live session carries the transport.
+    if (parts[2] === "env") {
+      const transport = Object.keys(entry.sessions)[0];
+      if (!transport) throw new BrokerError("unknown_session", `'${instance}' has no sessions to carry env ops`);
+      if (parts.length === 3 && req.method === "POST") {
+        const body = await readBody(req);
+        json(res, 200, (await callInstance(instance, transport, "broker.env.set", body)) as Record<string, unknown>);
+        return;
+      }
+      if (parts.length === 3 && req.method === "GET") {
+        json(res, 200, (await callInstance(instance, transport, "broker.env.list", {})) as Record<string, unknown>);
+        return;
+      }
+      if (parts.length === 4 && req.method === "DELETE") {
+        const params: Record<string, unknown> = { name: decodeURIComponent(parts[3]) };
+        const kind = url.searchParams.get("kind");
+        if (kind !== null) params.kind = kind;
+        const sess = url.searchParams.get("session");
+        if (sess !== null) params.session = sess;
+        json(res, 200, (await callInstance(instance, transport, "broker.env.delete", params)) as Record<string, unknown>);
+        return;
+      }
+    }
+
     // GET /parent/{i}/sessions
     if (parts.length === 3 && parts[2] === "sessions" && req.method === "GET") {
       const sessions = Object.entries(entry.sessions).map(([name, sess]) => {

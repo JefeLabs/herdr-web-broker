@@ -4,6 +4,7 @@ import { createServer } from "node:http";
 import { writeFileSync } from "node:fs";
 import type { AddressInfo } from "node:net";
 import { join } from "node:path";
+import { EnvRegistry } from "../src/env-registry.js";
 import { Registry } from "../src/registry.js";
 import { LocalHerdr } from "../src/local-attach.js";
 import { TunnelHub } from "../src/tunnel.js";
@@ -29,7 +30,14 @@ async function setup() {
   const config = loadConfig(tmpDir());
   config.client_tokens = [{ name: "t", token: "tok" }];
   const children = new ChildrenStore(tmpDir());
-  const ops: OpsDeps = { local, registry, index: new WorkspaceIndex(tmpDir()), askPollMs: 25, askGraceMs: 150 };
+  const ops: OpsDeps = {
+    local,
+    registry,
+    index: new WorkspaceIndex(tmpDir()),
+    env: new EnvRegistry({ stateDir: tmpDir() }),
+    askPollMs: 25,
+    askGraceMs: 150,
+  };
   const server = createServer(
     createHttpHandler({
       registry,
@@ -295,4 +303,48 @@ test("POST .../agents/{pane}/ask returns the parsed answer", async () => {
   assert.equal(res.status, 200);
   assert.deepEqual(((await res.json()) as { answer: unknown }).answer, { files_changed: 1 });
   await teardown(t);
+});
+
+test("env routes: store, list (redacted, with source), delete; value absent everywhere", async () => {
+  const t = await setup();
+  try {
+    const post = await t.authed("/parent/runtime/env", {
+      method: "POST",
+      body: JSON.stringify({ name: "COPILOT_GITHUB_TOKEN", value: "super-sekret", kind: "copilot" }),
+    });
+    assert.equal(post.status, 200);
+    const stored = await post.json();
+    assert.deepEqual(stored, { status: "stored", name: "COPILOT_GITHUB_TOKEN", scope: { kind: "copilot" } });
+
+    const list = await t.authed("/parent/runtime/env");
+    const body = await list.text();
+    assert.ok(!body.includes("super-sekret"), "value must never appear in responses");
+    const vars = JSON.parse(body).vars as { name: string; source: string }[];
+    assert.deepEqual(vars.map((v) => [v.name, v.source]), [["COPILOT_GITHUB_TOKEN", "manual"]]);
+
+    const del = await t.authed("/parent/runtime/env/COPILOT_GITHUB_TOKEN?kind=copilot", { method: "DELETE" });
+    assert.equal(del.status, 200);
+    const delAgain = await t.authed("/parent/runtime/env/COPILOT_GITHUB_TOKEN?kind=copilot", { method: "DELETE" });
+    assert.equal(delAgain.status, 404);
+  } finally {
+    await teardown(t);
+  }
+});
+
+test("env routes: bad name 400, unauthenticated 401, disabled 403", async () => {
+  const t = await setup();
+  try {
+    const bad = await t.authed("/parent/runtime/env", {
+      method: "POST",
+      body: JSON.stringify({ name: "not-valid", value: "v" }),
+    });
+    assert.equal(bad.status, 400);
+    const anon = await fetch(t.base + "/parent/runtime/env");
+    assert.equal(anon.status, 401);
+    (t.ops as { env: EnvRegistry }).env = new EnvRegistry({ stateDir: tmpDir(), enabled: false });
+    const off = await t.authed("/parent/runtime/env");
+    assert.equal(off.status, 403);
+  } finally {
+    await teardown(t);
+  }
 });
