@@ -50,6 +50,12 @@ export class FakeHerdr {
     for (const sock of this.#conns) sock.write(encodeFrame({ event }));
   }
 
+  /** Writes raw bytes to every connected client — used to simulate a
+   * malformed or truncated line arriving from the herdr side. */
+  sendRaw(data: string): void {
+    for (const sock of this.#conns) sock.write(data);
+  }
+
   get connections(): number {
     return this.#conns.size;
   }

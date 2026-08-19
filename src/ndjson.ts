@@ -4,13 +4,18 @@ export function encodeFrame(value: unknown): string {
   return JSON.stringify(value) + "\n";
 }
 
-const MAX_BUF_BYTES = 1_048_576;
+const DEFAULT_MAX_BUF_BYTES = 1_048_576;
 
 export class NdjsonDecoder {
   #buf = "";
 
+  /** maxBufBytes caps the unterminated trailing buffer — callers with
+   * legitimately larger single-line frames (e.g. a local, trusted herdr
+   * socket) can raise it; the wire-facing default stays conservative. */
+  constructor(private maxBufBytes = DEFAULT_MAX_BUF_BYTES) {}
+
   /** Feed a chunk; returns every complete frame it finishes. Throws on a
-   * malformed line, or on an unterminated buffer past MAX_BUF_BYTES — callers
+   * malformed line, or on an unterminated buffer past maxBufBytes — callers
    * should close the connection either way. */
   push(chunk: Buffer | string): unknown[] {
     this.#buf += chunk.toString();
@@ -22,8 +27,8 @@ export class NdjsonDecoder {
       if (line.length === 0) continue;
       frames.push(JSON.parse(line));
     }
-    if (Buffer.byteLength(this.#buf) > MAX_BUF_BYTES) {
-      throw new Error(`ndjson line exceeds ${MAX_BUF_BYTES} bytes without a newline`);
+    if (Buffer.byteLength(this.#buf) > this.maxBufBytes) {
+      throw new Error(`ndjson line exceeds ${this.maxBufBytes} bytes without a newline`);
     }
     return frames;
   }

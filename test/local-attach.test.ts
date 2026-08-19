@@ -121,6 +121,51 @@ test("a never-reachable endpoint's repeated failed connects never emit session_r
   await fake.close();
 });
 
+test("a legitimate oversized single-line response (>1MB) still resolves — the local cap is raised above the wire default", async () => {
+  const { fake, local } = await setup();
+  fake.handlers.set("big.read", () => ({ data: "x".repeat(2_000_000) }));
+  const result = (await local.request("default", "big.read", {})) as { data: string };
+  assert.equal(result.data.length, 2_000_000);
+  local.stop();
+  await fake.close();
+});
+
+test("a malformed line from the local herdr destroys just that connection — a second session still answers", async () => {
+  const dir = tmpDir();
+  const fakeA = new FakeHerdr(join(dir, "a.sock"));
+  fakeA.agents = [{ id: "a1", title: "claude", status: "working" }];
+  await fakeA.listen();
+  const fakeB = new FakeHerdr(join(dir, "b.sock"));
+  fakeB.agents = [{ id: "b1", title: "codex", status: "idle" }];
+  await fakeB.listen();
+
+  const registry = new Registry();
+  const removedSessions: string[] = [];
+  registry.on("session_removed", ({ session }: { session: string }) => removedSessions.push(session));
+  const local = new LocalHerdr({
+    registry,
+    herdrVersion: "0.8.0-test",
+    endpoints: [
+      { session: "a", socketPath: fakeA.socketPath },
+      { session: "b", socketPath: fakeB.socketPath },
+    ],
+  });
+  await local.start();
+  assert.deepEqual(local.sessions().sort(), ["a", "b"]);
+
+  fakeA.sendRaw("not json\n");
+  await waitFor(() => local.sessions().sort().join(",") === "b");
+  assert.ok(removedSessions.includes("a"));
+
+  // The daemon is still alive: the untouched session still answers.
+  const result = (await local.request("b", "agent.list", {})) as { agents: { id: string }[] };
+  assert.equal(result.agents[0].id, "b1");
+
+  local.stop();
+  await fakeA.close();
+  await fakeB.close();
+});
+
 test("stop() is idempotent", async () => {
   const { fake, local } = await setup();
   local.stop();

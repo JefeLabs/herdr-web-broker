@@ -69,9 +69,14 @@ interface Pending {
   timer: NodeJS.Timeout;
 }
 
+// Local herdr responses (e.g. a big pane.read/agent.read) legitimately carry
+// a large single-line result — well past the 1MB wire default that guards
+// untrusted remote frames.
+const LOCAL_MAX_BUF_BYTES = 32 * 1_048_576;
+
 class SessionConn {
   #sock?: Socket;
-  #dec = new NdjsonDecoder();
+  #dec = new NdjsonDecoder(LOCAL_MAX_BUF_BYTES);
   #pending = new Map<string, Pending>();
   #seq = 0;
 
@@ -89,7 +94,17 @@ class SessionConn {
       sock.once("connect", resolve);
       sock.once("error", reject);
       sock.on("data", (chunk) => {
-        for (const frame of this.#dec.push(chunk)) this.#route(frame);
+        let frames: unknown[];
+        try {
+          frames = this.#dec.push(chunk);
+        } catch {
+          // An inbound frame must never crash the daemon: a malformed or
+          // oversized line destroys just this local herdr connection — the
+          // close handler below cleans up and the next rescan retries.
+          sock.destroy();
+          return;
+        }
+        for (const frame of frames) this.#route(frame);
       });
       sock.on("close", () => {
         for (const p of this.#pending.values()) {
