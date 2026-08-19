@@ -12,3 +12,33 @@ command = ["npm", "run", "build"]
 
 [[startup]]
 command = ["node", "dist/src/daemon.js"]
+
+[[actions]]
+id = "status"
+title = "Broker: status"
+contexts = ["workspace"]
+command = ["node", "dist/src/cli.js", "status"]
+
+[[actions]]
+id = "issue-secret"
+title = "Broker: issue child secret"
+contexts = ["workspace"]
+command = ["node", "dist/src/cli.js", "issue-secret"]
+
+[[actions]]
+id = "pair"
+title = "Broker: pair with parent"
+contexts = ["workspace"]
+command = ["node", "dist/src/cli.js", "pair"]
+
+[[actions]]
+id = "revoke"
+title = "Broker: revoke child"
+contexts = ["workspace"]
+command = ["node", "dist/src/cli.js", "revoke"]
+
+[[actions]]
+id = "start"
+title = "Broker: start daemon"
+contexts = ["workspace"]
+command = ["node", "dist/src/cli.js", "start"]
