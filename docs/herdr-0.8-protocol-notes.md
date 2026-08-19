@@ -131,3 +131,47 @@ cannot share a connection.
    and both functions coerce status through the same five-to-three fold, so
    `applyAgentStatus` (matching on id) lines up with what `mapAgentList`
    registered.
+
+## Workspace & repos API verification (2026-08-19)
+
+Spec §8 calls for confirming three open questions against `herdr api schema
+--json` from inside the `demo/copilot` container (see
+`demo/copilot/validate.sh`'s `herdr api schema --json | jq ...` step). In
+this execution environment `docker info` never returns — the daemon is
+unreachable (not merely absent: the CLI resolves and hangs indefinitely
+rather than erroring), even with the sandbox restriction lifted — so the
+container could not be built or run and the schema dump could not be taken.
+
+**verification pending — fallbacks in effect.**
+
+The three questions it would have answered, still open:
+
+1. Does herdr 0.8.0 expose a `workspace.list` method, and if so, does its
+   response carry a `cwd` per workspace? `herdrWorkspaces()` in
+   `src/workspace-ops.ts` already calls it opportunistically as the spec §4
+   primary source, but swallows any failure (unknown method, no `cwd` on the
+   entries) and falls back silently to the broker's own `WorkspaceIndex` +
+   an `agent.list`-derived roster. Confirming the method exists and carries
+   `cwd` would let that fallback path be trusted with confidence — or, if it
+   doesn't, confirm the `WorkspaceIndex` fallback is load-bearing rather
+   than incidental.
+2. Does herdr 0.8.0 expose any native pane-create method? `spawn()` in
+   `src/workspace-ops.ts` currently answers `workspace_id`-targeted spawns
+   (spec §8.2, "grow the team") by calling `workspace.create` again with the
+   same `cwd` — i.e. opening a **new** workspace that happens to share the
+   original's directory — rather than adding a pane to the existing
+   workspace, because no verified pane-create method was available.
+3. What are `agent.prompt`'s `wait` semantics — does `wait: true` block
+   until the agent finishes responding, or only until the prompt is
+   accepted/queued? Neither current call site passes `wait`: the `rpc`
+   passthrough sends whatever the caller supplies, and `broker.agent.ask`
+   (`ask()` in `src/workspace-ops.ts`) calls `agent.prompt` with bare
+   `{target, text}` and then polls a file-drop plus the pane's status
+   itself rather than relying on the call to block. Confirming `wait`'s
+   semantics could let `ask()` block on the rpc instead of polling.
+
+If a future run of `validate.sh` against a live container turns up an answer
+that contradicts one of these fallbacks (e.g. a real pane-create method
+exists, or `workspace.list` already carries `cwd` natively), that is
+follow-up work against the affected task's module — not a silent patch to
+this plan.

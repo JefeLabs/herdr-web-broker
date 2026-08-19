@@ -44,11 +44,21 @@ the local machine; anything else is an enrolled child.
 | `GET /parent/{instance}/sessions` | herdr sessions on that machine |
 | `GET /parent/{instance}/sessions/{s}/agents` | agents + status (`?fresh=1` re-queries) |
 | `POST /parent/{instance}/sessions/{s}/rpc` | any herdr socket method: `{"method", "params"}` |
+| `POST /parent/{instance}/sessions/{s}/agents` | spawn a team agent: `{kind, cwd|workspace_id, label?, name?, args?}` |
+| `GET /parent/{instance}/sessions/{s}/workspaces` | working sets: team roster + discovered repos per workspace |
+| `GET .../workspaces/{w}/repos/{r}/tree` | repo file tree (`{r}` = repo path; `-` = workspace root) |
+| `GET .../workspaces/{w}/repos/{r}/git/diff?base=REF` | branch, status, unified diff |
+| `POST .../agents/{pane}/ask` | structured JSON answer from a TUI agent (file-drop) |
 | `WS /parent/ws` | duplex rpc + unsolicited status events |
 
 Every herdr method is passthrough (see `herdr api schema --json`), gated by a
 deny-list (`policy.remote_deny`, default: `server.stop`,
 `server.reload_config`, `plugin.*` for remote-originated calls).
+
+Workspace/repo routes are served by the broker itself (`broker.*` virtual
+methods) and on child instances require the child's plugin at or above this
+version — an older child forwards them to herdr, which answers
+unknown-method.
 
 How herdr 0.8.0 actually behaves on the wire — one-shot rpc connections,
 subscribe-only event channels, per-pane status subscriptions, real frame

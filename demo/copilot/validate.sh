@@ -109,3 +109,30 @@ else
   [ -n "$PROMPT_OK" ] || { say "FAIL: agent.prompt was refused"; exit 1; }
   say "PASS (auth-limited): herdr + plugin + Copilot all drove over HTTP; export COPILOT_GITHUB_TOKEN for the full round trip"
 fi
+
+echo "--- workspace & repos API ---"
+# git and herdr live inside the container, not on the host (Dockerfile) — go
+# through docker exec for those; the HTTP calls stay from the host, same as
+# the rest of this script, since that's what's actually under test.
+docker exec "$NAME" sh -c '
+  git init -q /work/demo-repo && cd /work/demo-repo &&
+  git config user.email demo@test && git config user.name demo &&
+  echo one > a.txt && git add . && git commit -qm init
+'
+
+SPAWN=$(curl -sS -H "Authorization: Bearer ${TOKEN}" -H 'content-type: application/json' \
+  -X POST "${BASE}/parent/runtime/sessions/default/agents" \
+  -d '{"kind":"copilot","cwd":"/work/demo-repo","label":"api-demo","timeout_ms":60000}')
+echo "$SPAWN" | jq -c .
+WS=$(echo "$SPAWN" | jq -r .workspace_id)
+
+curl -sS -H "Authorization: Bearer ${TOKEN}" "${BASE}/parent/runtime/sessions/default/workspaces" | jq -c .
+curl -sS -H "Authorization: Bearer ${TOKEN}" \
+  "${BASE}/parent/runtime/sessions/default/workspaces/${WS}/repos/-/tree" | jq -c .tree
+
+docker exec "$NAME" sh -c 'echo two > /work/demo-repo/a.txt'
+curl -sS -H "Authorization: Bearer ${TOKEN}" \
+  "${BASE}/parent/runtime/sessions/default/workspaces/${WS}/repos/-/git/diff" | jq -r '.status, (.diff | length)'
+
+echo "--- herdr schema verification (spec §8) ---"
+docker exec "$NAME" herdr api schema --json | jq '[.schemas.request.oneOf[].properties.method.const // empty] | map(select(test("workspace|pane")))'
