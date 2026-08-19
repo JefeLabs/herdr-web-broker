@@ -80,6 +80,7 @@ test("herdr errors and unknown sessions become BrokerErrors", async () => {
 
 test("streamed status events update the runtime registry entry", async () => {
   const { fake, registry, local } = await setup();
+  await waitFor(() => fake.eventConnections === 1);
   fake.emitEvent("pane_agent_status_changed", {
     pane_id: "w1:p1",
     workspace_id: "w1",
@@ -93,6 +94,7 @@ test("streamed status events update the runtime registry entry", async () => {
 
 test("lifecycle events trigger an agent re-list (refresh)", async () => {
   const { fake, registry, local } = await setup();
+  await waitFor(() => fake.eventConnections === 1);
   fake.agents = [
     { pane_id: "w1:p1", name: "claude", agent_status: "working" },
     { pane_id: "w1:p2", name: "copilot", agent_status: "idle" },
@@ -144,14 +146,11 @@ test("a legitimate oversized single-line response (>1MB) still resolves — the 
   await fake.close();
 });
 
-test("a malformed line on the event channel retires just that session — a second session still answers", async () => {
+test("a malformed line kills only the event channel — the session keeps serving and re-subscribes on rescan", async () => {
   const dir = tmpDir();
-  const fakeA = new FakeHerdr(join(dir, "a.sock"));
-  fakeA.agents = [{ pane_id: "a:p1", name: "claude", agent_status: "working" }];
-  await fakeA.listen();
-  const fakeB = new FakeHerdr(join(dir, "b.sock"));
-  fakeB.agents = [{ pane_id: "b:p1", name: "codex", agent_status: "idle" }];
-  await fakeB.listen();
+  const fake = new FakeHerdr(join(dir, "a.sock"));
+  fake.agents = [{ pane_id: "a:p1", name: "claude", agent_status: "working" }];
+  await fake.listen();
 
   const registry = new Registry();
   const removedSessions: string[] = [];
@@ -159,25 +158,68 @@ test("a malformed line on the event channel retires just that session — a seco
   const local = new LocalHerdr({
     registry,
     herdrVersion: "0.8.0-test",
-    endpoints: [
-      { session: "a", socketPath: fakeA.socketPath },
-      { session: "b", socketPath: fakeB.socketPath },
-    ],
+    endpoints: [{ session: "a", socketPath: fake.socketPath }],
+    rescanMs: 30,
   });
   await local.start();
-  assert.deepEqual(local.sessions().sort(), ["a", "b"]);
+  assert.deepEqual(local.sessions(), ["a"]);
+  await waitFor(() => fake.eventConnections === 1);
 
-  fakeA.sendRaw("not json\n");
-  await waitFor(() => local.sessions().sort().join(",") === "b");
-  assert.ok(removedSessions.includes("a"));
+  fake.sendRaw("not json\n");
+  await waitFor(() => fake.eventConnections === 0);
 
-  // The daemon is still alive: the untouched session still answers.
-  const result = (await local.request("b", "agent.list", {})) as { agents: { pane_id: string }[] };
-  assert.equal(result.agents[0].pane_id, "b:p1");
+  // Presence is owned by rpc, not the stream: still serving, never removed.
+  const result = (await local.request("a", "agent.list", {})) as { agents: { pane_id: string }[] };
+  assert.equal(result.agents[0].pane_id, "a:p1");
+  assert.deepEqual(removedSessions, []);
+
+  // The next rescan re-subscribes a fresh event channel.
+  await waitFor(() => fake.eventConnections === 1);
 
   local.stop();
-  await fakeA.close();
-  await fakeB.close();
+  await fake.close();
+});
+
+test("a changed pane set replaces the event channel with per-pane status subscriptions in ONE call", async () => {
+  const { fake, local } = await setup();
+  await waitFor(() => fake.eventConnections === 1);
+  const firstSub = fake.received.filter((r) => r.method === "events.subscribe").at(-1)!;
+  const firstPanes = (firstSub.params as { subscriptions: { pane_id?: string }[] }).subscriptions
+    .filter((s) => s.pane_id)
+    .map((s) => s.pane_id);
+  assert.deepEqual(firstPanes, ["w1:p1"]);
+
+  fake.agents = [
+    { pane_id: "w1:p1", name: "claude", agent_status: "working" },
+    { pane_id: "w1:p2", name: "copilot", agent_status: "idle" },
+  ];
+  fake.emitEvent("pane_agent_detected", { pane_id: "w1:p2", workspace_id: "w1", agent: "copilot" });
+
+  await waitFor(() => {
+    const last = fake.received.filter((r) => r.method === "events.subscribe").at(-1)!;
+    const panes = (last.params as { subscriptions: { pane_id?: string }[] }).subscriptions
+      .filter((s) => s.pane_id)
+      .map((s) => s.pane_id)
+      .sort();
+    return panes.join(",") === "w1:p1,w1:p2";
+  });
+
+  local.stop();
+  await fake.close();
+});
+
+test("dotted event names (herdr's status-stream spelling) are accepted", async () => {
+  const { fake, registry, local } = await setup();
+  await waitFor(() => fake.eventConnections === 1);
+  fake.emitEvent("pane.agent_status_changed", {
+    pane_id: "w1:p1",
+    workspace_id: "w1",
+    agent_status: "blocked",
+    agent: "claude",
+  });
+  await waitFor(() => registry.counts("runtime").blocked === 1);
+  local.stop();
+  await fake.close();
 });
 
 test("stop() is idempotent", async () => {
@@ -190,6 +232,7 @@ test("stop() is idempotent", async () => {
 
 test("an unrecognized streamed status coerces to idle rather than corrupting counts", async () => {
   const { fake, registry, local } = await setup();
+  await waitFor(() => fake.eventConnections === 1);
   fake.emitEvent("pane_agent_status_changed", {
     pane_id: "w1:p1",
     workspace_id: "w1",
