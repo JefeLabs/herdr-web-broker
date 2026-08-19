@@ -4,9 +4,12 @@ const STATUS: Record<string, number> = {
   method_denied: 403,
   unknown_instance: 404,
   unknown_session: 404,
+  unknown_workspace: 404,
+  unknown_repo: 404,
   instance_offline: 503,
   upstream_timeout: 504,
   proto_mismatch: 400,
+  git_error: 502,
 };
 
 /** Unknown codes are herdr passthrough errors → 502 per spec §6. */
