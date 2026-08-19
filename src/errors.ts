@@ -1,0 +1,30 @@
+const STATUS: Record<string, number> = {
+  unauthorized: 401,
+  bad_request: 400,
+  method_denied: 403,
+  unknown_instance: 404,
+  unknown_session: 404,
+  instance_offline: 503,
+  upstream_timeout: 504,
+  proto_mismatch: 400,
+};
+
+/** Unknown codes are herdr passthrough errors → 502 per spec §6. */
+export function httpStatus(code: string): number {
+  return STATUS[code] ?? 502;
+}
+
+export class BrokerError extends Error {
+  constructor(
+    readonly code: string,
+    message: string,
+    readonly details: Record<string, unknown> = {},
+  ) {
+    super(message);
+    this.name = "BrokerError";
+  }
+
+  toEnvelope(): Record<string, unknown> {
+    return { code: this.code, message: this.message, ...this.details };
+  }
+}
