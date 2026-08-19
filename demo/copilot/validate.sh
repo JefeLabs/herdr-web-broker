@@ -33,8 +33,9 @@ say "running container"
 docker rm -f "$NAME" >/dev/null 2>&1 || true
 docker run -d --name "$NAME" -p "${PORT}:7591" \
   -e BROKER_TOKEN="$TOKEN" \
-  ${COPILOT_GITHUB_TOKEN:+-e COPILOT_GITHUB_TOKEN="$COPILOT_GITHUB_TOKEN"} \
   "$IMG" >/dev/null
+# The Copilot token never enters the container at start — it travels over
+# the API below (POST /parent/runtime/env), the way the headless UI does it.
 trap 'docker rm -f "$NAME" >/dev/null 2>&1 || true' EXIT
 
 say "waiting for /health"
@@ -46,6 +47,19 @@ curl -fsS "${BASE}/health" | jq -c .
 
 say "instances (authed)"
 curl -fsS -H "Authorization: Bearer ${TOKEN}" "${BASE}/parent" | jq -c .
+
+say "passing env to the broker at runtime (replaces docker -e)"
+curl -sS -H "Authorization: Bearer ${TOKEN}" -H 'content-type: application/json' \
+  -X POST "${BASE}/parent/runtime/env" \
+  -d '{"name":"HERDR_ENV_CANARY","value":"injected-ok","kind":"copilot"}' | jq -c .
+if [ -n "${COPILOT_GITHUB_TOKEN:-}" ]; then
+  jq -n --arg v "$COPILOT_GITHUB_TOKEN" '{name:"COPILOT_GITHUB_TOKEN",value:$v,kind:"copilot"}' |
+    curl -sS -H "Authorization: Bearer ${TOKEN}" -H 'content-type: application/json' \
+      -X POST "${BASE}/parent/runtime/env" -d @- | jq -c .
+fi
+LIST=$(curl -sS -H "Authorization: Bearer ${TOKEN}" "${BASE}/parent/runtime/env")
+echo "$LIST" | jq -c .
+echo "$LIST" | grep -q "injected-ok" && { say "FAIL: env value leaked in list"; exit 1; }
 
 say "creating a workspace through the endpoint"
 WC=$(rpc workspace.create '{"cwd":"/work","label":"demo"}')
@@ -87,28 +101,18 @@ SCREEN=""
 for _ in $(seq 1 45); do
   READ=$(rpc pane.read "{\"pane_id\":\"$PANE\",\"source\":\"visible\"}") || true
   SCREEN=$(echo "$READ" | jq -r '.result.read.text // empty' 2>/dev/null || true)
-  if [ -n "${COPILOT_GITHUB_TOKEN:-}" ]; then
-    # full tier: wait for Copilot's answer
-    echo "$SCREEN" | grep -qi "pong" && break
-  else
-    # auth-limited tier: Copilot's live UI in the pane proves the chain
-    echo "$SCREEN" | grep -qiE "copilot|login" && break
-  fi
+  # This agent was started via raw rpc agent.start, which bypasses the
+  # broker's env injection on purpose — its live UI proves the chain.
+  echo "$SCREEN" | grep -qiE "copilot|login" && break
   sleep 2
 done
 printf '%s\n' "--- pane screen (last read) ---"
 printf '%s\n' "$SCREEN" | tail -20
 printf '%s\n' "-------------------------------"
 
-if [ -n "${COPILOT_GITHUB_TOKEN:-}" ]; then
-  echo "$SCREEN" | grep -qi "pong" || { say "FAIL: no Copilot reply seen"; exit 1; }
-  [ -n "$PROMPT_OK" ] || { say "FAIL: agent.prompt was refused"; exit 1; }
-  say "PASS (full): prompt sent over HTTP and answered by Copilot"
-else
-  echo "$SCREEN" | grep -qiE "copilot|login" || { say "FAIL: Copilot UI never appeared in the pane"; exit 1; }
-  [ -n "$PROMPT_OK" ] || { say "FAIL: agent.prompt was refused"; exit 1; }
-  say "PASS (auth-limited): herdr + plugin + Copilot all drove over HTTP; export COPILOT_GITHUB_TOKEN for the full round trip"
-fi
+echo "$SCREEN" | grep -qiE "copilot|login" || { say "FAIL: Copilot UI never appeared in the pane"; exit 1; }
+[ -n "$PROMPT_OK" ] || { say "FAIL: agent.prompt was refused"; exit 1; }
+say "PASS (rpc passthrough): herdr + plugin + Copilot drove over HTTP"
 
 echo "--- workspace & repos API ---"
 # git and herdr live inside the container, not on the host (Dockerfile) — go
@@ -122,13 +126,38 @@ docker exec "$NAME" sh -c '
 
 SPAWN=$(curl -sS -H "Authorization: Bearer ${TOKEN}" -H 'content-type: application/json' \
   -X POST "${BASE}/parent/runtime/sessions/default/agents" \
-  -d '{"kind":"copilot","cwd":"/work/demo-repo","label":"api-demo","timeout_ms":60000}')
+  -d '{"kind":"copilot","cwd":"/work/demo-repo","label":"api-demo","name":"api-demo","timeout_ms":60000}')
 echo "$SPAWN" | jq -c .
 WS=$(echo "$SPAWN" | jq -r .workspace_id)
 
 curl -sS -H "Authorization: Bearer ${TOKEN}" "${BASE}/parent/runtime/sessions/default/workspaces" | jq -c .
 curl -sS -H "Authorization: Bearer ${TOKEN}" \
   "${BASE}/parent/runtime/sessions/default/workspaces/${WS}/repos/-/tree" | jq -c .tree
+
+say "proving spawn injection via /proc environ"
+sleep 3
+CANARY_OK=""
+for pid in $(docker exec "$NAME" pgrep -f copilot); do
+  docker exec "$NAME" sh -c "tr '\0' '\n' < /proc/$pid/environ 2>/dev/null | grep -q '^HERDR_ENV_CANARY=injected-ok$'" && { CANARY_OK=$pid; break; }
+done
+[ -n "$CANARY_OK" ] || { say "FAIL: no copilot process carries the injected canary"; exit 1; }
+say "PASS (injection): pid $CANARY_OK inherited HERDR_ENV_CANARY through the pane shell"
+
+if [ -n "${COPILOT_GITHUB_TOKEN:-}" ]; then
+  say "full tier: prompting the runtime-authenticated agent"
+  SPAWN_PANE=$(echo "$SPAWN" | jq -r .pane_id)
+  sleep 5
+  rpc pane.send_keys "{\"pane_id\":\"$SPAWN_PANE\",\"keys\":[\"1\"]}" >/dev/null; sleep 2
+  rpc agent.prompt '{"target":"api-demo","text":"Reply with exactly the word: pong"}' | jq -c .
+  ANSWERED=""
+  for _ in $(seq 1 45); do
+    S=$(rpc pane.read "{\"pane_id\":\"$SPAWN_PANE\",\"source\":\"visible\"}" | jq -r '.result.read.text // empty')
+    echo "$S" | grep -qi "pong" && { ANSWERED=1; break; }
+    sleep 2
+  done
+  [ -n "$ANSWERED" ] || { say "FAIL: runtime-token agent never answered"; exit 1; }
+  say "PASS (full): token POSTed at runtime, agent spawned authenticated, prompt answered"
+fi
 
 docker exec "$NAME" sh -c 'echo two > /work/demo-repo/a.txt'
 curl -sS -H "Authorization: Bearer ${TOKEN}" \

@@ -16,10 +16,12 @@ the plugin's own `start` action rather than by hand.
 
 ```sh
 # full round trip (Copilot answers): needs a fine-grained PAT with the
-# "Copilot Requests" permission
+# "Copilot Requests" permission — the script POSTs it to
+# /parent/runtime/env at runtime; it never enters the container at start
 COPILOT_GITHUB_TOKEN=github_pat_... ./validate.sh
 
-# without a token: validates the whole chain up to prompt fulfillment
+# without a token: validates the chain up to prompt delivery, plus the
+# env-injection canary (a spawned agent inherits a POSTed variable)
 ./validate.sh
 ```
 

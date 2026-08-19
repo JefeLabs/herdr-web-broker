@@ -49,11 +49,20 @@ the local machine; anything else is an enrolled child.
 | `GET .../workspaces/{w}/repos/{r}/tree` | repo file tree (`{r}` = repo path; `-` = workspace root) |
 | `GET .../workspaces/{w}/repos/{r}/git/diff?base=REF` | branch, status, unified diff |
 | `POST .../agents/{pane}/ask` | structured JSON answer from a TUI agent (file-drop) |
+| `POST /parent/{instance}/env` | store an env var for agent spawns: `{name, value, kind?, session?}` — write-only |
+| `GET /parent/{instance}/env` | stored names + scopes + source (`manual`/`hook`) — never values |
+| `DELETE /parent/{instance}/env/{name}` | remove an entry (`?kind=&session=` select the scope) |
 | `WS /parent/ws` | duplex rpc + unsolicited status events |
 
 Every herdr method is passthrough (see `herdr api schema --json`), gated by a
 deny-list (`policy.remote_deny`, default: `server.stop`,
 `server.reload_config`, `plugin.*` for remote-originated calls).
+
+Agents needing credentials get them at spawn: values POSTed to `/env` (or
+fetched by config-declared `[[env_hooks]]` commands — manual values win) are
+exported into the pane shell through a seconds-lived 0600 drop file before
+`agent.start`, so the CLI starts authenticated and the value never transits
+the PTY or any log.
 
 Workspace/repo routes are served by the broker itself (`broker.*` virtual
 methods) and on child instances require the child's plugin at or above this
@@ -63,7 +72,7 @@ unknown-method.
 How herdr 0.8.0 actually behaves on the wire — one-shot rpc connections,
 subscribe-only event channels, per-pane status subscriptions, real frame
 shapes — is written up in
-[docs/herdr-0.8-protocol-notes.md](docs/herdr-0.8-protocol-notes.md).
+[docs/herdr-0.8-protocol-notes.md](docs/superpowers/specs/herdr-0.8-protocol-notes.md).
 
 Remote sessions are also projected as local sockets —
 `HERDR_SOCKET_PATH=~/.config/herdr/remotes/laptop/default.sock herdr agent list`
