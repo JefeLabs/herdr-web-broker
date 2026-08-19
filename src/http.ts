@@ -10,6 +10,7 @@ import type { ChildrenStore } from "./state.js";
 import type { TunnelHub } from "./tunnel.js";
 import { PLUGIN_VERSION } from "./version.js";
 import type { CallInstance } from "./ws-server.js";
+import { isBrokerMethod, runBrokerMethod, type OpsDeps } from "./workspace-ops.js";
 
 export interface HttpDeps {
   registry: Registry;
@@ -18,6 +19,7 @@ export interface HttpDeps {
   children: ChildrenStore;
   config: BrokerConfig;
   adminToken: string;
+  ops: OpsDeps;
   onReload?: () => void;
 }
 
@@ -26,12 +28,14 @@ export function makeCallInstance(deps: {
   local: LocalHerdr;
   hub: TunnelHub;
   remoteDeny: string[];
+  ops: OpsDeps;
 }): CallInstance {
   return async (instance, session, method, params, timeoutMs) => {
     if (instance === "runtime") {
       if (!deps.local.sessions().includes(session)) {
         throw new BrokerError("unknown_session", `runtime has no session '${session}'`);
       }
+      if (isBrokerMethod(method)) return runBrokerMethod(deps.ops, session, method, params);
       return deps.local.request(session, method, params, timeoutMs);
     }
     // Parent-side fast-fail per spec §2 — deny without touching the tunnel.
@@ -96,6 +100,7 @@ export function createHttpHandler(deps: HttpDeps) {
     local: deps.local,
     hub: deps.hub,
     remoteDeny: deps.config.policy.remote_deny,
+    ops: deps.ops,
   });
 
   return (req: IncomingMessage, res: ServerResponse): void => {

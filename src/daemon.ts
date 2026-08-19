@@ -12,8 +12,9 @@ import { LocalHerdr, type HerdrEndpoint } from "./local-attach.js";
 import { Projection } from "./projection.js";
 import { Registry } from "./registry.js";
 import { ParentLink } from "./south.js";
-import { ChildrenStore, clearLock, ensureAdminToken, readLock, writeLock } from "./state.js";
+import { ChildrenStore, WorkspaceIndex, clearLock, ensureAdminToken, readLock, writeLock } from "./state.js";
 import { TunnelHub } from "./tunnel.js";
+import type { OpsDeps } from "./workspace-ops.js";
 import { attachUpgradeHandling, type UpgradeHandle } from "./ws-server.js";
 
 export interface DaemonOptions {
@@ -57,6 +58,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<DaemonHandle | u
   const registry = new Registry(join(opts.stateDir, "registry.json"));
   registry.load();
   const children = new ChildrenStore(opts.stateDir);
+  const index = new WorkspaceIndex(opts.stateDir);
   const adminToken = ensureAdminToken(opts.stateDir);
 
   const local = new LocalHerdr({
@@ -68,6 +70,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<DaemonHandle | u
     sessionsDir: opts.localEndpoints ? undefined : join(homedir(), ".config/herdr/sessions"),
   });
   await local.start();
+  const ops: OpsDeps = { local, registry, index };
 
   const hub = new TunnelHub();
   let link: ParentLink | undefined;
@@ -93,6 +96,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<DaemonHandle | u
     children,
     config,
     adminToken,
+    ops,
     onReload: () => startLink({ ...loadConfig(opts.configDir), ...opts.configOverrides }),
   });
 
@@ -114,7 +118,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<DaemonHandle | u
       hub,
       registry,
       config,
-      callInstance: makeCallInstance({ registry, local, hub, remoteDeny: config.policy.remote_deny }),
+      callInstance: makeCallInstance({ registry, local, hub, remoteDeny: config.policy.remote_deny, ops }),
     });
     await new Promise<void>((resolve, reject) => {
       server.once("error", reject);

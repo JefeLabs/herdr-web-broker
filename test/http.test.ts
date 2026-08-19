@@ -9,6 +9,8 @@ import { TunnelHub } from "../src/tunnel.js";
 import { ChildrenStore } from "../src/state.js";
 import { loadConfig } from "../src/config.js";
 import { createHttpHandler } from "../src/http.js";
+import { WorkspaceIndex } from "../src/state.js";
+import type { OpsDeps } from "../src/workspace-ops.js";
 import { FakeHerdr } from "./fake-herdr.js";
 import { tmpDir } from "./util.js";
 
@@ -26,6 +28,7 @@ async function setup() {
   const config = loadConfig(tmpDir());
   config.client_tokens = [{ name: "t", token: "tok" }];
   const children = new ChildrenStore(tmpDir());
+  const ops: OpsDeps = { local, registry, index: new WorkspaceIndex(tmpDir()), askPollMs: 25, askGraceMs: 150 };
   const server = createServer(
     createHttpHandler({
       registry,
@@ -34,13 +37,14 @@ async function setup() {
       children,
       config,
       adminToken: "admin-tok",
+      ops,
     }),
   );
   await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
   const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   const authed = (path: string, init: RequestInit = {}) =>
     fetch(base + path, { ...init, headers: { authorization: "Bearer tok", ...init.headers } });
-  return { fake, registry, local, children, server, base, authed };
+  return { fake, registry, local, children, server, base, authed, ops };
 }
 
 async function teardown(t: { server: import("node:http").Server; local: LocalHerdr; fake: FakeHerdr }) {
@@ -168,5 +172,20 @@ test("admin: token-gated child minting and revocation", async () => {
   });
   assert.equal(revoked.status, 200);
   assert.equal(children.get("laptop"), undefined);
+  await teardown(t);
+});
+
+test("broker.* virtual methods are reachable through the raw rpc passthrough", async () => {
+  const t = await setup();
+  const res = await t.authed("/parent/runtime/sessions/default/rpc", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ method: "broker.workspace.list" }),
+  });
+  assert.equal(res.status, 200);
+  const body = (await res.json()) as { result: { workspaces: { workspace_id: string; cwd: null }[] } };
+  assert.deepEqual(body.result.workspaces.map((w) => [w.workspace_id, w.cwd]), [["w1", null]]);
+  // the virtual method never reached herdr's socket as itself
+  assert.equal(t.fake.received.some((r) => r.method === "broker.workspace.list"), false);
   await teardown(t);
 });
