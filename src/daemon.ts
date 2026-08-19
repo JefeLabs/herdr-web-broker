@@ -9,6 +9,7 @@ import { pathToFileURL } from "node:url";
 import { loadConfig, type BrokerConfig } from "./config.js";
 import { createHttpHandler, makeCallInstance } from "./http.js";
 import { LocalHerdr, type HerdrEndpoint } from "./local-attach.js";
+import { Projection } from "./projection.js";
 import { Registry } from "./registry.js";
 import { ParentLink } from "./south.js";
 import { ChildrenStore, clearLock, ensureAdminToken, readLock, writeLock } from "./state.js";
@@ -127,7 +128,12 @@ export async function startDaemon(opts: DaemonOptions): Promise<DaemonHandle | u
   writeLock(opts.stateDir, { pid: process.pid, listen: `${host}:${port}` });
 
   startLink(config);
-  // Task 11 wires Projection here.
+  const projection = new Projection({
+    dir: opts.projectionDir ?? join(homedir(), ".config/herdr/remotes"),
+    hub,
+    registry,
+  });
+  projection.start();
 
   const scheme = config.tls ? "https" : "http";
   return {
@@ -142,6 +148,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<DaemonHandle | u
     local,
     async close() {
       link?.stop();
+      projection.stop();
       local.stop();
       for (const name of hub.names()) hub.disconnect(name);
       await new Promise<void>((resolve) => server.close(() => resolve()));
