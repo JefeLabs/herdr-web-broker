@@ -112,10 +112,46 @@ test("fresh=1 forwards agent.list and refreshes the registry", async () => {
   await teardown(t);
 });
 
+test("auth is checked before route existence", async () => {
+  const t = await setup();
+  const { base, authed } = t;
+  assert.equal((await fetch(base + "/nonsense")).status, 401);
+  assert.equal((await authed("/nonsense")).status, 404);
+  await teardown(t);
+});
+
+test("oversized body destroys the socket instead of desyncing keep-alive", async () => {
+  const t = await setup();
+  const { base, authed } = t;
+  const oversized = JSON.stringify({
+    method: "agent.list",
+    params: { blob: "x".repeat(1_500_000) },
+  });
+  try {
+    const res = await authed("/parent/runtime/sessions/default/rpc", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: oversized,
+      signal: AbortSignal.timeout(5000),
+    });
+    assert.equal(res.status, 400);
+  } catch {
+    // Acceptable: the client may see the reset socket as a rejected fetch
+    // rather than a clean 400 — either way the daemon must survive it.
+  }
+  const health = await fetch(base + "/health", { signal: AbortSignal.timeout(5000) });
+  assert.equal(health.status, 200);
+  await teardown(t);
+});
+
 test("admin: token-gated child minting and revocation", async () => {
   const t = await setup();
   const { base, children } = t;
   assert.equal((await fetch(base + "/admin/status")).status, 401);
+  assert.equal(
+    (await fetch(base + "/admin/status", { headers: { "x-admin-token": "wrong" } })).status,
+    401,
+  );
   const minted = await (
     await fetch(base + "/admin/children", {
       method: "POST",

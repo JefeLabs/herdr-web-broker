@@ -1,3 +1,4 @@
+import { createHash, timingSafeEqual } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { checkBearer, hashSecret, mintSecret } from "./auth.js";
 import type { BrokerConfig } from "./config.js";
@@ -60,7 +61,12 @@ function json(res: ServerResponse, status: number, body: unknown): void {
 
 function fail(res: ServerResponse, e: unknown): void {
   const err = e instanceof BrokerError ? e : new BrokerError("upstream_error", String(e));
-  json(res, httpStatus(err.code), err.toEnvelope());
+  try {
+    json(res, httpStatus(err.code), err.toEnvelope());
+  } catch {
+    // The socket may already be destroyed (e.g. body-cap abort) — a failed
+    // error write must not crash the daemon.
+  }
 }
 
 async function readBody(req: IncomingMessage): Promise<Record<string, unknown>> {
@@ -68,7 +74,12 @@ async function readBody(req: IncomingMessage): Promise<Record<string, unknown>> 
   let size = 0;
   for await (const chunk of req) {
     size += (chunk as Buffer).length;
-    if (size > 1_048_576) throw new BrokerError("bad_request", "body exceeds 1MB");
+    if (size > 1_048_576) {
+      // Leftover unread bytes on the wire desync the next keep-alive
+      // request's framing — abort the connection outright, not just the read.
+      req.socket.destroy();
+      throw new BrokerError("bad_request", "body exceeds 1MB");
+    }
     chunks.push(chunk as Buffer);
   }
   if (chunks.length === 0) return {};
@@ -103,18 +114,26 @@ export function createHttpHandler(deps: HttpDeps) {
     if (parts[0] === "admin") {
       const remote = req.socket.remoteAddress ?? "";
       const loopback = remote === "127.0.0.1" || remote === "::1" || remote === "::ffff:127.0.0.1";
-      if (!loopback || req.headers["x-admin-token"] !== deps.adminToken) {
+      // Constant-time compare so token length/content never leaks via timing.
+      const presented = String(req.headers["x-admin-token"] ?? "");
+      const tokenOk = timingSafeEqual(
+        createHash("sha256").update(presented).digest(),
+        createHash("sha256").update(deps.adminToken).digest(),
+      );
+      if (!loopback || !tokenOk) {
         throw new BrokerError("unauthorized", "admin requires loopback + x-admin-token");
       }
       await admin(req, res, parts, url);
       return;
     }
 
-    if (parts[0] !== "parent") {
-      throw new BrokerError("unknown_instance", `no route ${url.pathname}`);
-    }
+    // Auth is checked before route existence so an unauthenticated caller
+    // learns nothing about which routes exist (401, never a route's 404).
     if (!checkBearer(req.headers.authorization, deps.config.client_tokens)) {
       throw new BrokerError("unauthorized", "missing or invalid bearer token");
+    }
+    if (parts[0] !== "parent") {
+      throw new BrokerError("unknown_instance", `no route ${url.pathname}`);
     }
 
     // GET /parent
