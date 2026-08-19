@@ -258,7 +258,9 @@ async function ask(deps: OpsDeps, session: string, p: Record<string, unknown>): 
       }
     }
     const status = deps.registry.get("runtime")?.sessions[session]?.agents.find((a) => a.id === pane)?.status;
-    if (status === "working") {
+    if (status === "working" || status === "blocked") {
+      // blocked (e.g. an approval prompt) is not idle — the agent may still
+      // resume and write the answer, so it must not start the countdown.
       sawWorking = true;
       idleSince = undefined;
     } else if (sawWorking) {
@@ -268,9 +270,19 @@ async function ask(deps: OpsDeps, session: string, p: Record<string, unknown>): 
     await new Promise((r) => setTimeout(r, pollMs));
   }
   if (existsSync(file)) {
+    // One last parse attempt: the file may have finished landing in the gap
+    // between the loop's last poll and this check — a late-but-valid answer
+    // must not be discarded as a parse_error.
     const buf = readFileSync(file);
+    let answer: unknown;
+    try {
+      answer = JSON.parse(buf.toString("utf8"));
+    } catch {
+      rmSync(file, { force: true });
+      return { answer: null, raw: buf.subarray(0, DIFF_CAP_BYTES).toString("utf8"), parse_error: true };
+    }
     rmSync(file, { force: true });
-    return { answer: null, raw: buf.subarray(0, DIFF_CAP_BYTES).toString("utf8"), parse_error: true };
+    return { answer };
   }
   throw new BrokerError("upstream_timeout", `agent produced no answer within ${budget}ms`, { pane_id: pane });
 }

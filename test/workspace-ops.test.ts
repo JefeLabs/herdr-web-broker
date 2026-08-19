@@ -301,3 +301,52 @@ test("ask: unknown cwd is unknown_workspace; unknown pane is bad_request", async
     await t.teardown();
   }
 });
+
+test("ask: a late-landing valid answer is still parsed after the poll loop exits (not discarded as parse_error)", async () => {
+  const t = await setup();
+  try {
+    const cwd = scratchRepo();
+    t.deps.index.set("default", "w1", { cwd });
+    t.deps.askPollMs = 600;
+    t.fake.handlers.set("agent.prompt", (p) => {
+      const file = extractAnswerPath(cwd, (p as { text: string }).text);
+      setTimeout(() => writeFileSync(file, '{"late":true}'), 800);
+      return { type: "prompted" };
+    });
+    const out = (await runBrokerMethod(t.deps, "default", "broker.agent.ask", {
+      pane_id: "w1:p1",
+      prompt: "x",
+      timeout_ms: 1000,
+    })) as { answer: unknown; parse_error?: boolean };
+    assert.deepEqual(out.answer, { late: true });
+    assert.equal(out.parse_error, undefined);
+  } finally {
+    await t.teardown();
+  }
+});
+
+test("ask: a blocked agent pauses the grace countdown instead of triggering an early exit", async () => {
+  const t = await setup();
+  try {
+    t.deps.index.set("default", "w1", { cwd: scratchRepo() });
+    t.deps.askGraceMs = 100;
+    t.fake.handlers.set("agent.prompt", () => ({ type: "prompted" }));
+    const started = Date.now();
+    const pending = assert.rejects(
+      runBrokerMethod(t.deps, "default", "broker.agent.ask", { pane_id: "w1:p1", prompt: "x", timeout_ms: 1000 }),
+      (e: BrokerError) => e.code === "upstream_timeout",
+    );
+    setTimeout(
+      () => t.deps.registry.applyAgentStatus("runtime", "default", { id: "w1:p1", title: "copilot", status: "working" }),
+      50,
+    );
+    setTimeout(
+      () => t.deps.registry.applyAgentStatus("runtime", "default", { id: "w1:p1", title: "copilot", status: "blocked" }),
+      150,
+    );
+    await pending;
+    assert.ok(Date.now() - started >= 900, "waited out the full budget instead of grace-exiting while blocked");
+  } finally {
+    await t.teardown();
+  }
+});
