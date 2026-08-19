@@ -2,6 +2,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { BrokerError } from "../src/errors.js";
 import { EnvRegistry } from "../src/env-registry.js";
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, utimesSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { tmpDir } from "./util.js";
 
 function reg(extra: Partial<ConstructorParameters<typeof EnvRegistry>[0]> = {}) {
@@ -97,4 +99,24 @@ test("hook runner: non-zero exit, empty stdout, and timeout all fail as env_hook
     fail([{ name: "SLOW", command: [node, "-e", "setTimeout(()=>{}, 30000)"], timeout_ms: 1001 }]),
     (e: BrokerError) => e.code === "env_hook_failed",
   );
+});
+
+test("writeDropFile: 0600, export lines, single-quote escaping, stale sweep", () => {
+  const dir = tmpDir();
+  const r = new EnvRegistry({ stateDir: dir });
+  const dropDir = join(dir, "envdrop");
+  mkdirSync(dropDir, { recursive: true });
+  const stale = join(dropDir, "stale.sh");
+  writeFileSync(stale, "old");
+  const past = (Date.now() - 120_000) / 1000;
+  utimesSync(stale, past, past);
+
+  const p = r.writeDropFile({ TOKEN: "it's'quoted", PLAIN: "abc" });
+  assert.ok(p.startsWith(dropDir));
+  assert.equal(statSync(p).mode & 0o777, 0o600);
+  const body = readFileSync(p, "utf8");
+  assert.ok(body.includes("export TOKEN='it'\\''s'\\''quoted'"));
+  assert.ok(body.includes("export PLAIN='abc'"));
+  assert.equal(existsSync(stale), false, "stale drop file swept");
+  assert.equal(readdirSync(dropDir).length, 1);
 });

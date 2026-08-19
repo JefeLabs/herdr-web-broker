@@ -1,4 +1,7 @@
 import { execFile } from "node:child_process";
+import { randomBytes } from "node:crypto";
+import { mkdirSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { BrokerError } from "./errors.js";
 import type { EnvHookConfig } from "./config.js";
 
@@ -140,6 +143,28 @@ export class EnvRegistry {
       out[name] = await this.#run(hook);
     }
     return out;
+  }
+
+  /** Env spec §5: the value transits disk (0600, seconds-lived), never the
+   * PTY — the pane sources and deletes this file; the sweep bounds a crash
+   * between write and source to 60s. */
+  writeDropFile(vars: Record<string, string>): string {
+    const dir = join(this.#stateDir, "envdrop");
+    mkdirSync(dir, { recursive: true });
+    for (const f of readdirSync(dir)) {
+      const full = join(dir, f);
+      try {
+        if (Date.now() - statSync(full).mtimeMs > 60_000) rmSync(full, { force: true });
+      } catch {
+        // a concurrent spawn already sourced-and-deleted it — nothing to sweep
+      }
+    }
+    const lines = Object.entries(vars)
+      .map(([name, value]) => `export ${name}='${value.replaceAll("'", "'\\''")}'`)
+      .join("\n");
+    const file = join(dir, `${randomBytes(16).toString("hex")}.sh`);
+    writeFileSync(file, lines + "\n", { mode: 0o600 });
+    return file;
   }
 }
 
