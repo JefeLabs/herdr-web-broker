@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdirSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { BrokerError } from "../src/errors.js";
-import { git, resolveRepo, validateRef } from "../src/git-exec.js";
+import { discoverRepos, git, resolveRepo, validateRef } from "../src/git-exec.js";
 import { scratchRepo, sh, tmpDir } from "./util.js";
 
 test("git() returns stdout and maps failures to git_error", async () => {
@@ -42,4 +42,31 @@ test("resolveRepo: vanished cwd is unknown_workspace", () => {
     () => resolveRepo(join(tmpDir(), "never-created"), "-"),
     (e: BrokerError) => e.code === "unknown_workspace",
   );
+});
+
+test("discoverRepos: cwd-is-repo yields the single '.' entry with branch and dirty", async () => {
+  const repo = scratchRepo();
+  writeFileSync(join(repo, "a.txt"), "changed\n");
+  const repos = await discoverRepos(repo);
+  assert.equal(repos.length, 1);
+  assert.deepEqual(repos[0], { name: repo.split("/").pop(), path: ".", branch: "main", dirty: true });
+});
+
+test("discoverRepos: shallow scan finds depth-1 and depth-2 repos, skips node_modules/hidden/plain dirs", async () => {
+  const cwd = tmpDir();
+  mkdirSync(join(cwd, "api"));
+  scratchRepo(join(cwd, "api"));
+  mkdirSync(join(cwd, "services", "web"), { recursive: true });
+  scratchRepo(join(cwd, "services", "web"));
+  mkdirSync(join(cwd, "node_modules", "dep"), { recursive: true });
+  scratchRepo(join(cwd, "node_modules", "dep")); // must NOT be found
+  mkdirSync(join(cwd, ".hidden"));
+  mkdirSync(join(cwd, "plain"));
+  const repos = await discoverRepos(cwd);
+  assert.deepEqual(repos.map((r) => r.path).sort(), ["api", "services/web"]);
+  assert.equal(repos.every((r) => r.branch === "main" && r.dirty === false), true);
+});
+
+test("discoverRepos: unreadable cwd yields an empty list, not a crash", async () => {
+  assert.deepEqual(await discoverRepos(join(tmpDir(), "nope")), []);
 });
