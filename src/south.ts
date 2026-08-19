@@ -5,6 +5,7 @@ import { methodDenied } from "./policy.js";
 import type { Registry } from "./registry.js";
 import { HEARTBEAT_MS, PROTO_VERSION, type TunnelFrame } from "./tunnel.js";
 import { PLUGIN_VERSION } from "./version.js";
+import { isBrokerMethod, runBrokerMethod, type OpsDeps } from "./workspace-ops.js";
 
 const BACKOFF_BASE_MS = 1000;
 const BACKOFF_CAP_MS = 60_000;
@@ -27,6 +28,7 @@ export class ParentLink {
       local: LocalHerdr;
       registry: Registry;
       remoteDeny: string[];
+      ops: OpsDeps;
     },
   ) {}
 
@@ -120,12 +122,9 @@ export class ParentLink {
       if (methodDenied(frame.method, this.opts.remoteDeny)) {
         throw new BrokerError("method_denied", `'${frame.method}' is denied for remote callers`);
       }
-      const result = await this.opts.local.request(
-        frame.session,
-        frame.method,
-        frame.params ?? {},
-        frame.timeout_ms,
-      );
+      const result = isBrokerMethod(frame.method)
+        ? await runBrokerMethod(this.opts.ops, frame.session, frame.method, frame.params ?? {})
+        : await this.opts.local.request(frame.session, frame.method, frame.params ?? {}, frame.timeout_ms);
       this.#send({ type: "res", id: frame.id, result });
     } catch (e) {
       const err = e instanceof BrokerError ? e : new BrokerError("upstream_error", String(e));

@@ -85,6 +85,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<DaemonHandle | u
         local,
         registry,
         remoteDeny: cfg.policy.remote_deny,
+        ops,
       });
       link.start();
     }

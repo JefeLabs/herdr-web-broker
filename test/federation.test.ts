@@ -1,9 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { startDaemon, type DaemonHandle } from "../src/daemon.js";
 import { FakeHerdr } from "./fake-herdr.js";
-import { tmpDir, waitFor } from "./util.js";
+import { scratchRepo, tmpDir, waitFor } from "./util.js";
 
 interface Parts {
   fakeParent: FakeHerdr;
@@ -206,5 +207,40 @@ test("child reconnects after a parent restart on the same port", async () => {
     await parts.fakeParent.close();
     await parts.fakeChild.close();
     // parts.parent was already closed above (or never opened, on an early throw).
+  }
+});
+
+test("broker.* over the tunnel executes in the child's ops and returns through res frames", async () => {
+  const parts = await bootPair();
+  try {
+    const cwd = scratchRepo();
+    parts.fakeChild.handlers.set("workspace.create", () => ({ root_pane: { pane_id: "w2:p1" } }));
+    parts.fakeChild.handlers.set("agent.start", () => ({ type: "agent_started" }));
+    const spawn = await authed(parts.parent.base, "/parent/laptop/sessions/default/agents", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ kind: "copilot", cwd }),
+    });
+    assert.equal(spawn.status, 201);
+
+    writeFileSync(join(cwd, "a.txt"), "two\n");
+    const diff = await authed(parts.parent.base, "/parent/laptop/sessions/default/workspaces/w2/repos/-/git/diff");
+    assert.equal(diff.status, 200);
+    assert.match(((await diff.json()) as { diff: string }).diff, /\+two/);
+    // the virtual methods never reached the child's herdr socket as themselves
+    assert.equal(parts.fakeChild.received.some((r) => r.method.startsWith("broker.")), false);
+  } finally {
+    await teardown(parts);
+  }
+});
+
+test("broker.repo.* in remote_deny fast-fails at the parent", async () => {
+  const parts = await bootPair(["broker.repo.*"]);
+  try {
+    const res = await authed(parts.parent.base, "/parent/laptop/sessions/default/workspaces/w1/repos/-/git/diff");
+    assert.equal(res.status, 403);
+    assert.equal(((await res.json()) as { code: string }).code, "method_denied");
+  } finally {
+    await teardown(parts);
   }
 });
