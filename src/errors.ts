@@ -10,6 +10,9 @@ const STATUS: Record<string, number> = {
   upstream_timeout: 504,
   proto_mismatch: 400,
   git_error: 502,
+  env_disabled: 403,
+  env_hook_failed: 502,
+  unknown_env: 404,
 };
 
 /** Unknown codes are herdr passthrough errors → 502 per spec §6. */

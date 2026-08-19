@@ -14,12 +14,22 @@ export interface ParentConfig {
   name: string;
 }
 
+export interface EnvHookConfig {
+  name: string;
+  kind?: string;
+  session?: string;
+  command: string[];
+  timeout_ms?: number;
+}
+
 export interface BrokerConfig {
   listen: string;
   client_tokens: ClientToken[];
   parent?: ParentConfig;
   policy: { remote_deny: string[] };
   tls?: { cert: string; key: string };
+  env_registry: { enabled: boolean };
+  env_hooks: EnvHookConfig[];
 }
 
 export const DEFAULT_LISTEN = "127.0.0.1:7591";
@@ -34,6 +44,8 @@ export function loadConfig(configDir: string): BrokerConfig {
     parent: raw.parent as ParentConfig | undefined,
     policy: { remote_deny: policy.remote_deny ?? [...DEFAULT_REMOTE_DENY] },
     tls: raw.tls as { cert: string; key: string } | undefined,
+    env_registry: { enabled: (raw.env_registry as { enabled?: boolean } | undefined)?.enabled ?? true },
+    env_hooks: (raw.env_hooks as EnvHookConfig[]) ?? [],
   };
 }
 
@@ -47,5 +59,7 @@ export function saveConfig(configDir: string, config: BrokerConfig): void {
   };
   if (config.parent) out.parent = config.parent;
   if (config.tls) out.tls = config.tls;
+  out.env_registry = config.env_registry;
+  if (config.env_hooks.length > 0) out.env_hooks = config.env_hooks;
   writeFileSync(join(configDir, "config.toml"), stringify(out) + "\n");
 }

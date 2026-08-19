@@ -91,3 +91,16 @@ test("readLock tolerates corrupt JSON and returns undefined", () => {
   writeFileSync(join(d, "daemon.lock"), "not json{");
   assert.equal(readLock(d), undefined);
 });
+
+test("config: env_registry defaults on, env_hooks default empty, both round-trip", () => {
+  const d = dir();
+  const c = loadConfig(d);
+  assert.deepEqual(c.env_registry, { enabled: true });
+  assert.deepEqual(c.env_hooks, []);
+  c.env_registry = { enabled: false };
+  c.env_hooks = [{ name: "COPILOT_GITHUB_TOKEN", kind: "copilot", command: ["gh", "auth", "token"], timeout_ms: 5000 }];
+  saveConfig(d, c);
+  const back = loadConfig(d);
+  assert.deepEqual(back.env_registry, { enabled: false });
+  assert.deepEqual(back.env_hooks, [{ name: "COPILOT_GITHUB_TOKEN", kind: "copilot", command: ["gh", "auth", "token"], timeout_ms: 5000 }]);
+});
