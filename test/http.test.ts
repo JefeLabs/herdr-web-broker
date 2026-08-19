@@ -14,7 +14,7 @@ import { tmpDir } from "./util.js";
 
 async function setup() {
   const fake = new FakeHerdr(join(tmpDir(), "h.sock"));
-  fake.agents = [{ id: "a1", title: "claude", status: "working" }];
+  fake.agents = [{ pane_id: "w1:p1", name: "claude", agent_status: "working" }];
   await fake.listen();
   const registry = new Registry();
   const local = new LocalHerdr({
@@ -75,7 +75,7 @@ test("GET grammar: rollup, instance, sessions, agents", async () => {
   ]);
 
   const agents = await (await authed("/parent/runtime/sessions/default/agents")).json();
-  assert.equal(agents.agents[0].id, "a1");
+  assert.equal(agents.agents[0].id, "w1:p1");
   assert.equal((await authed("/parent/ghost")).status, 404);
   assert.equal((await authed("/parent/runtime/sessions/ghost/agents")).status, 404);
   await teardown(t);
@@ -105,7 +105,7 @@ test("rpc passthrough returns herdr results and relays herdr errors as 502", asy
 test("fresh=1 forwards agent.list and refreshes the registry", async () => {
   const t = await setup();
   const { fake, registry, authed } = t;
-  fake.agents = [{ id: "a1", title: "claude", status: "blocked" }];
+  fake.agents = [{ pane_id: "w1:p1", name: "claude", agent_status: "blocked" }];
   const res = await (await authed("/parent/runtime/sessions/default/agents?fresh=1")).json();
   assert.equal(res.agents[0].status, "blocked");
   assert.deepEqual(registry.counts("runtime"), { working: 0, blocked: 1, idle: 0 });

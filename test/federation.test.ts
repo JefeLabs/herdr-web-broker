@@ -26,7 +26,7 @@ async function teardown(parts: Partial<Parts>): Promise<void> {
 async function bootPair(parentDeny?: string[]): Promise<Parts> {
   const fakeParent = new FakeHerdr(join(tmpDir(), "p.sock"));
   const fakeChild = new FakeHerdr(join(tmpDir(), "c.sock"));
-  fakeChild.agents = [{ id: "c1", title: "codex", status: "idle" }];
+  fakeChild.agents = [{ pane_id: "c:p1", name: "codex", agent_status: "idle" }];
   await fakeParent.listen();
   await fakeChild.listen();
 
@@ -103,8 +103,8 @@ test("forwarded rpc reaches the child's herdr and returns its result", async () 
       body: JSON.stringify({ method: "agent.list" }),
     });
     assert.equal(res.status, 200);
-    const body = (await res.json()) as { result: { agents: { id: string }[] } };
-    assert.equal(body.result.agents[0].id, "c1");
+    const body = (await res.json()) as { result: { agents: { pane_id: string }[] } };
+    assert.equal(body.result.agents[0].pane_id, "c:p1");
     assert.ok(parts.fakeChild.received.some((r) => r.method === "agent.list"));
   } finally {
     await teardown(parts);
@@ -114,9 +114,11 @@ test("forwarded rpc reaches the child's herdr and returns its result", async () 
 test("child status events stream up and update the parent cache", async () => {
   const parts = await bootPair();
   try {
-    parts.fakeChild.emitEvent({
-      type: "pane.agent_status_changed",
-      agent: { id: "c1", title: "codex", status: "blocked" },
+    parts.fakeChild.emitEvent("pane_agent_status_changed", {
+      pane_id: "c:p1",
+      workspace_id: "c",
+      agent_status: "blocked",
+      agent: "codex",
     });
     await waitFor(() => parts.parent.registry.counts("laptop").blocked === 1);
   } finally {

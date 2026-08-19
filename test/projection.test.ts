@@ -29,7 +29,7 @@ async function teardown(parts: Partial<Parts>): Promise<void> {
 async function bootPair(): Promise<Parts> {
   const fakeParent = new FakeHerdr(join(tmpDir(), "p.sock"));
   const fakeChild = new FakeHerdr(join(tmpDir(), "c.sock"));
-  fakeChild.agents = [{ id: "c1", title: "codex", status: "idle" }];
+  fakeChild.agents = [{ pane_id: "c:p1", name: "codex", agent_status: "idle" }];
   await fakeParent.listen();
   await fakeChild.listen();
   const projDir = tmpDir();
@@ -98,9 +98,9 @@ test(
       const { sock, frames } = await dial(parts.sockPath);
       sock.write(encodeFrame({ id: "p1", method: "agent.list", params: {} }));
       await waitFor(() => frames.length === 1);
-      const reply = frames[0] as { id: string; result: { agents: { id: string }[] } };
+      const reply = frames[0] as { id: string; result: { agents: { pane_id: string }[] } };
       assert.equal(reply.id, "p1");
-      assert.equal(reply.result.agents[0].id, "c1");
+      assert.equal(reply.result.agents[0].pane_id, "c:p1");
       sock.destroy();
 
       // offline → socket file removed
@@ -130,9 +130,9 @@ test(
       const { sock, frames } = await dial(parts.sockPath);
       sock.write(encodeFrame({ id: "p2", method: "agent.list", params: {} }));
       await waitFor(() => frames.length === 1);
-      const reply = frames[0] as { id: string; result: { agents: { id: string }[] } };
+      const reply = frames[0] as { id: string; result: { agents: { pane_id: string }[] } };
       assert.equal(reply.id, "p2");
-      assert.equal(reply.result.agents[0].id, "c1");
+      assert.equal(reply.result.agents[0].pane_id, "c:p1");
       sock.destroy();
     } finally {
       await teardown(parts);

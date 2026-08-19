@@ -8,7 +8,7 @@ import { tmpDir, waitFor } from "./util.js";
 
 async function boot() {
   const fake = new FakeHerdr(join(tmpDir(), "h.sock"));
-  fake.agents = [{ id: "a1", title: "claude", status: "working" }];
+  fake.agents = [{ pane_id: "w1:p1", name: "claude", agent_status: "working" }];
   await fake.listen();
   const handle = (await startDaemon({
     configDir: tmpDir(),
@@ -54,9 +54,11 @@ test("rpc over ws round-trips; events.subscribe acks; events stream unsolicited"
     subscribed: true,
   });
 
-  fake.emitEvent({
-    type: "pane.agent_status_changed",
-    agent: { id: "a1", title: "claude", status: "blocked" },
+  fake.emitEvent("pane_agent_status_changed", {
+    pane_id: "w1:p1",
+    workspace_id: "w1",
+    agent_status: "blocked",
+    agent: "claude",
   });
   await waitFor(() =>
     frames.some(

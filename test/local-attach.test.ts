@@ -10,7 +10,7 @@ import { tmpDir, waitFor } from "./util.js";
 async function setup() {
   const dir = tmpDir();
   const fake = new FakeHerdr(join(dir, "h.sock"));
-  fake.agents = [{ id: "a1", title: "claude", status: "working" }];
+  fake.agents = [{ pane_id: "w1:p1", name: "claude", agent_status: "working" }];
   await fake.listen();
   const registry = new Registry();
   const local = new LocalHerdr({
@@ -22,29 +22,31 @@ async function setup() {
   return { fake, registry, local };
 }
 
-test("adapters map the assumed herdr shapes and reject junk", () => {
-  assert.deepEqual(mapAgentList({ agents: [{ id: "a1", title: "t", status: "blocked" }] }), [
-    { id: "a1", title: "t", status: "blocked" },
-  ]);
+test("adapters map herdr 0.8.0's real shapes and reject junk", () => {
+  assert.deepEqual(
+    mapAgentList({ type: "agent_list", agents: [{ pane_id: "w1:p1", name: "t", agent_status: "blocked" }] }),
+    [{ id: "w1:p1", title: "t", status: "blocked" }],
+  );
   assert.deepEqual(mapAgentList({ nope: 1 }), []);
   assert.deepEqual(
     mapHerdrEvent({
-      event: {
-        type: "pane.agent_status_changed",
-        agent: { id: "a1", title: "t", status: "idle" },
-      },
+      event: "pane_agent_status_changed",
+      data: { pane_id: "w1:p1", workspace_id: "w1", agent_status: "idle", agent: "claude" },
     }),
-    { agent: { id: "a1", title: "t", status: "idle" } },
+    { agent: { id: "w1:p1", title: "claude", status: "idle" } },
   );
-  assert.equal(mapHerdrEvent({ event: { type: "workspace.created" } }), undefined);
+  assert.deepEqual(
+    mapHerdrEvent({ event: "pane_agent_detected", data: { pane_id: "w1:p1", agent: "copilot" } }),
+    { refresh: true },
+  );
+  assert.equal(mapHerdrEvent({ event: "workspace_created", data: {} }), undefined);
+  // herdr's five-valued vocabulary (done/unknown) folds into idle
   assert.deepEqual(
     mapHerdrEvent({
-      event: {
-        type: "pane.agent_status_changed",
-        agent: { id: "a1", title: "t", status: "mystery" },
-      },
+      event: "pane_agent_status_changed",
+      data: { pane_id: "w1:p1", workspace_id: "w1", agent_status: "done" },
     }),
-    { agent: { id: "a1", title: "t", status: "idle" } },
+    { agent: { id: "w1:p1", title: "w1:p1", status: "idle" } },
   );
 });
 
@@ -78,11 +80,26 @@ test("herdr errors and unknown sessions become BrokerErrors", async () => {
 
 test("streamed status events update the runtime registry entry", async () => {
   const { fake, registry, local } = await setup();
-  fake.emitEvent({
-    type: "pane.agent_status_changed",
-    agent: { id: "a1", title: "claude", status: "blocked" },
+  fake.emitEvent("pane_agent_status_changed", {
+    pane_id: "w1:p1",
+    workspace_id: "w1",
+    agent_status: "blocked",
+    agent: "claude",
   });
   await waitFor(() => registry.counts("runtime").blocked === 1);
+  local.stop();
+  await fake.close();
+});
+
+test("lifecycle events trigger an agent re-list (refresh)", async () => {
+  const { fake, registry, local } = await setup();
+  fake.agents = [
+    { pane_id: "w1:p1", name: "claude", agent_status: "working" },
+    { pane_id: "w1:p2", name: "copilot", agent_status: "idle" },
+  ];
+  fake.emitEvent("pane_agent_detected", { pane_id: "w1:p2", workspace_id: "w1", agent: "copilot" });
+  await waitFor(() => registry.counts("runtime").idle === 1);
+  assert.deepEqual(registry.counts("runtime"), { working: 1, blocked: 0, idle: 1 });
   local.stop();
   await fake.close();
 });
@@ -90,7 +107,7 @@ test("streamed status events update the runtime registry entry", async () => {
 test("a never-reachable endpoint's repeated failed connects never emit session_removed once the instance is up", async () => {
   const dir = tmpDir();
   const fake = new FakeHerdr(join(dir, "h.sock"));
-  fake.agents = [{ id: "a1", title: "claude", status: "working" }];
+  fake.agents = [{ pane_id: "w1:p1", name: "claude", agent_status: "working" }];
   await fake.listen();
   const registry = new Registry();
   const removedSessions: string[] = [];
@@ -107,9 +124,6 @@ test("a never-reachable endpoint's repeated failed connects never emit session_r
     rescanMs: 20,
   });
   await local.start();
-  // Let several rescan cycles retry (and fail) the dead endpoint after the
-  // instance is already online in the registry — this is the window where
-  // an unguarded onClose would fire a spurious session_removed.
   await new Promise((resolve) => setTimeout(resolve, 150));
 
   assert.deepEqual(local.sessions(), ["default"]);
@@ -130,13 +144,13 @@ test("a legitimate oversized single-line response (>1MB) still resolves — the 
   await fake.close();
 });
 
-test("a malformed line from the local herdr destroys just that connection — a second session still answers", async () => {
+test("a malformed line on the event channel retires just that session — a second session still answers", async () => {
   const dir = tmpDir();
   const fakeA = new FakeHerdr(join(dir, "a.sock"));
-  fakeA.agents = [{ id: "a1", title: "claude", status: "working" }];
+  fakeA.agents = [{ pane_id: "a:p1", name: "claude", agent_status: "working" }];
   await fakeA.listen();
   const fakeB = new FakeHerdr(join(dir, "b.sock"));
-  fakeB.agents = [{ id: "b1", title: "codex", status: "idle" }];
+  fakeB.agents = [{ pane_id: "b:p1", name: "codex", agent_status: "idle" }];
   await fakeB.listen();
 
   const registry = new Registry();
@@ -158,8 +172,8 @@ test("a malformed line from the local herdr destroys just that connection — a 
   assert.ok(removedSessions.includes("a"));
 
   // The daemon is still alive: the untouched session still answers.
-  const result = (await local.request("b", "agent.list", {})) as { agents: { id: string }[] };
-  assert.equal(result.agents[0].id, "b1");
+  const result = (await local.request("b", "agent.list", {})) as { agents: { pane_id: string }[] };
+  assert.equal(result.agents[0].pane_id, "b:p1");
 
   local.stop();
   await fakeA.close();
@@ -176,13 +190,14 @@ test("stop() is idempotent", async () => {
 
 test("an unrecognized streamed status coerces to idle rather than corrupting counts", async () => {
   const { fake, registry, local } = await setup();
-  fake.emitEvent({
-    type: "pane.agent_status_changed",
-    agent: { id: "a1", title: "claude", status: "mystery" },
+  fake.emitEvent("pane_agent_status_changed", {
+    pane_id: "w1:p1",
+    workspace_id: "w1",
+    agent_status: "mystery",
+    agent: "claude",
   });
   await waitFor(() => registry.counts("runtime").idle === 1);
-  const counts = registry.counts("runtime");
-  assert.deepEqual(counts, { working: 0, blocked: 0, idle: 1 });
+  assert.deepEqual(registry.counts("runtime"), { working: 0, blocked: 0, idle: 1 });
   local.stop();
   await fake.close();
 });
