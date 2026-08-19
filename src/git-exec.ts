@@ -102,3 +102,42 @@ export async function discoverRepos(cwd: string): Promise<RepoInfo[]> {
   }
   return repos;
 }
+
+export interface TreeNode {
+  name: string;
+  type: "dir" | "file";
+  children?: TreeNode[];
+}
+
+export function foldTree(rootName: string, paths: string[]): TreeNode {
+  const root: TreeNode = { name: rootName, type: "dir", children: [] };
+  const dirs = new Map<string, TreeNode>([["", root]]);
+  for (const p of paths) {
+    const segs = p.split("/");
+    let key = "";
+    let parent = root;
+    for (let i = 0; i < segs.length - 1; i++) {
+      key = key ? `${key}/${segs[i]}` : segs[i];
+      let dir = dirs.get(key);
+      if (!dir) {
+        dir = { name: segs[i], type: "dir", children: [] };
+        parent.children!.push(dir);
+        dirs.set(key, dir);
+      }
+      parent = dir;
+    }
+    parent.children!.push({ name: segs[segs.length - 1], type: "file" });
+  }
+  return root;
+}
+
+/** Repo structure, not disk structure: git's own file list — tracked plus
+ * untracked-but-not-ignored — so .git, node_modules, and build junk never
+ * appear (spec §2.3). */
+export async function repoTree(repoDir: string): Promise<{ tree: TreeNode; truncated: boolean }> {
+  const tracked = (await git(repoDir, ["ls-files", "-z"])).split("\0").filter(Boolean);
+  const untracked = (await git(repoDir, ["ls-files", "-z", "--others", "--exclude-standard"])).split("\0").filter(Boolean);
+  const all = [...new Set([...tracked, ...untracked])].sort();
+  const truncated = all.length > TREE_CAP_ENTRIES;
+  return { tree: foldTree(basename(repoDir), truncated ? all.slice(0, TREE_CAP_ENTRIES) : all), truncated };
+}

@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdirSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { BrokerError } from "../src/errors.js";
-import { discoverRepos, git, resolveRepo, validateRef } from "../src/git-exec.js";
+import { discoverRepos, foldTree, git, repoTree, resolveRepo, validateRef } from "../src/git-exec.js";
 import { scratchRepo, sh, tmpDir } from "./util.js";
 
 test("git() returns stdout and maps failures to git_error", async () => {
@@ -69,4 +69,35 @@ test("discoverRepos: shallow scan finds depth-1 and depth-2 repos, skips node_mo
 
 test("discoverRepos: unreadable cwd yields an empty list, not a crash", async () => {
   assert.deepEqual(await discoverRepos(join(tmpDir(), "nope")), []);
+});
+
+test("foldTree nests paths into dir/file nodes", () => {
+  const tree = foldTree("api", ["a.txt", "src/index.ts", "src/lib/util.ts"]);
+  assert.deepEqual(tree, {
+    name: "api",
+    type: "dir",
+    children: [
+      { name: "a.txt", type: "file" },
+      {
+        name: "src",
+        type: "dir",
+        children: [
+          { name: "index.ts", type: "file" },
+          { name: "lib", type: "dir", children: [{ name: "util.ts", type: "file" }] },
+        ],
+      },
+    ],
+  });
+});
+
+test("repoTree: tracked + untracked-not-ignored, never .git or ignored files", async () => {
+  const repo = scratchRepo();
+  mkdirSync(join(repo, "src"));
+  writeFileSync(join(repo, "src", "new.ts"), "x"); // untracked
+  writeFileSync(join(repo, ".gitignore"), "secret.txt\n");
+  writeFileSync(join(repo, "secret.txt"), "x"); // ignored — must not appear
+  const { tree, truncated } = await repoTree(repo);
+  const names = (tree.children ?? []).map((c) => c.name).sort();
+  assert.deepEqual(names, [".gitignore", "a.txt", "src"]);
+  assert.equal(truncated, false);
 });
