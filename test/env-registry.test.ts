@@ -57,3 +57,44 @@ test("disabled registry refuses set/list/delete but constructor still works", ()
   assert.throws(() => r.list(), (e: BrokerError) => e.code === "env_disabled");
   assert.throws(() => r.delete("X", {}), (e: BrokerError) => e.code === "env_disabled");
 });
+
+const node = process.execPath;
+
+test("hook runner: stdout becomes the value, trailing newline trimmed", async () => {
+  const r = new EnvRegistry({
+    stateDir: tmpDir(),
+    hooks: [{ name: "HOOKED", kind: "copilot", command: [node, "-e", "console.log('hook-value')"] }],
+  });
+  const out = await r.resolveForSpawn("default", "copilot");
+  assert.deepEqual(out, { HOOKED: "hook-value" });
+});
+
+test("hook runner: manual entry suppresses the hook entirely", async () => {
+  let ran = 0;
+  const r = new EnvRegistry({
+    stateDir: tmpDir(),
+    hooks: [{ name: "HOOKED", command: [node, "-e", "console.log('from-hook')"] }],
+    hookRunner: async () => { ran += 1; return "from-hook"; },
+  });
+  r.set("HOOKED", "from-manual", {});
+  const out = await r.resolveForSpawn("default", "copilot");
+  assert.deepEqual(out, { HOOKED: "from-manual" });
+  assert.equal(ran, 0);
+});
+
+test("hook runner: non-zero exit, empty stdout, and timeout all fail as env_hook_failed", async () => {
+  const fail = (hooks: { name: string; command: string[]; timeout_ms?: number }[]) =>
+    new EnvRegistry({ stateDir: tmpDir(), hooks }).resolveForSpawn("default", "copilot");
+  await assert.rejects(
+    fail([{ name: "EXITS", command: [node, "-e", "process.exit(3)"] }]),
+    (e: BrokerError) => e.code === "env_hook_failed" && e.details.exit_code === 3,
+  );
+  await assert.rejects(
+    fail([{ name: "EMPTY", command: [node, "-e", ""] }]),
+    (e: BrokerError) => e.code === "env_hook_failed",
+  );
+  await assert.rejects(
+    fail([{ name: "SLOW", command: [node, "-e", "setTimeout(()=>{}, 30000)"], timeout_ms: 1001 }]),
+    (e: BrokerError) => e.code === "env_hook_failed",
+  );
+});

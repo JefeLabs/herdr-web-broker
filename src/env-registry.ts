@@ -1,3 +1,4 @@
+import { execFile } from "node:child_process";
 import { BrokerError } from "./errors.js";
 import type { EnvHookConfig } from "./config.js";
 
@@ -142,7 +143,42 @@ export class EnvRegistry {
   }
 }
 
-/** Replaced with the execFile runner in the hooks task. */
+const HOOK_TIMEOUT_DEFAULT = 10_000;
+
+/** Env spec §5a: exec'd directly (never a shell), stdout is the value. Any
+ * failure is env_hook_failed — a declared hook means the var is required,
+ * and a silently unauthenticated agent is the failure mode this design
+ * exists to prevent. Hooks must not print secrets to stderr. */
 async function runHook(hook: EnvHookConfig): Promise<string> {
-  throw new BrokerError("env_hook_failed", `no hook runner for '${hook.name}'`);
+  const timeout = Math.min(Math.max(hook.timeout_ms ?? HOOK_TIMEOUT_DEFAULT, 1001), 60_000);
+  const [cmd, ...args] = hook.command;
+  const res = await new Promise<{ code: number; stdout: string; stderr: string }>((resolve) => {
+    execFile(cmd, args, { timeout, encoding: "utf8", maxBuffer: VALUE_CAP + 1024 }, (err, stdout, stderr) => {
+      // On timeout Node kills the child and err.code is null/a signal name —
+      // fold every error shape to a non-zero exit.
+      const raw = err ? (err as NodeJS.ErrnoException & { code?: number | string }).code : 0;
+      resolve({ code: typeof raw === "number" ? raw : err ? 1 : 0, stdout, stderr });
+    });
+  });
+  const stderrLine = res.stderr.split("\n")[0].slice(0, 200);
+  if (res.code !== 0) {
+    throw new BrokerError("env_hook_failed", `hook for '${hook.name}' exited non-zero`, {
+      name: hook.name,
+      exit_code: res.code,
+      stderr: stderrLine,
+    });
+  }
+  const value = res.stdout.replace(/\n+$/, "");
+  if (value.length === 0) {
+    throw new BrokerError("env_hook_failed", `hook for '${hook.name}' produced no output`, {
+      name: hook.name,
+      stderr: stderrLine,
+    });
+  }
+  if (Buffer.byteLength(value, "utf8") > VALUE_CAP) {
+    throw new BrokerError("env_hook_failed", `hook for '${hook.name}' output exceeds ${VALUE_CAP} bytes`, {
+      name: hook.name,
+    });
+  }
+  return value;
 }
