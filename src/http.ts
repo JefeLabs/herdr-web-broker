@@ -192,6 +192,52 @@ export function createHttpHandler(deps: HttpDeps) {
       return;
     }
 
+    // POST /parent/{i}/sessions/{s}/agents — spawn a team agent (spec §2.1)
+    if (parts.length === 5 && parts[4] === "agents" && req.method === "POST") {
+      const body = await readBody(req);
+      const timeout = typeof body.timeout_ms === "number" ? body.timeout_ms : 30_000;
+      const result = await callInstance(instance, session, "broker.agent.spawn", body, timeout + 5000);
+      json(res, 201, result as Record<string, unknown>);
+      return;
+    }
+
+    // GET /parent/{i}/sessions/{s}/workspaces — working sets (spec §2.2)
+    if (parts.length === 5 && parts[4] === "workspaces" && req.method === "GET") {
+      json(res, 200, await callInstance(instance, session, "broker.workspace.list", {}));
+      return;
+    }
+
+    // GET .../workspaces/{w}/repos/{r}/tree (spec §2.3)
+    if (parts.length === 9 && parts[4] === "workspaces" && parts[6] === "repos" && parts[8] === "tree" && req.method === "GET") {
+      const params = { workspace_id: decodeURIComponent(parts[5]), repo: decodeURIComponent(parts[7]) };
+      json(res, 200, await callInstance(instance, session, "broker.repo.tree", params));
+      return;
+    }
+
+    // GET .../workspaces/{w}/repos/{r}/git/diff?base=<ref> (spec §2.4)
+    if (
+      parts.length === 10 && parts[4] === "workspaces" && parts[6] === "repos" &&
+      parts[8] === "git" && parts[9] === "diff" && req.method === "GET"
+    ) {
+      const params: Record<string, unknown> = {
+        workspace_id: decodeURIComponent(parts[5]),
+        repo: decodeURIComponent(parts[7]),
+      };
+      const base = url.searchParams.get("base");
+      if (base !== null) params.base = base;
+      json(res, 200, await callInstance(instance, session, "broker.repo.diff", params));
+      return;
+    }
+
+    // POST .../agents/{pane}/ask — structured answer via file-drop (spec §2.5)
+    if (parts.length === 7 && parts[4] === "agents" && parts[6] === "ask" && req.method === "POST") {
+      const body = await readBody(req);
+      const timeout = typeof body.timeout_ms === "number" ? body.timeout_ms : 120_000;
+      const params = { ...body, pane_id: decodeURIComponent(parts[5]) };
+      json(res, 200, await callInstance(instance, session, "broker.agent.ask", params, timeout + 5000));
+      return;
+    }
+
     // POST /parent/{i}/sessions/{s}/rpc
     if (parts[4] === "rpc" && req.method === "POST") {
       const body = await readBody(req);

@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
+import { writeFileSync } from "node:fs";
 import type { AddressInfo } from "node:net";
 import { join } from "node:path";
 import { Registry } from "../src/registry.js";
@@ -12,7 +13,7 @@ import { createHttpHandler } from "../src/http.js";
 import { WorkspaceIndex } from "../src/state.js";
 import type { OpsDeps } from "../src/workspace-ops.js";
 import { FakeHerdr } from "./fake-herdr.js";
-import { tmpDir } from "./util.js";
+import { scratchRepo, tmpDir } from "./util.js";
 
 async function setup() {
   const fake = new FakeHerdr(join(tmpDir(), "h.sock"));
@@ -187,5 +188,94 @@ test("broker.* virtual methods are reachable through the raw rpc passthrough", a
   assert.deepEqual(body.result.workspaces.map((w) => [w.workspace_id, w.cwd]), [["w1", null]]);
   // the virtual method never reached herdr's socket as itself
   assert.equal(t.fake.received.some((r) => r.method === "broker.workspace.list"), false);
+  await teardown(t);
+});
+
+async function spawnDemo(t: Awaited<ReturnType<typeof setup>>, cwd: string) {
+  t.fake.handlers.set("workspace.create", () => ({ root_pane: { pane_id: "w2:p1" } }));
+  t.fake.handlers.set("agent.start", () => ({ type: "agent_started" }));
+  const res = await t.authed("/parent/runtime/sessions/default/agents", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ kind: "copilot", cwd, label: "demo" }),
+  });
+  return res;
+}
+
+test("POST .../agents spawns and answers 201; bad bodies answer 400", async () => {
+  const t = await setup();
+  const cwd = scratchRepo();
+  const res = await spawnDemo(t, cwd);
+  assert.equal(res.status, 201);
+  const body = (await res.json()) as { workspace_id: string; pane_id: string; agent: string };
+  assert.equal(body.workspace_id, "w2");
+  assert.equal(body.pane_id, "w2:p1");
+  const bad = await t.authed("/parent/runtime/sessions/default/agents", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ kind: "copilot" }),
+  });
+  assert.equal(bad.status, 400);
+  await teardown(t);
+});
+
+test("GET .../workspaces shows the team roster and discovered repos after a spawn", async () => {
+  const t = await setup();
+  const cwd = scratchRepo();
+  await spawnDemo(t, cwd);
+  const res = await t.authed("/parent/runtime/sessions/default/workspaces");
+  assert.equal(res.status, 200);
+  const body = (await res.json()) as {
+    workspaces: { workspace_id: string; cwd: string | null; repos: { path: string }[] }[];
+  };
+  const w2 = body.workspaces.find((w) => w.workspace_id === "w2")!;
+  assert.equal(w2.cwd, cwd);
+  assert.deepEqual(w2.repos.map((r) => r.path), ["."]);
+  await teardown(t);
+});
+
+test("GET tree and diff routes serve the workspace-root repo via the '-' token", async () => {
+  const t = await setup();
+  const cwd = scratchRepo();
+  await spawnDemo(t, cwd);
+  writeFileSync(join(cwd, "a.txt"), "two\n");
+
+  const tree = await t.authed("/parent/runtime/sessions/default/workspaces/w2/repos/-/tree");
+  assert.equal(tree.status, 200);
+  const treeBody = (await tree.json()) as { tree: { children: { name: string }[] } };
+  assert.deepEqual(treeBody.tree.children.map((c) => c.name), ["a.txt"]);
+
+  const diff = await t.authed("/parent/runtime/sessions/default/workspaces/w2/repos/-/git/diff");
+  assert.equal(diff.status, 200);
+  const diffBody = (await diff.json()) as { branch: string; diff: string };
+  assert.equal(diffBody.branch, "main");
+  assert.match(diffBody.diff, /\+two/);
+
+  assert.equal((await t.authed("/parent/runtime/sessions/default/workspaces/w2/repos/ghost/tree")).status, 404);
+  assert.equal((await t.authed("/parent/runtime/sessions/default/workspaces/w9/repos/-/tree")).status, 404);
+  assert.equal(
+    (await t.authed("/parent/runtime/sessions/default/workspaces/w2/repos/-/git/diff?base=-rf")).status,
+    400,
+  );
+  await teardown(t);
+});
+
+test("POST .../agents/{pane}/ask returns the parsed answer", async () => {
+  const t = await setup();
+  const cwd = scratchRepo();
+  await spawnDemo(t, cwd);
+  t.fake.agents.push({ pane_id: "w2:p1", name: "copilot", agent_status: "idle" });
+  t.fake.handlers.set("agent.prompt", (p) => {
+    const m = /\.herdr\/answers\/([a-f0-9]{16})\.json/.exec(String((p as { text: string }).text))!;
+    writeFileSync(join(cwd, ".herdr", "answers", `${m[1]}.json`), '{"files_changed":1}');
+    return { type: "prompted" };
+  });
+  const res = await t.authed("/parent/runtime/sessions/default/agents/w2%3Ap1/ask", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ prompt: "what changed?", timeout_ms: 5000 }),
+  });
+  assert.equal(res.status, 200);
+  assert.deepEqual(((await res.json()) as { answer: unknown }).answer, { files_changed: 1 });
   await teardown(t);
 });
