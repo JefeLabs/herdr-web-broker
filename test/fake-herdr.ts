@@ -50,6 +50,10 @@ export class FakeHerdr {
     for (const sock of this.#conns) sock.write(encodeFrame({ event }));
   }
 
+  get connections(): number {
+    return this.#conns.size;
+  }
+
   listen(): Promise<void> {
     return new Promise((resolve) => this.#server.listen(this.socketPath, resolve));
   }

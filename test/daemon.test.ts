@@ -4,7 +4,7 @@ import { spawnSync } from "node:child_process";
 import { join } from "node:path";
 import { startDaemon } from "../src/daemon.js";
 import { FakeHerdr } from "./fake-herdr.js";
-import { tmpDir } from "./util.js";
+import { tmpDir, waitFor } from "./util.js";
 
 async function boot() {
   const fake = new FakeHerdr(join(tmpDir(), "h.sock"));
@@ -61,6 +61,33 @@ test("a stale lock is replaced", async () => {
   assert.ok(again);
   await again.close();
   await fake.close();
+});
+
+test("a failed boot (port already in use) stops the local attach it started", async () => {
+  const { fake: fakeA, handle: handleA } = await boot();
+  const fakeB = new FakeHerdr(join(tmpDir(), "hB.sock"));
+  await fakeB.listen();
+
+  await assert.rejects(
+    () =>
+      startDaemon({
+        configDir: tmpDir(),
+        stateDir: tmpDir(),
+        configOverrides: { listen: `${handleA.host}:${handleA.port}` },
+        localEndpoints: [{ session: "default", socketPath: fakeB.socketPath }],
+        herdrVersion: "0.8.0-test",
+      }),
+    (err: NodeJS.ErrnoException) => {
+      assert.equal(err.code, "EADDRINUSE");
+      return true;
+    },
+  );
+  // The failed daemon's LocalHerdr must have been stopped, not leaked.
+  await waitFor(() => fakeB.connections === 0);
+
+  await handleA.close();
+  await fakeA.close();
+  await fakeB.close();
 });
 
 test("tls config serves https when openssl is available", async (t) => {
