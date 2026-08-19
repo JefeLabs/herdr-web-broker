@@ -11,10 +11,10 @@ const CLI = join(process.cwd(), "dist/src/cli.js");
 
 function run(args: string[]): Promise<{ status: number | null; stdout: string; stderr: string }> {
   return new Promise((resolve) => {
-    const child = spawn(process.execPath, [CLI, ...args], { encoding: "utf8" } as never);
+    const child = spawn(process.execPath, [CLI, ...args]);
     let stdout = "", stderr = "";
-    child.stdout.on("data", (d) => (stdout += d));
-    child.stderr.on("data", (d) => (stderr += d));
+    child.stdout.on("data", (d) => (stdout += String(d)));
+    child.stderr.on("data", (d) => (stderr += String(d)));
     child.on("close", (status) => resolve({ status, stdout, stderr }));
   });
 }
@@ -80,4 +80,42 @@ test("issue-secret without a daemon fails with guidance", async () => {
   const out = await run(["issue-secret", "--name", "x", "--config-dir", tmpDir(), "--state-dir", tmpDir()]);
   assert.equal(out.status, 1);
   assert.match(out.stderr, /not running/);
+});
+
+test("flag without value errors with missing required message", async () => {
+  const out = await run([
+    "pair",
+    "--address",
+    "--secret", "sss",
+    "--name", "x",
+    "--config-dir", tmpDir(),
+    "--state-dir", tmpDir(),
+  ]);
+  assert.equal(out.status, 1);
+  assert.match(out.stderr, /missing required --address/);
+});
+
+test("live daemon refusal on invalid input", async () => {
+  const fake = new FakeHerdr(join(tmpDir(), "h.sock"));
+  await fake.listen();
+  const configDir = tmpDir();
+  const stateDir = tmpDir();
+  const handle = (await startDaemon({
+    configDir,
+    stateDir,
+    configOverrides: { listen: "127.0.0.1:0" },
+    localEndpoints: [{ session: "default", socketPath: fake.socketPath }],
+    herdrVersion: "0.8.0-test",
+    projectionDir: tmpDir(),
+  }))!;
+  const dirs = ["--config-dir", configDir, "--state-dir", stateDir];
+
+  try {
+    const out = await run(["issue-secret", "--name", "bad/name", ...dirs]);
+    assert.equal(out.status, 1);
+    assert.match(out.stderr, /daemon refused/);
+  } finally {
+    await handle.close();
+    await fake.close();
+  }
 });

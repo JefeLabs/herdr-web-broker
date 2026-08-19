@@ -1,5 +1,4 @@
 import { spawn } from "node:child_process";
-import { request } from "node:http";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -14,8 +13,15 @@ interface Ctx {
 function parseArgs(argv: string[]): { command: string; flags: Map<string, string> } {
   const [command = "help", ...rest] = argv;
   const flags = new Map<string, string>();
-  for (let i = 0; i < rest.length; i += 2) {
-    if (rest[i].startsWith("--")) flags.set(rest[i].slice(2), rest[i + 1] ?? "");
+  for (let i = 0; i < rest.length; i++) {
+    if (rest[i].startsWith("--")) {
+      const key = rest[i].slice(2);
+      if (i + 1 < rest.length && !rest[i + 1].startsWith("--")) {
+        flags.set(key, rest[++i]);
+      } else {
+        flags.set(key, "");
+      }
+    }
   }
   return { command, flags };
 }
@@ -42,19 +48,16 @@ async function adminFetch(
   const url = `http://${lock.listen}${path}`;
 
   try {
-    // Try using fetch first (works fine in main process)
-    const res = await fetch(url, {
+    return await fetch(url, {
       method,
       headers: {
         "x-admin-token": ensureAdminToken(ctx.stateDir),
         ...(bodyStr ? { "content-type": "application/json" } : {}),
       },
       body: bodyStr,
-      signal: AbortSignal.timeout(5000),
+      signal: AbortSignal.timeout(2000),
     });
-    return res;
-  } catch (fetchErr) {
-    // If fetch fails, return undefined (daemon not reachable)
+  } catch {
     return undefined;
   }
 }
@@ -85,8 +88,12 @@ async function main(): Promise<void> {
   if (command === "issue-secret") {
     const name = need(flags, "name");
     const res = await adminFetch(ctx, "POST", "/admin/children", { name });
-    if (!res || !res.ok) {
+    if (!res) {
       console.error("daemon not running — run the start action first");
+      process.exit(1);
+    }
+    if (!res.ok) {
+      console.error(`daemon refused: ${await res.text()}`);
       process.exit(1);
     }
     console.log(JSON.stringify(await res.json()));
@@ -96,8 +103,12 @@ async function main(): Promise<void> {
   if (command === "revoke") {
     const name = need(flags, "name");
     const res = await adminFetch(ctx, "DELETE", `/admin/children/${encodeURIComponent(name)}`);
-    if (!res || !res.ok) {
+    if (!res) {
       console.error("daemon not running — run the start action first");
+      process.exit(1);
+    }
+    if (!res.ok) {
+      console.error(`daemon refused: ${await res.text()}`);
       process.exit(1);
     }
     console.log(JSON.stringify(await res.json()));
