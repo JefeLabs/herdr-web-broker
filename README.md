@@ -50,6 +50,11 @@ Every herdr method is passthrough (see `herdr api schema --json`), gated by a
 deny-list (`policy.remote_deny`, default: `server.stop`,
 `server.reload_config`, `plugin.*` for remote-originated calls).
 
+How herdr 0.8.0 actually behaves on the wire — one-shot rpc connections,
+subscribe-only event channels, per-pane status subscriptions, real frame
+shapes — is written up in
+[docs/herdr-0.8-protocol-notes.md](docs/herdr-0.8-protocol-notes.md).
+
 Remote sessions are also projected as local sockets —
 `HERDR_SOCKET_PATH=~/.config/herdr/remotes/laptop/default.sock herdr agent list`
 drives the laptop with the stock CLI.
