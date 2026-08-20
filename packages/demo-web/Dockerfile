@@ -1,13 +1,13 @@
 # herdr-web-broker demo site: real herdr + the broker plugin + the React
 # console, one container — the full "real usage" stack.
 #
-#   docker build -f demo/web/Dockerfile -t herdr-web-demo .
+#   docker build -f packages/demo-web/Dockerfile -t herdr-web-demo .
 #   docker run --rm -p 5173:5173 -p 7591:7591 herdr-web-demo
 #
 #   site    http://localhost:5173   (vite preview, proxies to the broker)
 #   broker  http://localhost:7591   (bearer: demo-token)
 #
-# Build context is the REPO ROOT (-f demo/web/Dockerfile .) so the image runs
+# Build context is the REPO ROOT (-f packages/demo-web/Dockerfile .) so the image runs
 # THIS working tree, not a published clone.
 FROM node:22-slim
 
@@ -29,9 +29,9 @@ RUN cd /opt/herdr-web-broker \
   && npm install --include=dev \
   && npm run build \
   && npm -w packages/client run build \
-  && npm -w demo/web run build
+  && npm -w packages/demo-web run build
 
-COPY demo/web/entrypoint.sh /entrypoint.sh
+COPY packages/demo-web/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
 EXPOSE 5173 7591

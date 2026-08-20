@@ -50,5 +50,5 @@ ADMIN_TOKEN_FILE=$(find "$HOME/.local/state/herdr" "$HOME/.config/herdr" -name a
 
 # ------------------------------------------------------------- demo site up
 log "serving the demo site on :5173 (proxy → 127.0.0.1:7591)"
-cd /opt/herdr-web-broker/demo/web
+cd /opt/herdr-web-broker/packages/demo-web
 VITE_BROKER_TARGET=http://127.0.0.1:7591 exec npx vite preview --host 0.0.0.0 --port 5173

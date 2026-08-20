@@ -19,7 +19,7 @@ A React + Vite site that exercises **every endpoint the broker exposes**, live
 From the repo root:
 
 ```sh
-docker build -f demo/web/Dockerfile -t herdr-web-demo .
+docker build -f packages/demo-web/Dockerfile -t herdr-web-demo .
 docker run --rm -p 5173:5173 -p 7591:7591 herdr-web-demo
 ```
 
@@ -35,7 +35,7 @@ seconds, no herdr install:
 
 ```sh
 npm run build          # repo root — compiles dist/
-cd demo/web
+cd packages/demo-web
 npm install
 npm run devstack       # broker on :7591 (prints bearer + admin token)
 npm run dev            # site on :5173, proxying to the broker

@@ -103,13 +103,13 @@ workspace browser, auth gate, and events panel are built on it.
 
 ## Demo site
 
-[demo/web](demo/web) is a React site that exercises every endpoint above,
+[packages/demo-web](packages/demo-web) is a React site that exercises every endpoint above,
 live: an interactive console (one card per route + a WS events panel), a
 workspace/repo file browser, and an API reference with a downloadable
 OpenAPI 3.1 document. Run the full real stack in Docker
-(`docker build -f demo/web/Dockerfile -t herdr-web-demo . && docker run --rm
+(`docker build -f packages/demo-web/Dockerfile -t herdr-web-demo . && docker run --rm
 -p 5173:5173 -p 7591:7591 herdr-web-demo`) or herdr-free via its dev stack —
-see [demo/web/README.md](demo/web/README.md).
+see [packages/demo-web/README.md](packages/demo-web/README.md).
 
 ## Security
 

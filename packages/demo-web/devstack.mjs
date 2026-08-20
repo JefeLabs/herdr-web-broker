@@ -4,8 +4,8 @@
 // endpoint on the demo site works end-to-end without herdr or Docker.
 //
 //   npm run build          (repo root — compiles dist/)
-//   node demo/web/devstack.mjs
-//   npm run dev            (in demo/web — the site proxies to :7591)
+//   node packages/demo-web/devstack.mjs
+//   npm run dev            (in packages/demo-web — the site proxies to :7591)
 //
 // The simulator speaks herdr 0.8.0's verified wire shapes (one-shot rpc,
 // subscribe-only event channels) because it extends the same FakeHerdr the

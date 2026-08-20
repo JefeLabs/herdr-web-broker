@@ -1,8 +1,8 @@
 .git
 node_modules
 dist
-demo/web/node_modules
-demo/web/dist
+packages/demo-web/node_modules
+packages/demo-web/dist
 packages/client/node_modules
 packages/client/dist
 .env
