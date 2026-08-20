@@ -2,6 +2,7 @@ import type { IncomingMessage, Server } from "node:http";
 import type { Duplex } from "node:stream";
 import { WebSocketServer, type WebSocket } from "ws";
 import { checkBearer, matchToken, verifySecret } from "./auth.js";
+import type { AuthLimiter } from "./auth-limit.js";
 import type { BrokerConfig } from "./config.js";
 import { BrokerError } from "./errors.js";
 import type { Registry } from "./registry.js";
@@ -26,6 +27,8 @@ export interface WsDeps {
    * idle sockets, so the server pings rather than every deployment tuning
    * its proxy */
   pingIntervalMs?: number;
+  /** failed-auth limiter shared with the HTTP surface */
+  limiter?: AuthLimiter;
 }
 
 export interface UpgradeHandle {
@@ -79,6 +82,14 @@ export function attachUpgradeHandling(server: Server, deps: WsDeps): UpgradeHand
       }
       enrollWss.handleUpgrade(req, socket, head, (ws) => acceptChild(deps, name, ws));
     } else if (path === "/parent/ws") {
+      // Same failed-auth limiter as HTTP: an address hammering the upgrade
+      // path gets 429 before any token comparison.
+      const remoteIp = req.socket.remoteAddress ?? "unknown";
+      if (deps.limiter?.blocked(remoteIp)) {
+        socket.write("HTTP/1.1 429 Too Many Requests\r\n\r\n");
+        socket.destroy();
+        return;
+      }
       // Browsers cannot set an Authorization header on WebSocket upgrades.
       // Preferred alternative: offer ["bearer", <token>] as subprotocols —
       // the token rides a header, not the URL. ?token= is also accepted as
@@ -101,10 +112,15 @@ export function attachUpgradeHandling(server: Server, deps: WsDeps): UpgradeHand
         if (matched !== undefined) break;
       }
       if (matched === undefined) {
+        // count only upgrades that actually offered a credential
+        if (candidates.some((c) => typeof c === "string" && c.length > "Bearer ".length)) {
+          deps.limiter?.record(remoteIp);
+        }
         socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
         socket.destroy();
         return;
       }
+      deps.limiter?.success(remoteIp);
       const tokenName = matched;
       clientWss.handleUpgrade(req, socket, head, (ws) => {
         alive.set(ws, true);

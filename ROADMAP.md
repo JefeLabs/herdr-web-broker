@@ -46,9 +46,10 @@ verify the methods exist before building on them:
 15. ~~**Per-pane conversation safety.**~~ Done: ask serializes per pane
     (second concurrent ask answers 409 `pane_busy`, lock releases on
     failure); steering during an ask stays allowed — that is a feature.
-16. **Security tier for shared instances:** hash client tokens at rest
-    (mint-once-show-once, like child secrets), rate-limit auth attempts,
-    and an audit trail for admin actions (kick/mint/revoke/env writes).
+16. ~~**Security tier for shared instances.**~~ Done: client tokens hashed at
+    rest (auto-migrated on boot, mint is show-once), per-address failed-auth
+    rate limiting (credential-less requests never count), and an append-only
+    audit trail (admin ops + env writes) readable via GET /admin/audit.
 17. ~~**Live pane viewer.**~~ Done: `GET .../panes/{pane}/screen` long-polls
     by content version; SDK `watchScreen()`/`type()`/`keys()`; PaneViewer
     organism + demo Pane page (interactive — trust dialogs answered live).

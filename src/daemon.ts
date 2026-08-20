@@ -6,7 +6,9 @@ import type { AddressInfo } from "node:net";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
-import { loadConfig, saveConfig, type BrokerConfig } from "./config.js";
+import { loadConfig, normalizeClientTokens, saveConfig, type BrokerConfig } from "./config.js";
+import { Audit } from "./audit.js";
+import { AuthLimiter } from "./auth-limit.js";
 import { EnvRegistry } from "./env-registry.js";
 import { createHttpHandler, makeCallInstance } from "./http.js";
 import { LocalHerdr, type HerdrEndpoint } from "./local-attach.js";
@@ -60,6 +62,11 @@ export async function startDaemon(opts: DaemonOptions): Promise<DaemonHandle | u
   if (await otherDaemonHealthy(opts.stateDir)) return undefined;
 
   const config = { ...loadConfig(opts.configDir), ...opts.configOverrides };
+  // Hash any plaintext client tokens. Persist only when they came from the
+  // config FILE (overrides — dev stacks, tests — stay in memory).
+  if (normalizeClientTokens(config.client_tokens) && opts.configOverrides?.client_tokens === undefined) {
+    saveConfig(opts.configDir, config);
+  }
   const registry = new Registry(join(opts.stateDir, "registry.json"));
   registry.load();
   const children = new ChildrenStore(opts.stateDir);
@@ -84,6 +91,9 @@ export async function startDaemon(opts: DaemonOptions): Promise<DaemonHandle | u
   };
 
   const hub = new TunnelHub();
+  // One failed-auth limiter across HTTP and the WS upgrade path.
+  const limiter = new AuthLimiter();
+  const audit = new Audit(join(opts.stateDir, "audit.log"));
   let link: ParentLink | undefined;
   const startLink = (cfg: BrokerConfig) => {
     link?.stop();
@@ -114,6 +124,8 @@ export async function startDaemon(opts: DaemonOptions): Promise<DaemonHandle | u
     presence: new Presence(),
     // late-bound: `upgrade` exists once the server is listening
     onKickSockets: (tokenName) => upgrade?.closeToken(tokenName) ?? 0,
+    limiter,
+    audit,
   });
 
   const lastColon = config.listen.lastIndexOf(":");
@@ -136,6 +148,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<DaemonHandle | u
       config,
       callInstance: makeCallInstance({ registry, local, hub, remoteDeny: config.policy.remote_deny, ops }),
       pingIntervalMs: opts.wsPingMs,
+      limiter,
     });
     await new Promise<void>((resolve, reject) => {
       server.once("error", reject);

@@ -18,6 +18,7 @@ const STATUS: Record<string, number> = {
   unknown_token: 404,
   unknown_bundle: 404,
   pane_busy: 409,
+  rate_limited: 429,
   unknown_context: 404,
   unknown_file: 404,
   agent_unresponsive: 504,

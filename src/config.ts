@@ -1,12 +1,31 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { parse, stringify } from "smol-toml";
+import { hashSecret } from "./auth.js";
 import type { ModelsConfig } from "./model-registry.js";
 import { DEFAULT_REMOTE_DENY } from "./policy.js";
 
 export interface ClientToken {
   name: string;
-  token: string;
+  /** legacy/dev plaintext — normalized to token_hash at boot */
+  token?: string;
+  /** sha256 hex — the at-rest form; the plaintext is shown once at mint */
+  token_hash?: string;
+}
+
+/** Converts plaintext entries to their hashed form in place. Returns
+ * whether anything changed, so the daemon knows to persist a config that
+ * arrived from disk with plaintext secrets. */
+export function normalizeClientTokens(tokens: ClientToken[]): boolean {
+  let changed = false;
+  for (const t of tokens) {
+    if (t.token !== undefined) {
+      t.token_hash = hashSecret(t.token);
+      delete t.token;
+      changed = true;
+    }
+  }
+  return changed;
 }
 
 export interface ParentConfig {

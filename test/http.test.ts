@@ -4,6 +4,9 @@ import { createServer } from "node:http";
 import { writeFileSync } from "node:fs";
 import type { AddressInfo } from "node:net";
 import { join } from "node:path";
+import { hashSecret } from "../src/auth.js";
+import { AuthLimiter } from "../src/auth-limit.js";
+import { Audit } from "../src/audit.js";
 import { EnvRegistry } from "../src/env-registry.js";
 import { Presence } from "../src/presence.js";
 import { ModelRegistry } from "../src/model-registry.js";
@@ -18,7 +21,7 @@ import type { OpsDeps } from "../src/workspace-ops.js";
 import { FakeHerdr } from "./fake-herdr.js";
 import { scratchRepo, sh, tmpDir } from "./util.js";
 
-async function setup() {
+async function setup(opts: { limiter?: AuthLimiter } = {}) {
   const fake = new FakeHerdr(join(tmpDir(), "h.sock"));
   fake.agents = [{ pane_id: "w1:p1", name: "claude", agent_status: "working" }];
   await fake.listen();
@@ -43,6 +46,7 @@ async function setup() {
   };
   const persisted: string[] = [];
   const presence = new Presence();
+  const audit = new Audit(join(tmpDir(), "audit.log"));
   const kicked: string[] = [];
   const server = createServer(
     createHttpHandler({
@@ -59,6 +63,8 @@ async function setup() {
         kicked.push(name);
         return 2;
       },
+      ...(opts.limiter ? { limiter: opts.limiter } : {}),
+      audit,
     }),
   );
   await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
@@ -73,6 +79,104 @@ async function teardown(t: { server: import("node:http").Server; local: LocalHer
   t.local.stop();
   await t.fake.close();
 }
+
+test("auth rate limit: too many bad bearers earn 429 — even for the right token afterwards", async () => {
+  const t = await setup({ limiter: new AuthLimiter({ maxFailures: 3, windowMs: 60_000 }) });
+  try {
+    for (let i = 0; i < 3; i++) {
+      const bad = await fetch(t.base + "/parent", { headers: { authorization: "Bearer wrong" } });
+      assert.equal(bad.status, 401);
+    }
+    const blocked = await fetch(t.base + "/parent", { headers: { authorization: "Bearer wrong" } });
+    assert.equal(blocked.status, 429);
+    assert.equal(((await blocked.json()) as { code: string }).code, "rate_limited");
+    // the right token is blocked from that address too — that IS the feature
+    assert.equal((await t.authed("/parent")).status, 429);
+    // health stays reachable — liveness probes must never be limited
+    assert.equal((await fetch(t.base + "/health")).status, 200);
+  } finally {
+    await teardown(t);
+  }
+});
+
+test("auth rate limit: credential-less requests 401 but never count — an unauthenticated SPA must not lock out its own user", async () => {
+  const t = await setup({ limiter: new AuthLimiter({ maxFailures: 3, windowMs: 60_000 }) });
+  try {
+    // an app polling without a token (fresh browser, gate not passed yet)
+    for (let i = 0; i < 6; i++) {
+      const bare = await fetch(t.base + "/parent");
+      assert.equal(bare.status, 401, "always 401, never 429");
+    }
+    // the real login still works — no failures were recorded
+    assert.equal((await t.authed("/parent")).status, 200);
+    // admin without the header is the same: 401, not a counted attempt
+    for (let i = 0; i < 6; i++) {
+      assert.equal((await fetch(t.base + "/admin/status")).status, 401);
+    }
+    assert.equal((await t.authed("/parent")).status, 200);
+  } finally {
+    await teardown(t);
+  }
+});
+
+test("auth rate limit: a successful auth clears the address's failure count", async () => {
+  const t = await setup({ limiter: new AuthLimiter({ maxFailures: 3, windowMs: 60_000 }) });
+  try {
+    for (let i = 0; i < 2; i++) {
+      await fetch(t.base + "/parent", { headers: { authorization: "Bearer wrong" } });
+    }
+    assert.equal((await t.authed("/parent")).status, 200, "still under the limit — real token works");
+    for (let i = 0; i < 2; i++) {
+      const bad = await fetch(t.base + "/parent", { headers: { authorization: "Bearer wrong" } });
+      assert.equal(bad.status, 401, "counter restarted after the success");
+    }
+  } finally {
+    await teardown(t);
+  }
+});
+
+test("auth rate limit: bad admin tokens count toward the same address's limit", async () => {
+  const t = await setup({ limiter: new AuthLimiter({ maxFailures: 3, windowMs: 60_000 }) });
+  try {
+    for (let i = 0; i < 3; i++) {
+      const bad = await fetch(t.base + "/admin/status", { headers: { "x-admin-token": "wrong" } });
+      assert.equal(bad.status, 401);
+    }
+    assert.equal((await t.authed("/parent")).status, 429);
+  } finally {
+    await teardown(t);
+  }
+});
+
+test("audit: admin actions and env writes land in the trail, readable via GET /admin/audit", async () => {
+  const t = await setup();
+  try {
+    t.config.token_mint.enabled = true;
+    await fetch(t.base + "/admin/tokens", {
+      method: "POST",
+      headers: { "x-admin-token": "admin-tok", "content-type": "application/json" },
+      body: JSON.stringify({ name: "guest" }),
+    });
+    await t.authed("/parent/runtime/env", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: "SOME_KEY", value: "v", kind: "copilot" }),
+    });
+    await fetch(t.base + "/admin/kick/guest", { method: "POST", headers: { "x-admin-token": "admin-tok" } });
+
+    const res = await fetch(t.base + "/admin/audit?limit=10", { headers: { "x-admin-token": "admin-tok" } });
+    assert.equal(res.status, 200);
+    const { entries } = (await res.json()) as { entries: { action: string; actor: string; target?: string }[] };
+    assert.deepEqual(entries.map((e) => e.action), ["token.mint", "env.set", "kick"]);
+    assert.equal(entries[0].actor, "admin");
+    assert.equal(entries[0].target, "guest");
+    // env writes are bearer-authed — the actor is the token's NAME
+    assert.equal(entries[1].actor, "t");
+    assert.equal(entries[1].target, "SOME_KEY");
+  } finally {
+    await teardown(t);
+  }
+});
 
 test("health needs no auth; /parent does", async () => {
   const t = await setup();
@@ -671,6 +775,12 @@ test("token mint: 403 unless [token_mint] enables it; minted tokens work immedia
 
     const asGuest = await fetch(t.base + "/parent", { headers: { authorization: `Bearer ${out.token}` } });
     assert.equal(asGuest.status, 200, "the minted token authenticates immediately");
+
+    // show-once: only the sha256 of the token is stored — the plaintext
+    // exists nowhere but the mint response
+    const entry = t.config.client_tokens.find((c) => c.name === "guest");
+    assert.equal(entry?.token, undefined, "no plaintext at rest");
+    assert.equal(entry?.token_hash, hashSecret(out.token));
 
     assert.equal((await mint({ name: "guest" })).status, 400, "duplicate names are the revocation key — rejected");
     assert.equal((await mint({ name: "bad name!" })).status, 400);

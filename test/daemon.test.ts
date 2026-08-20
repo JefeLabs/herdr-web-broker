@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { startDaemon } from "../src/daemon.js";
 import { FakeHerdr } from "./fake-herdr.js";
@@ -31,6 +32,35 @@ test("daemon boots, serves health and authed REST, and closes cleanly", async ()
   assert.equal(roll.instances[0].instance, "runtime");
   await handle.close();
   await fake.close();
+});
+
+test("boot migrates plaintext config tokens to hashes; the original bearer still works", async () => {
+  const fake = new FakeHerdr(join(tmpDir(), "h.sock"));
+  await fake.listen();
+  const configDir = tmpDir();
+  writeFileSync(
+    join(configDir, "config.toml"),
+    ['listen = "127.0.0.1:0"', "[[client_tokens]]", 'name = "cli"', 'token = "plain-secret"'].join("\n"),
+  );
+  const handle = await startDaemon({
+    configDir,
+    stateDir: tmpDir(),
+    localEndpoints: [{ session: "default", socketPath: fake.socketPath }],
+    herdrVersion: "0.8.0-test",
+    projectionDir: tmpDir(),
+  });
+  try {
+    // the plaintext token authenticates exactly as before…
+    const roll = await fetch(`${handle!.base}/parent`, { headers: { authorization: "Bearer plain-secret" } });
+    assert.equal(roll.status, 200);
+    // …but at rest the config now holds only the hash
+    const disk = readFileSync(join(configDir, "config.toml"), "utf8");
+    assert.ok(!disk.includes("plain-secret"), "plaintext must be scrubbed from config.toml");
+    assert.ok(disk.includes("token_hash"), "hash must be persisted");
+  } finally {
+    await handle!.close();
+    await fake.close();
+  }
 });
 
 test("second daemon against the same state dir yields to the healthy first", async () => {

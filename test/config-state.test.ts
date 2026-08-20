@@ -3,7 +3,8 @@ import assert from "node:assert/strict";
 import { mkdtempSync, readFileSync, writeFileSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { loadConfig, saveConfig, DEFAULT_LISTEN } from "../src/config.js";
+import { hashSecret } from "../src/auth.js";
+import { loadConfig, normalizeClientTokens, saveConfig, DEFAULT_LISTEN } from "../src/config.js";
 import { ChildrenStore, ensureAdminToken, readLock, writeLock, clearLock } from "../src/state.js";
 
 const dir = () => mkdtempSync(join(tmpdir(), "hwb-"));
@@ -38,6 +39,18 @@ test("loadConfig parses a full config.toml", () => {
   assert.deepEqual(c.client_tokens, [{ name: "cli", token: "tok-a" }]);
   assert.deepEqual(c.parent, { address: "ws://parent:7591", secret: "sss", name: "laptop" });
   assert.deepEqual(c.policy.remote_deny, ["server.stop"]);
+});
+
+test("normalizeClientTokens hashes plaintext entries in place and reports the change", () => {
+  const tokens = [
+    { name: "legacy", token: "tok-a" },
+    { name: "already", token_hash: hashSecret("tok-b") },
+  ];
+  assert.equal(normalizeClientTokens(tokens), true);
+  assert.deepEqual(tokens[0], { name: "legacy", token_hash: hashSecret("tok-a") });
+  assert.deepEqual(tokens[1], { name: "already", token_hash: hashSecret("tok-b") });
+  // idempotent: a second pass changes nothing
+  assert.equal(normalizeClientTokens(tokens), false);
 });
 
 test("saveConfig round-trips through loadConfig", () => {

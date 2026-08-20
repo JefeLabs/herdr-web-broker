@@ -1,6 +1,8 @@
 import { createHash, timingSafeEqual } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { checkBearer, hashSecret, matchToken, mintSecret } from "./auth.js";
+import { AuthLimiter } from "./auth-limit.js";
+import type { Audit } from "./audit.js";
 import type { Presence } from "./presence.js";
 import type { BrokerConfig } from "./config.js";
 import { BrokerError, httpStatus } from "./errors.js";
@@ -29,6 +31,10 @@ export interface HttpDeps {
   presence: Presence;
   /** terminates live WS sockets authed with the token; returns how many */
   onKickSockets?: (tokenName: string) => number;
+  /** failed-auth limiter shared with the WS upgrade path (default: built in) */
+  limiter?: AuthLimiter;
+  /** append-only trail of privileged actions (admin ops + env writes) */
+  audit?: Audit;
 }
 
 export function makeCallInstance(deps: {
@@ -118,6 +124,7 @@ async function readBody(req: IncomingMessage): Promise<Record<string, unknown>> 
 }
 
 export function createHttpHandler(deps: HttpDeps) {
+  const limiter = deps.limiter ?? new AuthLimiter();
   const callInstance = makeCallInstance({
     registry: deps.registry,
     local: deps.local,
@@ -139,9 +146,15 @@ export function createHttpHandler(deps: HttpDeps) {
       return;
     }
 
+    // Everything below /health authenticates; a rate-limited address is
+    // refused before any token comparison happens.
+    const remoteIp = req.socket.remoteAddress ?? "unknown";
+    if (limiter.blocked(remoteIp)) {
+      throw new BrokerError("rate_limited", "too many failed auth attempts — wait and retry");
+    }
+
     if (parts[0] === "admin") {
-      const remote = req.socket.remoteAddress ?? "";
-      const loopback = remote === "127.0.0.1" || remote === "::1" || remote === "::ffff:127.0.0.1";
+      const loopback = remoteIp === "127.0.0.1" || remoteIp === "::1" || remoteIp === "::ffff:127.0.0.1";
       // Constant-time compare so token length/content never leaks via timing.
       const presented = String(req.headers["x-admin-token"] ?? "");
       const tokenOk = timingSafeEqual(
@@ -149,8 +162,13 @@ export function createHttpHandler(deps: HttpDeps) {
         createHash("sha256").update(deps.adminToken).digest(),
       );
       if (!loopback || !tokenOk) {
+        // Only a PRESENTED credential counts as an attempt — credential-less
+        // requests probe nothing, and counting them would let an
+        // unauthenticated SPA lock its own user out.
+        if (presented) limiter.record(remoteIp);
         throw new BrokerError("unauthorized", "admin requires loopback + x-admin-token");
       }
+      limiter.success(remoteIp);
       await admin(req, res, parts, url);
       return;
     }
@@ -159,8 +177,13 @@ export function createHttpHandler(deps: HttpDeps) {
     // learns nothing about which routes exist (401, never a route's 404).
     const tokenName = matchToken(req.headers.authorization, deps.config.client_tokens);
     if (tokenName === undefined) {
+      // count only real credential attempts (see the admin branch note)
+      if (req.headers.authorization?.startsWith("Bearer ") && req.headers.authorization.length > 7) {
+        limiter.record(remoteIp);
+      }
       throw new BrokerError("unauthorized", "missing or invalid bearer token");
     }
+    limiter.success(remoteIp);
     deps.presence.touch(tokenName);
     if (parts[0] !== "parent") {
       throw new BrokerError("unknown_instance", `no route ${url.pathname}`);
@@ -210,7 +233,15 @@ export function createHttpHandler(deps: HttpDeps) {
       if (!transport) throw new BrokerError("unknown_session", `'${instance}' has no sessions to carry env ops`);
       if (parts.length === 3 && req.method === "POST") {
         const body = await readBody(req);
-        json(res, 200, (await callInstance(instance, transport, "broker.env.set", body)) as Record<string, unknown>);
+        const result = (await callInstance(instance, transport, "broker.env.set", body)) as Record<string, unknown>;
+        // credentials changed hands — that belongs in the trail, keyed to the bearer
+        deps.audit?.record({
+          action: "env.set",
+          actor: tokenName,
+          target: typeof body.name === "string" ? body.name : undefined,
+          remote: req.socket.remoteAddress ?? undefined,
+        });
+        json(res, 200, result);
         return;
       }
       if (parts.length === 3 && req.method === "GET") {
@@ -223,7 +254,14 @@ export function createHttpHandler(deps: HttpDeps) {
         if (kind !== null) params.kind = kind;
         const sess = url.searchParams.get("session");
         if (sess !== null) params.session = sess;
-        json(res, 200, (await callInstance(instance, transport, "broker.env.delete", params)) as Record<string, unknown>);
+        const result = (await callInstance(instance, transport, "broker.env.delete", params)) as Record<string, unknown>;
+        deps.audit?.record({
+          action: "env.delete",
+          actor: tokenName,
+          target: String(params.name),
+          remote: req.socket.remoteAddress ?? undefined,
+        });
+        json(res, 200, result);
         return;
       }
     }
@@ -499,6 +537,8 @@ export function createHttpHandler(deps: HttpDeps) {
     parts: string[],
     url: URL,
   ): Promise<void> {
+    const note = (action: string, target?: string) =>
+      deps.audit?.record({ action, actor: "admin", target, remote: req.socket.remoteAddress ?? undefined });
     if (req.method === "GET" && parts[1] === "status") {
       json(res, 200, {
         listen: deps.config.listen,
@@ -540,6 +580,7 @@ export function createHttpHandler(deps: HttpDeps) {
         }
       }
       deps.presence.remove(name);
+      note("kick", name);
       json(res, 200, {
         kicked: name,
         token_revoked: tokenRevoked,
@@ -563,8 +604,11 @@ export function createHttpHandler(deps: HttpDeps) {
         throw new BrokerError("bad_request", `token name '${name}' already exists — names are the revocation key`);
       }
       const token = mintSecret();
-      deps.config.client_tokens.push({ name, token });
+      // show-once: only the hash is stored — this response is the one place
+      // the plaintext ever exists
+      deps.config.client_tokens.push({ name, token_hash: hashSecret(token) });
       deps.onTokensChanged?.();
+      note("token.mint", name);
       json(res, 200, { name, token });
       return;
     }
@@ -576,6 +620,7 @@ export function createHttpHandler(deps: HttpDeps) {
       }
       const secret = mintSecret();
       deps.children.set(name, hashSecret(secret));
+      note("child.mint", name);
       json(res, 200, { name, secret });
       return;
     }
@@ -583,6 +628,7 @@ export function createHttpHandler(deps: HttpDeps) {
       const name = decodeURIComponent(parts[2]);
       deps.children.delete(name);
       deps.hub.disconnect(name);
+      note("child.revoke", name);
       json(res, 200, { revoked: name });
       return;
     }
@@ -598,7 +644,14 @@ export function createHttpHandler(deps: HttpDeps) {
       }
       deps.config.client_tokens = remaining;
       deps.onTokensChanged?.();
+      note("token.revoke", name);
       json(res, 200, { revoked: name, remaining: remaining.length });
+      return;
+    }
+    // GET /admin/audit?limit= — the trail's tail, oldest first
+    if (req.method === "GET" && parts[1] === "audit" && parts.length === 2) {
+      const limit = Math.min(Math.max(Number(url.searchParams.get("limit")) || 100, 1), 1000);
+      json(res, 200, { entries: deps.audit?.tail(limit) ?? [] });
       return;
     }
     if (req.method === "POST" && parts[1] === "reload") {

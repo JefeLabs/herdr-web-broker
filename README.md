@@ -127,6 +127,17 @@ see [packages/demo-web/README.md](packages/demo-web/README.md).
 ## Security
 
 - The daemon listens on `127.0.0.1` unless you explicitly configure otherwise.
+- Client tokens are stored **hashed at rest** (`token_hash`, sha256): minted
+  tokens are shown once, and plaintext entries in an existing config.toml are
+  auto-migrated on boot. Comparison stays constant-time either way.
+- Failed auth attempts are **rate-limited per address** (10 per minute →
+  `429 rate_limited`; a successful auth clears the count). Only requests that
+  actually present a credential count — an unauthenticated page polling can't
+  lock its own user out.
+- Privileged actions land in an **append-only audit trail**
+  (`<state-dir>/audit.log`, JSONL): kicks, token/child mints and revocations,
+  env-registry writes (keyed to the bearer's name). Tail it with
+  `GET /admin/audit?limit=`.
 - Child secrets are 256-bit, name-bound, shown once, stored hashed. Revoke with
   the **Broker: revoke child** action.
 - For cross-network use, prefer a tailnet/VPN or TLS-terminating proxy; direct

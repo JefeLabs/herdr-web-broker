@@ -845,6 +845,46 @@ export const CATALOG: EndpointSpec[] = [
     build: () => ({ method: "GET", path: "/admin/status", auth: "admin" }),
   },
   {
+    id: "admin-audit",
+    group: "Admin",
+    title: "Audit trail",
+    summary: "The tail of the append-only privileged-action log: kicks, token/child mints and revocations, env-registry writes — who, what, from where, when.",
+    docs:
+      "JSONL at <state-dir>/audit.log, oldest first in the reply. Admin actions log actor 'admin'; env writes " +
+      "log the bearer token's NAME as the actor, so a shared instance can answer 'who rotated that credential'. " +
+      "Append-only by design — there is no delete/update surface to tidy up after.",
+    method: "GET",
+    pathTemplate: "/admin/audit",
+    auth: "admin",
+    fields: [{ key: "limit", label: "limit", kind: "number", placeholder: "100" }],
+    response: {
+      type: "object",
+      properties: {
+        entries: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              ts: { type: "string" },
+              action: { type: "string" },
+              actor: { type: "string" },
+              target: { type: "string" },
+              remote: { type: "string" },
+            },
+            required: ["ts", "action", "actor"],
+          },
+        },
+      },
+      required: ["entries"],
+    },
+    build: (v) => ({
+      method: "GET",
+      path: "/admin/audit",
+      auth: "admin",
+      ...(v.limit?.trim() ? { query: { limit: v.limit.trim() } } : {}),
+    }),
+  },
+  {
     id: "admin-child-add",
     group: "Admin",
     title: "Issue child secret",
