@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { parse, stringify } from "smol-toml";
+import type { ModelsConfig } from "./model-registry.js";
 import { DEFAULT_REMOTE_DENY } from "./policy.js";
 
 export interface ClientToken {
@@ -30,6 +31,8 @@ export interface BrokerConfig {
   tls?: { cert: string; key: string };
   env_registry: { enabled: boolean };
   env_hooks: EnvHookConfig[];
+  /** model catalog rows + switch templates layered over the builtins */
+  models?: ModelsConfig;
 }
 
 export const DEFAULT_LISTEN = "127.0.0.1:7591";
@@ -46,6 +49,7 @@ export function loadConfig(configDir: string): BrokerConfig {
     tls: raw.tls as { cert: string; key: string } | undefined,
     env_registry: { enabled: (raw.env_registry as { enabled?: boolean } | undefined)?.enabled ?? true },
     env_hooks: (raw.env_hooks as EnvHookConfig[]) ?? [],
+    models: raw.models as ModelsConfig | undefined,
   };
 }
 
@@ -61,5 +65,6 @@ export function saveConfig(configDir: string, config: BrokerConfig): void {
   if (config.tls) out.tls = config.tls;
   out.env_registry = config.env_registry;
   if (config.env_hooks.length > 0) out.env_hooks = config.env_hooks;
+  if (config.models) out.models = config.models;
   writeFileSync(join(configDir, "config.toml"), stringify(out) + "\n");
 }

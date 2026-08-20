@@ -49,6 +49,8 @@ the local machine; anything else is an enrolled child.
 | `GET .../workspaces/{w}/repos/{r}/tree` | repo file tree (`{r}` = repo path; `-` = workspace root) |
 | `GET .../workspaces/{w}/repos/{r}/git/diff?base=REF` | branch, status, unified diff |
 | `POST .../agents/{pane}/ask` | structured JSON answer from a TUI agent (file-drop) |
+| `POST .../agents/{pane}/model` | switch a running agent's model: `{model}` typed as the CLI's own `/model` command |
+| `GET /parent/{instance}/models?kind=` | model catalog per CLI kind with attributes (context window etc) — builtin defaults + `[[models.catalog]]` config overrides |
 | `POST /parent/{instance}/env` | store an env var for agent spawns: `{name, value, kind?, session?}` — write-only |
 | `GET /parent/{instance}/env` | stored names + scopes + source (`manual`/`hook`) — never values |
 | `DELETE /parent/{instance}/env/{name}` | remove an entry (`?kind=&session=` select the scope) |

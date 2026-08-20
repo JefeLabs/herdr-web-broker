@@ -10,6 +10,7 @@ import { loadConfig, type BrokerConfig } from "./config.js";
 import { EnvRegistry } from "./env-registry.js";
 import { createHttpHandler, makeCallInstance } from "./http.js";
 import { LocalHerdr, type HerdrEndpoint } from "./local-attach.js";
+import { ModelRegistry } from "./model-registry.js";
 import { Projection } from "./projection.js";
 import { Registry } from "./registry.js";
 import { ParentLink } from "./south.js";
@@ -76,6 +77,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<DaemonHandle | u
     registry,
     index,
     env: new EnvRegistry({ stateDir: opts.stateDir, hooks: config.env_hooks, enabled: config.env_registry.enabled }),
+    models: new ModelRegistry(config.models),
   };
 
   const hub = new TunnelHub();

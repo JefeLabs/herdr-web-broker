@@ -190,6 +190,17 @@ export function createHttpHandler(deps: HttpDeps) {
       }
     }
 
+    // GET /parent/{i}/models[?kind=] — model catalog (builtin + config),
+    // instance-scoped like /env: any live session carries the transport.
+    if (parts.length === 3 && parts[2] === "models" && req.method === "GET") {
+      const transport = Object.keys(entry.sessions)[0];
+      if (!transport) throw new BrokerError("unknown_session", `'${instance}' has no sessions to carry model ops`);
+      const kind = url.searchParams.get("kind");
+      const params = kind === null ? {} : { kind };
+      json(res, 200, (await callInstance(instance, transport, "broker.models.list", params)) as Record<string, unknown>);
+      return;
+    }
+
     // GET /parent/{i}/sessions
     if (parts.length === 3 && parts[2] === "sessions" && req.method === "GET") {
       const sessions = Object.entries(entry.sessions).map(([name, sess]) => {
@@ -265,6 +276,15 @@ export function createHttpHandler(deps: HttpDeps) {
       body.timeout_ms = t;
       const params = { ...body, pane_id: decodeURIComponent(parts[5]) };
       json(res, 200, await callInstance(instance, session, "broker.agent.ask", params, t + 45_000));
+      return;
+    }
+
+    // POST .../agents/{pane}/model — switch a running agent's model by
+    // typing its CLI's own model command into the pane
+    if (parts.length === 7 && parts[4] === "agents" && parts[6] === "model" && req.method === "POST") {
+      const body = await readBody(req);
+      const params = { ...body, pane_id: decodeURIComponent(parts[5]) };
+      json(res, 200, await callInstance(instance, session, "broker.agent.model", params));
       return;
     }
 

@@ -5,6 +5,7 @@ import { writeFileSync } from "node:fs";
 import type { AddressInfo } from "node:net";
 import { join } from "node:path";
 import { EnvRegistry } from "../src/env-registry.js";
+import { ModelRegistry } from "../src/model-registry.js";
 import { Registry } from "../src/registry.js";
 import { LocalHerdr } from "../src/local-attach.js";
 import { TunnelHub } from "../src/tunnel.js";
@@ -35,6 +36,7 @@ async function setup() {
     registry,
     index: new WorkspaceIndex(tmpDir()),
     env: new EnvRegistry({ stateDir: tmpDir() }),
+    models: new ModelRegistry(),
     askPollMs: 25,
     askGraceMs: 150,
   };
@@ -303,6 +305,47 @@ test("POST .../agents/{pane}/ask returns the parsed answer", async () => {
   assert.equal(res.status, 200);
   assert.deepEqual(((await res.json()) as { answer: unknown }).answer, { files_changed: 1 });
   await teardown(t);
+});
+
+test("model routes: instance catalog with kind filter; pane switch sends the CLI command", async () => {
+  const t = await setup();
+  try {
+    t.fake.agents = [{ pane_id: "w1:p1", name: "claude", agent: "claude", agent_status: "idle" }];
+    t.fake.handlers.set("pane.send_input", () => ({ type: "ok" }));
+
+    const all = await t.authed("/parent/runtime/models");
+    assert.equal(all.status, 200);
+    const catalog = (await all.json()).models as { kind: string; id: string; context_window?: number }[];
+    assert.ok(new Set(catalog.map((m) => m.kind)).size > 1, "unfiltered catalog spans kinds");
+
+    const filtered = await t.authed("/parent/runtime/models?kind=claude");
+    const claude = (await filtered.json()).models as { kind: string }[];
+    assert.ok(claude.length > 0 && claude.every((m) => m.kind === "claude"));
+
+    const sw = await t.authed("/parent/runtime/sessions/default/agents/w1%3Ap1/model", {
+      method: "POST",
+      body: JSON.stringify({ model: "opus" }),
+    });
+    assert.equal(sw.status, 200);
+    assert.deepEqual(await sw.json(), {
+      status: "sent",
+      pane_id: "w1:p1",
+      kind: "claude",
+      model: "opus",
+      command: "/model opus",
+    });
+    const sent = t.fake.received.find((r) => r.method === "pane.send_input");
+    assert.deepEqual(sent?.params, { pane_id: "w1:p1", text: "/model opus", keys: ["Enter"] });
+
+    const bad = await t.authed("/parent/runtime/sessions/default/agents/w1%3Ap1/model", {
+      method: "POST",
+      body: JSON.stringify({ model: "gpt-99" }),
+    });
+    assert.equal(bad.status, 404);
+    assert.equal((await bad.json()).code, "unknown_model");
+  } finally {
+    await teardown(t);
+  }
 });
 
 test("env routes: store, list (redacted, with source), delete; value absent everywhere", async () => {

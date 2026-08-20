@@ -27,6 +27,8 @@ test("every broker route in the README is present exactly once", () => {
     "env-set",
     "env-list",
     "env-delete",
+    "models-list",
+    "agent-model",
     "admin-status",
     "admin-child-add",
     "admin-child-revoke",
@@ -104,6 +106,20 @@ test("env-delete: scope selectors become query params only when set", () => {
   expect(req.path).toBe("/parent/runtime/env/GH_TOKEN");
   expect(req.query).toEqual({ kind: "copilot" });
   expect(spec("env-delete").build({ name: "GH_TOKEN" }, ctx).query).toBeUndefined();
+});
+
+test("models-list: kind filter rides the query only when set", () => {
+  expect(spec("models-list").build({}, ctx).path).toBe("/parent/runtime/models");
+  expect(spec("models-list").build({}, ctx).query).toBeUndefined();
+  expect(spec("models-list").build({ kind: "claude" }, ctx).query).toEqual({ kind: "claude" });
+});
+
+test("agent-model: pane is encoded into the path and model is required", () => {
+  const req = spec("agent-model").build({ pane_id: "w1:p1", model: "opus" }, ctx);
+  expect(req.method).toBe("POST");
+  expect(req.path).toBe("/parent/runtime/sessions/default/agents/w1%3Ap1/model");
+  expect(req.body).toEqual({ model: "opus" });
+  expect(() => spec("agent-model").build({ pane_id: "w1:p1" }, ctx)).toThrow(/model/);
 });
 
 test("admin child revoke encodes the name into the path", () => {

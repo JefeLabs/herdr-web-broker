@@ -13,6 +13,8 @@ const STATUS: Record<string, number> = {
   env_disabled: 403,
   env_hook_failed: 502,
   unknown_env: 404,
+  unknown_model: 404,
+  model_switch_unsupported: 400,
 };
 
 /** Unknown codes are herdr passthrough errors → 502 per spec §6. */

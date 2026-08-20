@@ -62,6 +62,7 @@ export const GROUPS = [
   "Ask",
   "RPC",
   "Env Registry",
+  "Models",
   "Admin",
 ] as const;
 
@@ -312,6 +313,48 @@ export const CATALOG: EndpointSpec[] = [
         ...(Object.keys(query).length > 0 ? { query } : {}),
       };
     },
+  },
+  {
+    id: "models-list",
+    group: "Models",
+    title: "List models",
+    summary: "Model catalog per CLI kind with attributes (context window, max output) — builtin defaults layered with config.toml overrides.",
+    docs:
+      "No CLI exposes a machine-readable model list, so this is a registry: entries report source builtin or " +
+      "config. Extend or correct it with [[models.catalog]] rows in config.toml — no code change needed.",
+    method: "GET",
+    pathTemplate: "/parent/{instance}/models",
+    auth: "bearer",
+    fields: [{ key: "kind", label: "kind filter", kind: "text", placeholder: "copilot" }],
+    build: (v, ctx) => ({
+      method: "GET",
+      path: `/parent/${enc(ctx.instance)}/models`,
+      auth: "bearer",
+      ...(v.kind?.trim() ? { query: { kind: v.kind.trim() } } : {}),
+    }),
+  },
+  {
+    id: "agent-model",
+    group: "Models",
+    title: "Switch agent model",
+    summary: "Switch a running agent's model by typing its CLI's own model command (e.g. /model gpt-5) into the pane.",
+    docs:
+      "'sent' semantics: a TUI gives no machine ack, so pane.read via rpc if you want visual confirmation. " +
+      "Unknown models 404 (extend [[models.catalog]]); kinds without a switch template answer " +
+      "model_switch_unsupported (add [[models.switch]]).",
+    method: "POST",
+    pathTemplate: "/parent/{instance}/sessions/{session}/agents/{pane_id}/model",
+    auth: "bearer",
+    fields: [
+      { key: "pane_id", label: "pane_id", kind: "text", required: true, placeholder: "w1:p1" },
+      { key: "model", label: "model", kind: "text", required: true, placeholder: "gpt-5" },
+    ],
+    build: (v, ctx) => ({
+      method: "POST",
+      path: `${sess(ctx)}/agents/${enc(need(v, "pane_id"))}/model`,
+      auth: "bearer",
+      body: { model: need(v, "model") },
+    }),
   },
   {
     id: "admin-status",

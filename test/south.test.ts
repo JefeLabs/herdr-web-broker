@@ -4,6 +4,7 @@ import type { AddressInfo } from "node:net";
 import { join } from "node:path";
 import { WebSocketServer, type WebSocket } from "ws";
 import { EnvRegistry } from "../src/env-registry.js";
+import { ModelRegistry } from "../src/model-registry.js";
 import { LocalHerdr } from "../src/local-attach.js";
 import { Registry } from "../src/registry.js";
 import { ParentLink } from "../src/south.js";
@@ -56,7 +57,7 @@ test("child heartbeat: answers a server-initiated ping after enroll; stop() clea
     local,
     registry,
     remoteDeny: [],
-    ops: { local, registry, index: new WorkspaceIndex(tmpDir()), env: new EnvRegistry({ stateDir: tmpDir() }) },
+    ops: { local, registry, index: new WorkspaceIndex(tmpDir()), env: new EnvRegistry({ stateDir: tmpDir() }), models: new ModelRegistry() },
   });
   link.start();
   await helloReceived;

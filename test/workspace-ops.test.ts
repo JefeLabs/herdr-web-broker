@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { EnvRegistry } from "../src/env-registry.js";
 import { BrokerError } from "../src/errors.js";
 import { LocalHerdr } from "../src/local-attach.js";
+import { ModelRegistry } from "../src/model-registry.js";
 import { Registry } from "../src/registry.js";
 import { WorkspaceIndex } from "../src/state.js";
 import { isBrokerMethod, runBrokerMethod, type OpsDeps } from "../src/workspace-ops.js";
@@ -13,7 +14,7 @@ import { scratchRepo, sh, tmpDir } from "./util.js";
 
 async function setup(): Promise<{ fake: FakeHerdr; deps: OpsDeps; teardown: () => Promise<void> }> {
   const fake = new FakeHerdr(join(tmpDir(), "h.sock"));
-  fake.agents = [{ pane_id: "w1:p1", name: "copilot", agent_status: "working" }];
+  fake.agents = [{ pane_id: "w1:p1", name: "copilot", agent: "copilot", agent_status: "working" }];
   await fake.listen();
   const registry = new Registry();
   const local = new LocalHerdr({
@@ -31,6 +32,7 @@ async function setup(): Promise<{ fake: FakeHerdr; deps: OpsDeps; teardown: () =
     registry,
     index: new WorkspaceIndex(tmpDir()),
     env: new EnvRegistry({ stateDir: tmpDir() }),
+    models: new ModelRegistry(),
     askPollMs: 25,
     askGraceMs: 150,
     envSettleMs: 5,
@@ -241,6 +243,85 @@ test("spawn gives up after bounded agent_pane_busy retries, still handing back t
         e.code === "agent_pane_busy" && e.details.workspace_id === "w6" && e.details.pane_id === "w6:p1",
     );
     assert.equal(starts, 3, "initial attempt + paneBusyRetries, then give up");
+  } finally {
+    await t.teardown();
+  }
+});
+
+test("broker.models.list: full catalog, kind filter, and config-extended entries", async () => {
+  const t = await setup();
+  t.deps.models = new ModelRegistry({ catalog: [{ kind: "aider", id: "deepseek-v3", context_window: 128000 }] });
+  try {
+    const all = (await runBrokerMethod(t.deps, "default", "broker.models.list", {})) as { models: { kind: string }[] };
+    assert.ok(all.models.length > 3);
+    const claude = (await runBrokerMethod(t.deps, "default", "broker.models.list", { kind: "claude" })) as {
+      models: { kind: string; id: string; context_window?: number }[];
+    };
+    assert.ok(claude.models.every((m) => m.kind === "claude"));
+    assert.ok(claude.models.every((m) => typeof m.context_window === "number"));
+    const aider = (await runBrokerMethod(t.deps, "default", "broker.models.list", { kind: "aider" })) as {
+      models: { id: string }[];
+    };
+    assert.equal(aider.models[0]?.id, "deepseek-v3");
+  } finally {
+    await t.teardown();
+  }
+});
+
+test("broker.agent.model: renders the kind's switch command into the pane", async () => {
+  const t = await setup();
+  try {
+    t.fake.handlers.set("pane.send_input", () => ({ type: "ok" }));
+    // seeded agent: pane w1:p1, agent kind "copilot" (setup())
+    const out = (await runBrokerMethod(t.deps, "default", "broker.agent.model", {
+      pane_id: "w1:p1",
+      model: "gpt-5",
+    })) as { status: string; kind: string; command: string };
+    assert.equal(out.status, "sent");
+    assert.equal(out.kind, "copilot");
+    assert.equal(out.command, "/model gpt-5");
+    const sent = t.fake.received.find((r) => r.method === "pane.send_input");
+    assert.ok(sent, "the switch travels as pane.send_input");
+    assert.deepEqual(sent!.params, { pane_id: "w1:p1", text: "/model gpt-5", keys: ["Enter"] });
+  } finally {
+    await t.teardown();
+  }
+});
+
+test("broker.agent.model: unknown model 404s and nothing is sent to the pane", async () => {
+  const t = await setup();
+  try {
+    await assert.rejects(
+      runBrokerMethod(t.deps, "default", "broker.agent.model", { pane_id: "w1:p1", model: "gpt-99" }),
+      (e: BrokerError) => e.code === "unknown_model",
+    );
+    assert.ok(!t.fake.received.some((r) => r.method === "pane.send_input"));
+  } finally {
+    await t.teardown();
+  }
+});
+
+test("broker.agent.model: kind without a switch template answers model_switch_unsupported", async () => {
+  const t = await setup();
+  t.deps.models = new ModelRegistry({ catalog: [{ kind: "mystery", id: "m1" }] });
+  t.fake.agents = [{ pane_id: "w1:p1", name: "mystery", agent: "mystery", agent_status: "idle" }];
+  try {
+    await assert.rejects(
+      runBrokerMethod(t.deps, "default", "broker.agent.model", { pane_id: "w1:p1", model: "m1" }),
+      (e: BrokerError) => e.code === "model_switch_unsupported",
+    );
+  } finally {
+    await t.teardown();
+  }
+});
+
+test("broker.agent.model: no agent in the pane is a bad_request", async () => {
+  const t = await setup();
+  try {
+    await assert.rejects(
+      runBrokerMethod(t.deps, "default", "broker.agent.model", { pane_id: "w9:p9", model: "gpt-5" }),
+      (e: BrokerError) => e.code === "bad_request" && /no agent in pane/.test(e.message),
+    );
   } finally {
     await t.teardown();
   }

@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, statSync } f
 import { isAbsolute, join, sep } from "node:path";
 import type { EnvRegistry } from "./env-registry.js";
 import { BrokerError } from "./errors.js";
+import type { ModelRegistry } from "./model-registry.js";
 import { DIFF_CAP_BYTES, discoverRepos, repoDiff, repoTree, resolveRepo } from "./git-exec.js";
 import type { LocalHerdr } from "./local-attach.js";
 import type { Registry } from "./registry.js";
@@ -13,6 +14,7 @@ export interface OpsDeps {
   registry: Registry;
   index: WorkspaceIndex;
   env: EnvRegistry;
+  models: ModelRegistry;
   /** test overrides for broker.agent.ask pacing */
   askPollMs?: number;
   askGraceMs?: number;
@@ -63,6 +65,8 @@ export async function runBrokerMethod(
       });
       return { status: "deleted" };
     }
+    case "broker.models.list":
+      return { models: deps.models.list(typeof p0.kind === "string" ? p0.kind : undefined) };
   }
   if (!deps.local.sessions().includes(session)) {
     throw new BrokerError("unknown_session", `no local session '${session}'`);
@@ -88,6 +92,8 @@ export async function runBrokerMethod(
       return spawn(deps, session, p);
     case "broker.agent.ask":
       return ask(deps, session, p);
+    case "broker.agent.model":
+      return switchModel(deps, session, p);
     default:
       throw new BrokerError("bad_request", `unknown broker method '${method}'`);
   }
@@ -275,6 +281,39 @@ async function spawn(deps: OpsDeps, session: string, p: Record<string, unknown>)
   };
   const entry = raw.agents?.find((a) => a.pane_id === paneId);
   return { workspace_id: workspaceId, pane_id: paneId, agent: name, status: foldStatus(entry?.agent_status) };
+}
+
+/** Model switching rides the pane: no herdr method nor CLI API exists, so
+ * the registry renders the agent CLI's own model command (e.g. "/model
+ * gpt-5") and it is typed into the TUI. "sent" semantics — a TUI gives no
+ * machine ack, so callers wanting confirmation pane.read afterwards. */
+async function switchModel(deps: OpsDeps, session: string, p: Record<string, unknown>): Promise<unknown> {
+  const pane = str(p.pane_id, "pane_id");
+  const model = str(p.model, "model");
+  const raw = (await deps.local.request(session, "agent.list", {}, 10_000)) as {
+    agents?: Array<Record<string, unknown>>;
+  };
+  const entry = raw.agents?.find((a) => a.pane_id === pane);
+  if (!entry) throw new BrokerError("bad_request", `no agent in pane '${pane}'`);
+  const kind = typeof entry.agent === "string" && entry.agent ? entry.agent : undefined;
+  if (!kind) throw new BrokerError("upstream_error", `agent in pane '${pane}' reports no kind`);
+  if (!deps.models.find(kind, model)) {
+    throw new BrokerError(
+      "unknown_model",
+      `no model '${model}' for kind '${kind}' — extend [[models.catalog]] in config.toml`,
+      { kind, known: deps.models.list(kind).map((m) => m.id) },
+    );
+  }
+  const command = deps.models.switchCommand(kind, model);
+  if (!command) {
+    throw new BrokerError(
+      "model_switch_unsupported",
+      `kind '${kind}' has no switch command — add a [[models.switch]] template in config.toml`,
+      { kind },
+    );
+  }
+  await deps.local.request(session, "pane.send_input", { pane_id: pane, text: command, keys: ["Enter"] }, 10_000);
+  return { status: "sent", pane_id: pane, kind, model, command };
 }
 
 type AnswerRead =
