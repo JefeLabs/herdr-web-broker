@@ -54,6 +54,7 @@ the local machine; anything else is an enrolled child.
 | `POST /parent/{instance}/env` | store an env var for agent spawns: `{name, value, kind?, session?}` — write-only |
 | `GET /parent/{instance}/env` | stored names + scopes + source (`manual`/`hook`) — never values |
 | `DELETE /parent/{instance}/env/{name}` | remove an entry (`?kind=&session=` select the scope) |
+| `DELETE /admin/tokens/{name}` | revoke a client token: immediate for new requests/WS upgrades, persisted to config.toml (admin-gated) |
 | `WS /parent/ws` | duplex rpc + unsolicited status events |
 
 Every herdr method is passthrough (see `herdr api schema --json`), gated by a

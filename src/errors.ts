@@ -14,6 +14,7 @@ const STATUS: Record<string, number> = {
   env_hook_failed: 502,
   unknown_env: 404,
   unknown_model: 404,
+  unknown_token: 404,
   model_switch_unsupported: 400,
 };
 

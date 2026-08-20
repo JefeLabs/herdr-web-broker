@@ -40,6 +40,7 @@ async function setup() {
     askPollMs: 25,
     askGraceMs: 150,
   };
+  const persisted: string[] = [];
   const server = createServer(
     createHttpHandler({
       registry,
@@ -49,13 +50,14 @@ async function setup() {
       config,
       adminToken: "admin-tok",
       ops,
+      onTokensChanged: () => persisted.push("saved"),
     }),
   );
   await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
   const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   const authed = (path: string, init: RequestInit = {}) =>
     fetch(base + path, { ...init, headers: { authorization: "Bearer tok", ...init.headers } });
-  return { fake, registry, local, children, server, base, authed, ops };
+  return { fake, registry, local, children, server, base, authed, ops, config, persisted };
 }
 
 async function teardown(t: { server: import("node:http").Server; local: LocalHerdr; fake: FakeHerdr }) {
@@ -305,6 +307,37 @@ test("POST .../agents/{pane}/ask returns the parsed answer", async () => {
   assert.equal(res.status, 200);
   assert.deepEqual(((await res.json()) as { answer: unknown }).answer, { files_changed: 1 });
   await teardown(t);
+});
+
+test("admin: token revocation takes effect immediately and persists via the callback", async () => {
+  const t = await setup();
+  try {
+    // second token so revocation of one leaves the other working
+    t.config.client_tokens.push({ name: "second", token: "tok2" });
+
+    assert.equal((await t.authed("/parent")).status, 200, "primary token works before revocation");
+
+    const gone = await fetch(t.base + "/admin/tokens/t", {
+      method: "DELETE",
+      headers: { "x-admin-token": "admin-tok" },
+    });
+    assert.equal(gone.status, 200);
+    assert.deepEqual(await gone.json(), { revoked: "t", remaining: 1 });
+    assert.equal(t.persisted.length, 1, "revocation persists through the onTokensChanged callback");
+
+    assert.equal((await t.authed("/parent")).status, 401, "revoked token refused immediately");
+    const other = await fetch(t.base + "/parent", { headers: { authorization: "Bearer tok2" } });
+    assert.equal(other.status, 200, "remaining token still works");
+
+    const unknown = await fetch(t.base + "/admin/tokens/ghost", {
+      method: "DELETE",
+      headers: { "x-admin-token": "admin-tok" },
+    });
+    assert.equal(unknown.status, 404);
+    assert.equal((await unknown.json()).code, "unknown_token");
+  } finally {
+    await teardown(t);
+  }
 });
 
 test("model routes: instance catalog with kind filter; pane switch sends the CLI command", async () => {

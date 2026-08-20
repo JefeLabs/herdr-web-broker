@@ -6,7 +6,7 @@ import type { AddressInfo } from "node:net";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
-import { loadConfig, type BrokerConfig } from "./config.js";
+import { loadConfig, saveConfig, type BrokerConfig } from "./config.js";
 import { EnvRegistry } from "./env-registry.js";
 import { createHttpHandler, makeCallInstance } from "./http.js";
 import { LocalHerdr, type HerdrEndpoint } from "./local-attach.js";
@@ -107,6 +107,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<DaemonHandle | u
     adminToken,
     ops,
     onReload: () => startLink({ ...loadConfig(opts.configDir), ...opts.configOverrides }),
+    onTokensChanged: () => saveConfig(opts.configDir, config),
   });
 
   const lastColon = config.listen.lastIndexOf(":");

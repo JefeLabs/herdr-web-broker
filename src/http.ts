@@ -21,6 +21,9 @@ export interface HttpDeps {
   adminToken: string;
   ops: OpsDeps;
   onReload?: () => void;
+  /** invoked after admin token revocation mutates config.client_tokens —
+   * the daemon persists the new set to config.toml */
+  onTokensChanged?: () => void;
 }
 
 export function makeCallInstance(deps: {
@@ -334,6 +337,21 @@ export function createHttpHandler(deps: HttpDeps) {
       deps.children.delete(name);
       deps.hub.disconnect(name);
       json(res, 200, { revoked: name });
+      return;
+    }
+    // DELETE /admin/tokens/{name} — revoke a client token: immediate for new
+    // requests and WS upgrades (both auth checks read this same config
+    // object), persisted via onTokensChanged. Already-open WS sockets are
+    // not tracked per token and stay up until they close.
+    if (req.method === "DELETE" && parts[1] === "tokens" && parts.length === 3) {
+      const name = decodeURIComponent(parts[2]);
+      const remaining = deps.config.client_tokens.filter((t) => t.name !== name);
+      if (remaining.length === deps.config.client_tokens.length) {
+        throw new BrokerError("unknown_token", `no client token named '${name}'`);
+      }
+      deps.config.client_tokens = remaining;
+      deps.onTokensChanged?.();
+      json(res, 200, { revoked: name, remaining: remaining.length });
       return;
     }
     if (req.method === "POST" && parts[1] === "reload") {

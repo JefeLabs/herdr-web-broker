@@ -66,6 +66,6 @@ describe("buildOpenApi", () => {
   test("every catalog entry appears exactly once as an operation", () => {
     const ids = Object.values(paths).flatMap((ops) => Object.values(ops).map((op) => op.operationId));
     expect(new Set(ids).size).toBe(ids.length);
-    expect(ids).toHaveLength(20);
+    expect(ids).toHaveLength(21);
   });
 });

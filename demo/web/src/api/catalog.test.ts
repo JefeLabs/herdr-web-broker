@@ -32,6 +32,7 @@ test("every broker route in the README is present exactly once", () => {
     "admin-status",
     "admin-child-add",
     "admin-child-revoke",
+    "admin-token-revoke",
     "admin-reload",
   ]) {
     expect(ids).toContain(id);
@@ -124,4 +125,12 @@ test("agent-model: pane is encoded into the path and model is required", () => {
 
 test("admin child revoke encodes the name into the path", () => {
   expect(spec("admin-child-revoke").build({ name: "old laptop" }, ctx).path).toBe("/admin/children/old%20laptop");
+});
+
+test("admin token revoke: DELETE with the name encoded into the path", () => {
+  const req = spec("admin-token-revoke").build({ name: "old client" }, ctx);
+  expect(req.method).toBe("DELETE");
+  expect(req.path).toBe("/admin/tokens/old%20client");
+  expect(req.auth).toBe("admin");
+  expect(() => spec("admin-token-revoke").build({}, ctx)).toThrow(/name/);
 });

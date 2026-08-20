@@ -390,6 +390,20 @@ export const CATALOG: EndpointSpec[] = [
     build: (v) => ({ method: "DELETE", path: `/admin/children/${enc(need(v, "name"))}`, auth: "admin" }),
   },
   {
+    id: "admin-token-revoke",
+    group: "Admin",
+    title: "Revoke client token",
+    summary: "Remove a [[client_tokens]] entry by name — immediate for new requests and WS upgrades, persisted to config.toml.",
+    docs:
+      "Auth is stateless bearer tokens, so this is the sign-out equivalent. Already-open WS sockets authed with " +
+      "the revoked token stay connected until they close. Unknown names 404 (unknown_token).",
+    method: "DELETE",
+    pathTemplate: "/admin/tokens/{name}",
+    auth: "admin",
+    fields: [{ key: "name", label: "token name", kind: "text", required: true, placeholder: "demo" }],
+    build: (v) => ({ method: "DELETE", path: `/admin/tokens/${enc(need(v, "name"))}`, auth: "admin" }),
+  },
+  {
     id: "admin-reload",
     group: "Admin",
     title: "Reload config",
