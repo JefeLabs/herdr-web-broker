@@ -29,6 +29,9 @@ mkdir -p "$PLUGIN_CONF_DIR"
 cat > "$PLUGIN_CONF_DIR/config.toml" <<EOF
 listen = "0.0.0.0:7591"
 
+[token_mint]
+enabled = true
+
 [[client_tokens]]
 name = "demo"
 token = "${BROKER_TOKEN}"

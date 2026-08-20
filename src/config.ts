@@ -31,6 +31,8 @@ export interface BrokerConfig {
   tls?: { cert: string; key: string };
   env_registry: { enabled: boolean };
   env_hooks: EnvHookConfig[];
+  /** dev-environment token generator (POST /admin/tokens) — off by default */
+  token_mint: { enabled: boolean };
   /** model catalog rows + switch templates layered over the builtins */
   models?: ModelsConfig;
 }
@@ -49,6 +51,7 @@ export function loadConfig(configDir: string): BrokerConfig {
     tls: raw.tls as { cert: string; key: string } | undefined,
     env_registry: { enabled: (raw.env_registry as { enabled?: boolean } | undefined)?.enabled ?? true },
     env_hooks: (raw.env_hooks as EnvHookConfig[]) ?? [],
+    token_mint: { enabled: (raw.token_mint as { enabled?: boolean } | undefined)?.enabled ?? false },
     models: raw.models as ModelsConfig | undefined,
   };
 }
@@ -65,6 +68,7 @@ export function saveConfig(configDir: string, config: BrokerConfig): void {
   if (config.tls) out.tls = config.tls;
   out.env_registry = config.env_registry;
   if (config.env_hooks.length > 0) out.env_hooks = config.env_hooks;
+  if (config.token_mint.enabled) out.token_mint = config.token_mint;
   if (config.models) out.models = config.models;
   writeFileSync(join(configDir, "config.toml"), stringify(out) + "\n");
 }

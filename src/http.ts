@@ -533,6 +533,26 @@ export function createHttpHandler(deps: HttpDeps) {
       });
       return;
     }
+    // POST /admin/tokens — dev-environment token generator. Off by default;
+    // [token_mint] enabled = true turns it on (dev configs, the demo stack).
+    if (req.method === "POST" && parts[1] === "tokens" && parts.length === 2) {
+      if (!deps.config.token_mint.enabled) {
+        throw new BrokerError("mint_disabled", "token minting is disabled — set [token_mint] enabled = true (dev only)");
+      }
+      const body = await readBody(req);
+      const name = body.name;
+      if (typeof name !== "string" || !/^[a-zA-Z0-9._-]+$/.test(name)) {
+        throw new BrokerError("bad_request", "token name must be [a-zA-Z0-9._-]+");
+      }
+      if (deps.config.client_tokens.some((t) => t.name === name)) {
+        throw new BrokerError("bad_request", `token name '${name}' already exists — names are the revocation key`);
+      }
+      const token = mintSecret();
+      deps.config.client_tokens.push({ name, token });
+      deps.onTokensChanged?.();
+      json(res, 200, { name, token });
+      return;
+    }
     if (req.method === "POST" && parts[1] === "children" && parts.length === 2) {
       const body = await readBody(req);
       const name = body.name;

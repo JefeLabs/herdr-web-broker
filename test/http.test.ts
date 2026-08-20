@@ -618,6 +618,38 @@ test("presence: POST /parent/auth records identity; /parent shows in_use_by; kic
   }
 });
 
+test("token mint: 403 unless [token_mint] enables it; minted tokens work immediately and persist", async () => {
+  const t = await setup();
+  try {
+    const mint = (body: unknown) =>
+      fetch(t.base + "/admin/tokens", {
+        method: "POST",
+        headers: { "x-admin-token": "admin-tok", "content-type": "application/json" },
+        body: JSON.stringify(body),
+      });
+
+    // off by default — secure for production parents
+    assert.equal((await mint({ name: "guest" })).status, 403);
+    assert.equal(((await (await mint({ name: "guest" })).json()) as { code: string }).code, "mint_disabled");
+
+    t.config.token_mint.enabled = true;
+    const minted = await mint({ name: "guest" });
+    assert.equal(minted.status, 200);
+    const out = (await minted.json()) as { name: string; token: string };
+    assert.equal(out.name, "guest");
+    assert.ok(out.token.length >= 40);
+    assert.equal(t.persisted.length, 1, "minted tokens persist to config.toml");
+
+    const asGuest = await fetch(t.base + "/parent", { headers: { authorization: `Bearer ${out.token}` } });
+    assert.equal(asGuest.status, 200, "the minted token authenticates immediately");
+
+    assert.equal((await mint({ name: "guest" })).status, 400, "duplicate names are the revocation key — rejected");
+    assert.equal((await mint({ name: "bad name!" })).status, 400);
+  } finally {
+    await teardown(t);
+  }
+});
+
 test("env routes: store, list (redacted, with source), delete; value absent everywhere", async () => {
   const t = await setup();
   try {

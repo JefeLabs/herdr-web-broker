@@ -49,6 +49,7 @@ test("every broker route in the README is present exactly once", () => {
     "admin-child-revoke",
     "admin-token-revoke",
     "admin-kick",
+    "admin-mint-token",
     "admin-reload",
   ]) {
     expect(ids).toContain(id);

@@ -26,9 +26,8 @@ verify the methods exist before building on them:
 5. **Agent ownership.** Kick logs out ALL matching-kind agents because
    agents aren't tagged by the token that spawned them. Multi-user
    isolation needs that ownership model.
-6. **Token minting endpoint** (`POST /admin/tokens`). Revocation and kick
-   exist; creating a token still means editing config.toml. The natural
-   completion of the admin token lifecycle.
+6. ~~**Token minting endpoint**~~ Done: `POST /admin/tokens`, dev-gated via
+   `[token_mint] enabled = true` (off by default; the demo stack enables it).
 7. **Context: inject file contents.** Prompts list attachment PATHS; an
    option to inline small text files (or extract PDF text) is parked.
 8. **Push-based streaming.** Bundles/files long-poll by design (rides the

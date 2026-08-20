@@ -866,6 +866,25 @@ export const CATALOG: EndpointSpec[] = [
     },
   },
   {
+    id: "admin-mint-token",
+    group: "Admin",
+    title: "Mint client token (dev)",
+    summary: "Generate a new bearer token by name — for dev environments. Off by default; [token_mint] enabled = true turns it on (this demo stack enables it).",
+    docs:
+      "The minted token authenticates immediately, persists to config.toml, and is revocable/kickable by name " +
+      "like any other. Disabled brokers answer 403 mint_disabled — production parents should leave it off.",
+    method: "POST",
+    pathTemplate: "/admin/tokens",
+    auth: "admin",
+    fields: [{ key: "name", label: "token name", kind: "text", required: true, placeholder: "guest" }],
+    response: {
+      type: "object",
+      properties: { name: { type: "string" }, token: { type: "string" } },
+      required: ["name", "token"],
+    },
+    build: (v) => ({ method: "POST", path: "/admin/tokens", auth: "admin", body: { name: need(v, "name") } }),
+  },
+  {
     id: "admin-reload",
     group: "Admin",
     title: "Reload config",

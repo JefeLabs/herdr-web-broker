@@ -11,6 +11,7 @@ const STATUS: Record<string, number> = {
   proto_mismatch: 400,
   git_error: 502,
   env_disabled: 403,
+  mint_disabled: 403,
   env_hook_failed: 502,
   unknown_env: 404,
   unknown_model: 404,

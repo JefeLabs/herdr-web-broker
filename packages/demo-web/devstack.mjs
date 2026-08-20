@@ -181,6 +181,7 @@ const handle = await startDaemon({
   localEndpoints: [{ session: "default", socketPath: fake.socketPath }],
   configOverrides: {
     listen: LISTEN,
+    token_mint: { enabled: true },
     client_tokens: [{ name: "demo", token: TOKEN }],
   },
 });
