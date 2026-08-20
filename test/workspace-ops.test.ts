@@ -405,6 +405,39 @@ test("spawn does not retry agent.start on non-busy errors", async () => {
   }
 });
 
+test("broker.agent.prompt: fire-and-forget steering to the pane's agent by name", async () => {
+  const t = await setup();
+  try {
+    t.fake.handlers.set("agent.prompt", () => ({ type: "prompted" }));
+    const out = (await runBrokerMethod(t.deps, "default", "broker.agent.prompt", {
+      pane_id: "w1:p1",
+      text: "actually, use OAuth\nand keep the session table",
+    })) as { status: string; kind: string; agent: string };
+    assert.deepEqual(out, { status: "prompted", pane_id: "w1:p1", kind: "copilot", agent: "copilot" });
+    const sent = t.fake.received.find((r) => r.method === "agent.prompt");
+    assert.deepEqual(sent?.params, { target: "copilot", text: "actually, use OAuth\nand keep the session table" });
+  } finally {
+    await t.teardown();
+  }
+});
+
+test("broker.agent.prompt: empty text and empty panes are bad_request; nothing reaches herdr", async () => {
+  const t = await setup();
+  try {
+    await assert.rejects(
+      runBrokerMethod(t.deps, "default", "broker.agent.prompt", { pane_id: "w1:p1", text: "" }),
+      (e: BrokerError) => e.code === "bad_request",
+    );
+    await assert.rejects(
+      runBrokerMethod(t.deps, "default", "broker.agent.prompt", { pane_id: "w9:p9", text: "hello" }),
+      (e: BrokerError) => e.code === "bad_request" && /no agent in pane/.test(e.message),
+    );
+    assert.ok(!t.fake.received.some((r) => r.method === "agent.prompt"));
+  } finally {
+    await t.teardown();
+  }
+});
+
 test("spec bundle drive: creates the bundle dir with a seeded overview and sends the drafting contract", async () => {
   const t = await setup();
   try {

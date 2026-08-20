@@ -327,6 +327,38 @@ export const CATALOG: EndpointSpec[] = [
     },
   },
   {
+    id: "prompt",
+    group: "Ask",
+    title: "Prompt (fire-and-forget steering)",
+    summary: "Send a free-form prompt to the same agent with no reply contract — the sequential-conversation channel: spawn once, then keep prompting the pane.",
+    docs:
+      "The pane_id is the conversation handle — the agent CLI keeps its full context between prompts. Use ask " +
+      "when you want a structured JSON reply; watch progress via WS status events or pane.read over rpc.",
+    method: "POST",
+    pathTemplate: "/parent/{instance}/sessions/{session}/agents/{pane_id}/prompt",
+    auth: "bearer",
+    fields: [
+      { key: "pane_id", label: "pane_id", kind: "text", required: true, placeholder: "w1:p1" },
+      { key: "text", label: "text", kind: "text", required: true, placeholder: "actually, use OAuth for the login flow" },
+    ],
+    response: {
+      type: "object",
+      properties: {
+        status: { type: "string", enum: ["prompted"] },
+        pane_id: { type: "string" },
+        kind: { type: "string" },
+        agent: { type: "string" },
+      },
+      required: ["status", "pane_id", "kind", "agent"],
+    },
+    build: (v, ctx) => ({
+      method: "POST",
+      path: `${sess(ctx)}/agents/${enc(need(v, "pane_id"))}/prompt`,
+      auth: "bearer",
+      body: { text: need(v, "text") },
+    }),
+  },
+  {
     id: "slash",
     group: "Slash",
     title: "Send slash command",

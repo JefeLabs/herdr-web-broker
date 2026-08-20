@@ -102,6 +102,8 @@ export async function runBrokerMethod(
       return switchModel(deps, session, p);
     case "broker.agent.slash":
       return slash(deps, session, p);
+    case "broker.agent.prompt":
+      return steer(deps, session, p);
     case "broker.spec.drive":
       return specDrive(deps, session, p);
     case "broker.spec.plan":
@@ -314,6 +316,21 @@ async function agentInPane(
   const kind = typeof entry.agent === "string" && entry.agent ? entry.agent : undefined;
   if (!kind) throw new BrokerError("upstream_error", `agent in pane '${pane}' reports no kind`);
   return { kind, entry };
+}
+
+/** Fire-and-forget steering: a free-form prompt to the pane's agent with no
+ * reply contract — the pure "keep directing the same agent" channel. Use
+ * ask for a structured answer; watch progress via WS status events or
+ * pane.read. */
+async function steer(deps: OpsDeps, session: string, p: Record<string, unknown>): Promise<unknown> {
+  const pane = str(p.pane_id, "pane_id");
+  const text = str(p.text, "text");
+  if (text.length > 32_000) throw new BrokerError("bad_request", "'text' must be at most 32000 chars");
+  const { kind, entry } = await agentInPane(deps, session, pane);
+  const target = typeof entry.name === "string" && entry.name ? entry.name : String(entry.agent ?? "");
+  if (!target) throw new BrokerError("upstream_error", `agent in pane '${pane}' has no addressable name`);
+  await deps.local.request(session, "agent.prompt", { target, text }, 30_000);
+  return { status: "prompted", pane_id: pane, kind, agent: target };
 }
 
 /** Generic slash driver: types the CLI's own /command into the pane. The

@@ -50,6 +50,7 @@ the local machine; anything else is an enrolled child.
 | `GET .../workspaces/{w}/repos/{r}/git/diff?base=REF` | branch, status, unified diff |
 | `GET .../workspaces/{w}/repos/{r}/file?path=` | raw file contents (768KB cap, containment-guarded, `.git` refused) |
 | `POST .../agents/{pane}/ask` | structured JSON answer from a TUI agent (file-drop) |
+| `POST .../agents/{pane}/prompt` | fire-and-forget steering: `{text}` to the same agent — spawn once, keep prompting the pane |
 | `POST .../agents/{pane}/model` | switch a running agent's model: `{model}` typed as the CLI's own `/model` command |
 | `POST .../agents/{pane}/slash/{command}` | type any CLI slash command into the pane (`/clear`, `/instructions`…); optional single-line `{args}` |
 | `POST .../agents/{pane}/spec-bundles` | create/continue a spec bundle (a dir of design files) and prompt the agent to draft into it: `{name\|bundle, prompt, file?}` — `file` focuses the page being viewed |
@@ -62,6 +63,10 @@ the local machine; anything else is an enrolled child.
 | `DELETE /parent/{instance}/env/{name}` | remove an entry (`?kind=&session=` select the scope) |
 | `DELETE /admin/tokens/{name}` | revoke a client token: immediate for new requests/WS upgrades, persisted to config.toml (admin-gated) |
 | `WS /parent/ws` | duplex rpc + unsolicited status events |
+
+How these fit together across an agent's life — spawn, first-run dialogs,
+conversation, mid-run steering, observation, death — is walked through in
+[docs/agent-lifecycle.md](docs/agent-lifecycle.md).
 
 Every herdr method is passthrough (see `herdr api schema --json`), gated by a
 deny-list (`policy.remote_deny`, default: `server.stop`,

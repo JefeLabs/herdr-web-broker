@@ -302,6 +302,15 @@ export function createHttpHandler(deps: HttpDeps) {
       return;
     }
 
+    // POST .../agents/{pane}/prompt — fire-and-forget steering: a free-form
+    // prompt to the same agent, no reply contract (ask is the structured twin)
+    if (parts.length === 7 && parts[4] === "agents" && parts[6] === "prompt" && req.method === "POST") {
+      const body = await readBody(req);
+      const params = { ...body, pane_id: decodeURIComponent(parts[5]) };
+      json(res, 200, await callInstance(instance, session, "broker.agent.prompt", params));
+      return;
+    }
+
     // POST .../agents/{pane}/slash/{command} — type the CLI's own slash
     // command into the pane; optional single-line {args} in the body
     if (parts.length === 8 && parts[4] === "agents" && parts[6] === "slash" && req.method === "POST") {

@@ -24,6 +24,7 @@ test("every broker route in the README is present exactly once", () => {
     "diff",
     "repo-file",
     "ask",
+    "prompt",
     "slash",
     "spec-drive",
     "spec-plan",
@@ -106,6 +107,14 @@ test("ask: pane id is encoded and prompt is required", () => {
   expect(req.path).toBe("/parent/runtime/sessions/default/agents/w1%3Ap1/ask");
   expect(req.body).toEqual({ prompt: "list files", timeout_ms: 60000 });
   expect(() => spec("ask").build({ pane_id: "w1:p1" }, ctx)).toThrow(/prompt/);
+});
+
+test("prompt: fire-and-forget steering — pane in the path, text in the body", () => {
+  const req = spec("prompt").build({ pane_id: "w1:p1", text: "focus on tests" }, ctx);
+  expect(req.method).toBe("POST");
+  expect(req.path).toBe("/parent/runtime/sessions/default/agents/w1%3Ap1/prompt");
+  expect(req.body).toEqual({ text: "focus on tests" });
+  expect(() => spec("prompt").build({ pane_id: "w1:p1" }, ctx)).toThrow(/text/);
 });
 
 test("slash: command joins the path, args ride the body only when set", () => {

@@ -446,6 +446,24 @@ test("spec-bundle routes: drive creates and prompts; get/list/plan wire through"
   }
 });
 
+test("prompt route: POST .../agents/{pane}/prompt steers the agent fire-and-forget", async () => {
+  const t = await setup();
+  try {
+    t.fake.agents = [{ pane_id: "w1:p1", name: "claude", agent: "claude", agent_status: "working" }];
+    t.fake.handlers.set("agent.prompt", () => ({ type: "prompted" }));
+    const res = await t.authed("/parent/runtime/sessions/default/agents/w1%3Ap1/prompt", {
+      method: "POST",
+      body: JSON.stringify({ text: "focus on the tests first" }),
+    });
+    assert.equal(res.status, 200);
+    assert.deepEqual(await res.json(), { status: "prompted", pane_id: "w1:p1", kind: "claude", agent: "claude" });
+    const sent = t.fake.received.find((r) => r.method === "agent.prompt");
+    assert.deepEqual(sent?.params, { target: "claude", text: "focus on the tests first" });
+  } finally {
+    await teardown(t);
+  }
+});
+
 test("repo file route: reads content by path; traversal answers 400", async () => {
   const t = await setup();
   try {
