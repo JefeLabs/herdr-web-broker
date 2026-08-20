@@ -5,3 +5,4 @@ dist/
 .env
 /docs/superpowers/plans/
 /docs/superpowers/specs/
+*.tsbuildinfo
