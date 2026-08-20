@@ -49,6 +49,15 @@ describe("BrokerClient", () => {
     expect(JSON.parse(String(calls[0].init.body))).toEqual({ method: "ping", params: {} });
   });
 
+  test("repo '.' (the discovered root-repo path) maps to the '-' token — browsers collapse /./ segments", async () => {
+    const { calls, fetchFn } = fake(200, "{}");
+    const session = new BrokerClient({ origin: "", token: "t", fetchFn }).instance("runtime").session("default");
+    await session.repo("w1", ".").tree();
+    await session.repo("w1", ".").file("notes.md");
+    expect(calls[0].url).toBe("/parent/runtime/sessions/default/workspaces/w1/repos/-/tree");
+    expect(calls[1].url).toBe("/parent/runtime/sessions/default/workspaces/w1/repos/-/file?path=notes.md");
+  });
+
   test("setToken applies to subsequent calls", async () => {
     const { calls, fetchFn } = fake(200, "{}");
     const broker = new BrokerClient({ origin: "", token: "old", fetchFn });

@@ -179,7 +179,11 @@ export class RepoHandle {
   ) {}
 
   #base(): string {
-    return `${this.session.base()}/workspaces/${enc(this.workspaceId)}/repos/${enc(this.repo)}`;
+    // discoverRepos reports the workspace-root repo as path "." — the API's
+    // token for it is "-", and browsers would collapse a literal /./ segment
+    // out of the URL entirely, so translate here.
+    const repo = this.repo === "." ? "-" : this.repo;
+    return `${this.session.base()}/workspaces/${enc(this.workspaceId)}/repos/${enc(repo)}`;
   }
 
   async tree(): Promise<{ tree: TreeNode; truncated: boolean }> {
