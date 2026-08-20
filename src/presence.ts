@@ -20,13 +20,18 @@ export class Presence {
 
   constructor(private readonly ttlMs = DEFAULT_TTL_MS) {}
 
+  /** Merge semantics: provided fields update, omitted fields survive from
+   * the previous identify — a name-only refresh doesn't erase the email.
+   * `since` marks the first identify and never moves. */
   identify(token: string, id: { name?: string; email?: string }): PresenceEntry {
     const now = Date.now();
     const existing = this.#entries.get(token);
+    const name = id.name ?? existing?.name;
+    const email = id.email ?? existing?.email;
     const entry = {
       token,
-      ...(id.name ? { name: id.name } : {}),
-      ...(id.email ? { email: id.email } : {}),
+      ...(name ? { name } : {}),
+      ...(email ? { email } : {}),
       since: existing?.since ?? new Date(now).toISOString(),
       last_seen: new Date(now).toISOString(),
       seenAt: now,

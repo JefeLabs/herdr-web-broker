@@ -28,11 +28,15 @@ test("identity is opt-in: touch alone never creates an entry; remove clears it",
   assert.equal(p.list().length, 0);
 });
 
-test("re-identifying updates identity but keeps the original since", async () => {
+test("re-identifying merges: provided fields update, omitted fields survive, since is preserved", async () => {
   const p = new Presence();
-  const first = p.identify("laptop", { name: "A" });
+  const first = p.identify("laptop", { name: "A", email: "a@x.dev" });
   await new Promise((r) => setTimeout(r, 20));
-  const second = p.identify("laptop", { name: "B", email: "b@x.dev" });
+  const second = p.identify("laptop", { name: "B" }); // no email — must keep a@x.dev
   assert.equal(second.since, first.since);
-  assert.equal(p.list()[0].name, "B");
+  assert.equal(second.name, "B");
+  assert.equal(second.email, "a@x.dev");
+  const third = p.identify("laptop", { email: "c@x.dev" }); // no name — must keep B
+  assert.equal(third.name, "B");
+  assert.equal(third.email, "c@x.dev");
 });
