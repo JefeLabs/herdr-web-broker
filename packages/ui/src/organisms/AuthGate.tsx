@@ -9,13 +9,17 @@ export interface AuthGateProps {
   /** when provided, optional name/email fields are shown and sent here
    * after a successful verify — "let others see who's using this instance" */
   onIdentify?: (id: { name?: string; email?: string }) => Promise<unknown>;
+  /** dev-only self-serve: when provided, a "get a demo token" button mints
+   * a token (however the host obtains one), fills it, and verifies — the
+   * one-click way into a demo instance */
+  onRequestToken?: () => Promise<string>;
   children: ReactNode;
 }
 
 /** Live auth gate: children render only after the bearer token has been
  * verified against the broker (broker.verify()). A stored token is
  * re-verified on mount — possession of storage is not authentication. */
-export function AuthGate({ broker, token, onTokenChange, onIdentify, children }: AuthGateProps) {
+export function AuthGate({ broker, token, onTokenChange, onIdentify, onRequestToken, children }: AuthGateProps) {
   const [state, setState] = useState<"checking" | "ok" | "denied">("checking");
   const [error, setError] = useState<string | null>(null);
   const [name, setName] = useState("");
@@ -92,6 +96,27 @@ export function AuthGate({ broker, token, onTokenChange, onIdentify, children }:
           >
             {state === "checking" ? "verifying…" : "authenticate"}
           </button>
+          {onRequestToken && (
+            <button
+              className="btn ghost"
+              disabled={state === "checking"}
+              onClick={() =>
+                void (async () => {
+                  setError(null);
+                  try {
+                    const minted = await onRequestToken();
+                    onTokenChange(minted);
+                    await verify(minted, { name, email });
+                  } catch (e) {
+                    setState("denied");
+                    setError(e instanceof Error ? e.message : String(e));
+                  }
+                })()
+              }
+            >
+              get a demo token
+            </button>
+          )}
           {error && <span className="card-error">{error}</span>}
         </div>
       </div>

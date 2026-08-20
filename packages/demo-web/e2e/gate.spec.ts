@@ -32,6 +32,14 @@ test.describe("auth gate", () => {
     expect(inUse.some((u) => u.name === "E2E Runner" && u.email === "e2e@example.com")).toBe(true);
   });
 
+  test("self-serve: 'get a demo token' mints through the site server and unlocks without typing", async ({ page }) => {
+    await page.goto("/#/console");
+    await expect(page.getByRole("heading", { name: "Authentication required" })).toBeVisible();
+    await page.getByRole("button", { name: "get a demo token" }).click();
+    await expect(page.getByRole("heading", { name: "Authentication required" })).toBeHidden();
+    await expect(page.locator("article#health")).toBeVisible();
+  });
+
   test("a stored token is re-verified on mount — possession is not authentication", async ({ page }) => {
     await authenticate(page, "console");
     // simulate the token dying between visits: replace it in storage only

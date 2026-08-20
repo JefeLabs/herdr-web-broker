@@ -35,6 +35,16 @@ function Gated({ children }: { children: React.ReactNode }) {
       token={s.bearer}
       onTokenChange={(t) => s.set("bearer", t)}
       onIdentify={(id) => s.broker.identify(id)}
+      onRequestToken={async () => {
+        // dev-only self-serve: the site server holds the admin secret and
+        // forwards to POST /admin/tokens — see demoMint() in vite.config.ts
+        const res = await fetch("/demo/mint", { method: "POST" });
+        const body = (await res.json().catch(() => ({}))) as { token?: string; message?: string };
+        if (!res.ok || typeof body.token !== "string") {
+          throw new Error(body.message ?? "self-serve minting is not enabled on this deployment");
+        }
+        return body.token;
+      }}
     >
       {children}
     </AuthGate>

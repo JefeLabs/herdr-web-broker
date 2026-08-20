@@ -37,6 +37,63 @@ describe("AuthGate", () => {
   });
 });
 
+describe("AuthGate self-serve token", () => {
+  test("the get-a-token button mints, fills, verifies, and unlocks", async () => {
+    const broker = {
+      setToken: vi.fn(),
+      verify: vi
+        .fn()
+        .mockResolvedValueOnce({ ok: false, error: { message: "missing or invalid bearer token" } })
+        .mockResolvedValue({ ok: true }),
+    } as unknown as BrokerClient;
+    const onRequestToken = vi.fn(async () => "minted-tok");
+    const onTokenChange = vi.fn();
+    render(
+      <AuthGate broker={broker} token="" onTokenChange={onTokenChange} onRequestToken={onRequestToken}>
+        <div>secret content</div>
+      </AuthGate>,
+    );
+    const btn = await screen.findByText("get a demo token");
+    fireEvent.click(btn);
+    await waitFor(() => expect(screen.getByText("secret content")).toBeTruthy());
+    expect(onRequestToken).toHaveBeenCalledOnce();
+    expect(onTokenChange).toHaveBeenCalledWith("minted-tok");
+    expect((broker.setToken as ReturnType<typeof vi.fn>).mock.calls.at(-1)?.[0]).toBe("minted-tok");
+  });
+
+  test("a failed mint shows its error and keeps the gate shut", async () => {
+    const broker = {
+      setToken: vi.fn(),
+      verify: vi.fn(async () => ({ ok: false, error: { message: "missing or invalid bearer token" } })),
+    } as unknown as BrokerClient;
+    const onRequestToken = vi.fn(async () => {
+      throw new Error("token minting is disabled");
+    });
+    render(
+      <AuthGate broker={broker} token="" onTokenChange={() => undefined} onRequestToken={onRequestToken}>
+        <div>secret content</div>
+      </AuthGate>,
+    );
+    fireEvent.click(await screen.findByText("get a demo token"));
+    await waitFor(() => expect(screen.getByText(/token minting is disabled/)).toBeTruthy());
+    expect(screen.queryByText("secret content")).toBeNull();
+  });
+
+  test("without onRequestToken the button does not exist", async () => {
+    const broker = {
+      setToken: vi.fn(),
+      verify: vi.fn(async () => ({ ok: false, error: { message: "nope" } })),
+    } as unknown as BrokerClient;
+    render(
+      <AuthGate broker={broker} token="" onTokenChange={() => undefined}>
+        <div>secret content</div>
+      </AuthGate>,
+    );
+    await screen.findByText("authenticate");
+    expect(screen.queryByText("get a demo token")).toBeNull();
+  });
+});
+
 describe("PaneViewer", () => {
   function paneMocks() {
     const stop = vi.fn();

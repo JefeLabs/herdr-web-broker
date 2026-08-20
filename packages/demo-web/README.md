@@ -23,7 +23,10 @@ docker build -f packages/demo-web/Dockerfile -t herdr-web-demo .
 docker run --rm -p 5173:5173 -p 7591:7591 herdr-web-demo
 ```
 
-- site → http://localhost:5173 (bearer token `demo-token` is pre-filled)
+- site → http://localhost:5173 — click **get a demo token** on the auth gate
+  for a self-serve login (dev-only: the site server forwards the admin token
+  to `POST /admin/tokens`; browsers never see the admin secret), or use the
+  configured bearer `demo-token`
 - broker → http://localhost:7591 for curl/Postman against the same instance
 - the container logs print the admin token for the Admin cards
 

@@ -27,6 +27,8 @@ export default defineConfig({
       command: "npm run preview",
       url: "http://127.0.0.1:5173",
       reuseExistingServer: false,
+      // the site server needs the admin token so /demo/mint can forward it
+      env: { BROKER_ADMIN_TOKEN: "e2e-admin" },
       timeout: 30_000,
     },
   ],
