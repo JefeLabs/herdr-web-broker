@@ -38,8 +38,8 @@ verify the methods exist before building on them:
 
 9. ~~**EventChannel reconnect after kick.**~~ Done: a pre-reconnect auth
    probe detects 401, stops the loop, and emits `auth_failed`.
-10. **OpenAPI response schemas.** Only ~8 of 37 operations declare them;
-    full coverage would make client codegen complete.
+10. ~~**OpenAPI response schemas.**~~ Done: all 38 operations declare
+    success schemas (responses.ts), enforced by a completeness test.
 
 ## Release & ecosystem
 

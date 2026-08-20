@@ -69,6 +69,20 @@ describe("buildOpenApi", () => {
     expect(ids).toHaveLength(38);
   });
 
+  test("EVERY operation declares a success response schema — codegen-complete", () => {
+    const missing: string[] = [];
+    for (const [path, ops] of Object.entries(paths)) {
+      for (const [method, op] of Object.entries(ops)) {
+        const typed = op as Op & {
+          responses: Record<string, { content?: { "application/json": { schema: unknown } } }>;
+        };
+        const success = typed.responses["200"] ?? typed.responses["201"];
+        if (!success?.content?.["application/json"]?.schema) missing.push(`${method.toUpperCase()} ${path}`);
+      }
+    }
+    expect(missing).toEqual([]);
+  });
+
   test("endpoints with declared response schemas surface them for codegen", () => {
     const spawn = paths["/parent/{instance}/sessions/{session}/agents"].post as Op & {
       responses: Record<string, { content?: { "application/json": { schema: { properties: Record<string, { type?: string }> } } } }>;

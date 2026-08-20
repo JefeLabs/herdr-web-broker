@@ -1,4 +1,5 @@
 import { CATALOG, GROUPS, type EndpointSpec, type FieldSpec } from "./catalog";
+import { RESPONSES } from "./responses";
 
 /** OpenAPI 3.1 document derived from the same catalog that renders the
  * console — importable into Swagger UI, Postman, Insomnia, etc. */
@@ -41,7 +42,9 @@ function toOperation(spec: EndpointSpec): Record<string, unknown> {
     responses: {
       [spec.id === "spawn" ? "201" : "200"]: {
         description: "Success",
-        ...(spec.response ? { content: { "application/json": { schema: spec.response } } } : {}),
+        ...((spec.response ?? RESPONSES[spec.id])
+          ? { content: { "application/json": { schema: spec.response ?? RESPONSES[spec.id] } } }
+          : {}),
       },
       default: { description: "Error envelope: {code, message, ...details}" },
     },
