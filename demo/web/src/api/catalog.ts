@@ -60,6 +60,7 @@ export const GROUPS = [
   "Spawn",
   "Workspaces & Repos",
   "Ask",
+  "Slash",
   "RPC",
   "Env Registry",
   "Models",
@@ -233,6 +234,30 @@ export const CATALOG: EndpointSpec[] = [
       if (v.timeout_ms?.trim()) body.timeout_ms = Number(v.timeout_ms);
       return { method: "POST", path: `${sess(ctx)}/agents/${enc(pane)}/ask`, auth: "bearer", body };
     },
+  },
+  {
+    id: "slash",
+    group: "Slash",
+    title: "Send slash command",
+    summary: "Type any of the agent CLI's own slash commands into its pane — /clear, /instructions, /login, /help…",
+    docs:
+      "Freeform by design: the TUI is the validator, so an unknown command just shows the CLI's own error. args " +
+      "must be a single line (multi-line would smuggle extra Enter-terminated input) — full prompts belong to " +
+      "ask or agent.prompt. Same 'sent' semantics as the model switch.",
+    method: "POST",
+    pathTemplate: "/parent/{instance}/sessions/{session}/agents/{pane_id}/slash/{command}",
+    auth: "bearer",
+    fields: [
+      { key: "pane_id", label: "pane_id", kind: "text", required: true, placeholder: "w1:p1" },
+      { key: "command", label: "command (no leading /)", kind: "text", required: true, placeholder: "clear" },
+      { key: "args", label: "args (single line)", kind: "text", placeholder: "optional arguments" },
+    ],
+    build: (v, ctx) => ({
+      method: "POST",
+      path: `${sess(ctx)}/agents/${enc(need(v, "pane_id"))}/slash/${enc(need(v, "command"))}`,
+      auth: "bearer",
+      body: v.args?.trim() ? { args: v.args.trim() } : {},
+    }),
   },
   {
     id: "rpc",

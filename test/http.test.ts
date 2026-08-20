@@ -381,6 +381,29 @@ test("model routes: instance catalog with kind filter; pane switch sends the CLI
   }
 });
 
+test("slash route: POST .../slash/{command} types the command; args ride the body", async () => {
+  const t = await setup();
+  try {
+    t.fake.agents = [{ pane_id: "w1:p1", name: "claude", agent: "claude", agent_status: "idle" }];
+    t.fake.handlers.set("pane.send_input", () => ({ type: "ok" }));
+    const res = await t.authed("/parent/runtime/sessions/default/agents/w1%3Ap1/slash/instructions", {
+      method: "POST",
+      body: JSON.stringify({ args: "keep answers short" }),
+    });
+    assert.equal(res.status, 200);
+    assert.deepEqual(await res.json(), {
+      status: "sent",
+      pane_id: "w1:p1",
+      kind: "claude",
+      command: "/instructions keep answers short",
+    });
+    const sent = t.fake.received.find((r) => r.method === "pane.send_input");
+    assert.deepEqual(sent?.params, { pane_id: "w1:p1", text: "/instructions keep answers short", keys: ["Enter"] });
+  } finally {
+    await teardown(t);
+  }
+});
+
 test("env routes: store, list (redacted, with source), delete; value absent everywhere", async () => {
   const t = await setup();
   try {

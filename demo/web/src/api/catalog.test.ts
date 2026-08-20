@@ -23,6 +23,7 @@ test("every broker route in the README is present exactly once", () => {
     "tree",
     "diff",
     "ask",
+    "slash",
     "rpc",
     "env-set",
     "env-list",
@@ -93,6 +94,15 @@ test("ask: pane id is encoded and prompt is required", () => {
   expect(req.path).toBe("/parent/runtime/sessions/default/agents/w1%3Ap1/ask");
   expect(req.body).toEqual({ prompt: "list files", timeout_ms: 60000 });
   expect(() => spec("ask").build({ pane_id: "w1:p1" }, ctx)).toThrow(/prompt/);
+});
+
+test("slash: command joins the path, args ride the body only when set", () => {
+  const req = spec("slash").build({ pane_id: "w1:p1", command: "instructions", args: "keep it short" }, ctx);
+  expect(req.method).toBe("POST");
+  expect(req.path).toBe("/parent/runtime/sessions/default/agents/w1%3Ap1/slash/instructions");
+  expect(req.body).toEqual({ args: "keep it short" });
+  expect(spec("slash").build({ pane_id: "w1:p1", command: "clear" }, ctx).body).toEqual({});
+  expect(() => spec("slash").build({ pane_id: "w1:p1" }, ctx)).toThrow(/command/);
 });
 
 test("rpc: params must be valid JSON", () => {

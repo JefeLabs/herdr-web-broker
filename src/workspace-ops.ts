@@ -94,6 +94,8 @@ export async function runBrokerMethod(
       return ask(deps, session, p);
     case "broker.agent.model":
       return switchModel(deps, session, p);
+    case "broker.agent.slash":
+      return slash(deps, session, p);
     default:
       throw new BrokerError("bad_request", `unknown broker method '${method}'`);
   }
@@ -283,13 +285,13 @@ async function spawn(deps: OpsDeps, session: string, p: Record<string, unknown>)
   return { workspace_id: workspaceId, pane_id: paneId, agent: name, status: foldStatus(entry?.agent_status) };
 }
 
-/** Model switching rides the pane: no herdr method nor CLI API exists, so
- * the registry renders the agent CLI's own model command (e.g. "/model
- * gpt-5") and it is typed into the TUI. "sent" semantics — a TUI gives no
- * machine ack, so callers wanting confirmation pane.read afterwards. */
-async function switchModel(deps: OpsDeps, session: string, p: Record<string, unknown>): Promise<unknown> {
-  const pane = str(p.pane_id, "pane_id");
-  const model = str(p.model, "model");
+/** Resolves the agent occupying a pane (or throws) — shared by the
+ * pane-targeted TUI drivers below. */
+async function agentInPane(
+  deps: OpsDeps,
+  session: string,
+  pane: string,
+): Promise<{ kind: string; entry: Record<string, unknown> }> {
   const raw = (await deps.local.request(session, "agent.list", {}, 10_000)) as {
     agents?: Array<Record<string, unknown>>;
   };
@@ -297,6 +299,41 @@ async function switchModel(deps: OpsDeps, session: string, p: Record<string, unk
   if (!entry) throw new BrokerError("bad_request", `no agent in pane '${pane}'`);
   const kind = typeof entry.agent === "string" && entry.agent ? entry.agent : undefined;
   if (!kind) throw new BrokerError("upstream_error", `agent in pane '${pane}' reports no kind`);
+  return { kind, entry };
+}
+
+/** Generic slash driver: types the CLI's own /command into the pane. The
+ * single-line args rule is load-bearing — an embedded newline would smuggle
+ * a second Enter-terminated command or a whole prompt through what claims
+ * to be one slash command. Freeform by design (the TUI is the validator);
+ * broker.agent.model is the curated, catalog-checked special case. */
+async function slash(deps: OpsDeps, session: string, p: Record<string, unknown>): Promise<unknown> {
+  const pane = str(p.pane_id, "pane_id");
+  const command = str(p.command, "command");
+  if (!/^[a-zA-Z0-9][a-zA-Z0-9_-]*$/.test(command) || command.length > 32) {
+    throw new BrokerError("bad_request", `'command' must be a slash command name ([a-zA-Z0-9_-], max 32 chars)`);
+  }
+  let args: string | undefined;
+  if (p.args !== undefined) {
+    if (typeof p.args !== "string" || p.args.length > 512 || /[\p{Cc}]/u.test(p.args)) {
+      throw new BrokerError("bad_request", "'args' must be a single line of at most 512 chars (no control characters)");
+    }
+    args = p.args.trim() || undefined;
+  }
+  const { kind } = await agentInPane(deps, session, pane);
+  const text = `/${command}${args ? ` ${args}` : ""}`;
+  await deps.local.request(session, "pane.send_input", { pane_id: pane, text, keys: ["Enter"] }, 10_000);
+  return { status: "sent", pane_id: pane, kind, command: text };
+}
+
+/** Model switching rides the pane: no herdr method nor CLI API exists, so
+ * the registry renders the agent CLI's own model command (e.g. "/model
+ * gpt-5") and it is typed into the TUI. "sent" semantics — a TUI gives no
+ * machine ack, so callers wanting confirmation pane.read afterwards. */
+async function switchModel(deps: OpsDeps, session: string, p: Record<string, unknown>): Promise<unknown> {
+  const pane = str(p.pane_id, "pane_id");
+  const model = str(p.model, "model");
+  const { kind } = await agentInPane(deps, session, pane);
   if (!deps.models.find(kind, model)) {
     throw new BrokerError(
       "unknown_model",

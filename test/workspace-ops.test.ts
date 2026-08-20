@@ -327,6 +327,65 @@ test("broker.agent.model: no agent in the pane is a bad_request", async () => {
   }
 });
 
+test("broker.agent.slash: types /command into the pane; args join on one line", async () => {
+  const t = await setup();
+  try {
+    t.fake.handlers.set("pane.send_input", () => ({ type: "ok" }));
+    const bare = (await runBrokerMethod(t.deps, "default", "broker.agent.slash", {
+      pane_id: "w1:p1",
+      command: "clear",
+    })) as { status: string; kind: string; command: string };
+    assert.deepEqual(bare, { status: "sent", pane_id: "w1:p1", kind: "copilot", command: "/clear" });
+    const withArgs = (await runBrokerMethod(t.deps, "default", "broker.agent.slash", {
+      pane_id: "w1:p1",
+      command: "instructions",
+      args: "keep answers short",
+    })) as { command: string };
+    assert.equal(withArgs.command, "/instructions keep answers short");
+    const frames = t.fake.received.filter((r) => r.method === "pane.send_input");
+    assert.deepEqual(frames.map((f) => (f.params as { text: string }).text), [
+      "/clear",
+      "/instructions keep answers short",
+    ]);
+    assert.ok(frames.every((f) => (f.params as { keys: string[] }).keys[0] === "Enter"));
+  } finally {
+    await t.teardown();
+  }
+});
+
+test("broker.agent.slash: multi-line args are rejected before anything reaches the pane", async () => {
+  const t = await setup();
+  try {
+    await assert.rejects(
+      runBrokerMethod(t.deps, "default", "broker.agent.slash", {
+        pane_id: "w1:p1",
+        command: "instructions",
+        args: "line one\n/model gpt-5",
+      }),
+      (e: BrokerError) => e.code === "bad_request" && /single line/.test(e.message),
+    );
+    await assert.rejects(
+      runBrokerMethod(t.deps, "default", "broker.agent.slash", { pane_id: "w1:p1", command: "cl ear" }),
+      (e: BrokerError) => e.code === "bad_request" && /command/.test(e.message),
+    );
+    assert.ok(!t.fake.received.some((r) => r.method === "pane.send_input"));
+  } finally {
+    await t.teardown();
+  }
+});
+
+test("broker.agent.slash: no agent in the pane is a bad_request", async () => {
+  const t = await setup();
+  try {
+    await assert.rejects(
+      runBrokerMethod(t.deps, "default", "broker.agent.slash", { pane_id: "w9:p9", command: "clear" }),
+      (e: BrokerError) => e.code === "bad_request" && /no agent in pane/.test(e.message),
+    );
+  } finally {
+    await t.teardown();
+  }
+});
+
 test("spawn does not retry agent.start on non-busy errors", async () => {
   const t = await setup();
   try {
