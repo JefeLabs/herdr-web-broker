@@ -1,7 +1,7 @@
 import { useId, useState } from "react";
 import { CATALOG, GROUPS } from "../api/catalog";
 import { EndpointCard } from "../components/EndpointCard";
-import { EventsCard } from "../components/EventsCard";
+import { EventsPanel } from "@jefelabs/herdr-broker-ui";
 import { useSettings } from "../settings";
 
 const RAIL = [...GROUPS, "Live Events"];
@@ -45,7 +45,7 @@ export function Console() {
             <h2 className="group-title" id="group-Live Events">
               Live Events
             </h2>
-            <EventsCard />
+            <EventsPanel broker={settings.broker} instance={settings.instance} session={settings.session} />
           </section>
           {settings.instances.length === 0 && (
             <p className="note">

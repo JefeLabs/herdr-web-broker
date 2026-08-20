@@ -1,11 +1,11 @@
+import { AuthGate } from "@jefelabs/herdr-broker-ui";
 import { useEffect, useState } from "react";
 import { send } from "./api/client";
-import { AuthGate } from "./components/AuthGate";
 import { ApiSpec } from "./pages/ApiSpec";
 import { Console } from "./pages/Console";
 import { Intro } from "./pages/Intro";
-import { WorkspaceBrowser } from "./pages/Workspace";
-import { SettingsProvider } from "./settings";
+import { WorkspacePage } from "./pages/Workspace";
+import { SettingsProvider, useSettings } from "./settings";
 
 const ROUTES = [
   { hash: "#/", label: "Intro" },
@@ -22,6 +22,16 @@ function useHashRoute(): string {
     return () => window.removeEventListener("hashchange", onChange);
   }, []);
   return hash;
+}
+
+/** Bridges app state (settings context) into the ui package's AuthGate. */
+function Gated({ children }: { children: React.ReactNode }) {
+  const s = useSettings();
+  return (
+    <AuthGate broker={s.broker} token={s.bearer} onTokenChange={(t) => s.set("bearer", t)}>
+      {children}
+    </AuthGate>
+  );
 }
 
 function useBrokerHealth(): boolean | null {
@@ -65,13 +75,13 @@ export function App() {
         </span>
       </header>
       {route === "#/console" ? (
-        <AuthGate>
+        <Gated>
           <Console />
-        </AuthGate>
+        </Gated>
       ) : route === "#/workspace" ? (
-        <AuthGate>
-          <WorkspaceBrowser />
-        </AuthGate>
+        <Gated>
+          <WorkspacePage />
+        </Gated>
       ) : route === "#/api" ? (
         <ApiSpec />
       ) : (

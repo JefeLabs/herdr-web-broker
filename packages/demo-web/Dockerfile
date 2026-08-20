@@ -29,6 +29,7 @@ RUN cd /opt/herdr-web-broker \
   && npm install --include=dev \
   && npm run build \
   && npm -w packages/client run build \
+  && npm -w packages/ui run build \
   && npm -w packages/demo-web run build
 
 COPY packages/demo-web/entrypoint.sh /entrypoint.sh

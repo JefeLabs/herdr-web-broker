@@ -1,23 +1,28 @@
-import { BrokerNetworkError } from "@jefelabs/herdr-broker-client";
+import { BrokerNetworkError, type BrokerClient } from "@jefelabs/herdr-broker-client";
 import { useCallback, useEffect, useState, type ReactNode } from "react";
-import { useSettings } from "../settings";
 
-/** Live auth gate: the wrapped page renders only after the bearer token has
- * been verified against the broker (broker.verify() → GET /parent). A
- * stored token is re-verified on mount — possession of localStorage is not
- * authentication. */
-export function AuthGate({ children }: { children: ReactNode }) {
-  const settings = useSettings();
+export interface AuthGateProps {
+  broker: BrokerClient;
+  /** current token value (controlled by the host app) */
+  token: string;
+  onTokenChange: (token: string) => void;
+  children: ReactNode;
+}
+
+/** Live auth gate: children render only after the bearer token has been
+ * verified against the broker (broker.verify()). A stored token is
+ * re-verified on mount — possession of storage is not authentication. */
+export function AuthGate({ broker, token, onTokenChange, children }: AuthGateProps) {
   const [state, setState] = useState<"checking" | "ok" | "denied">("checking");
   const [error, setError] = useState<string | null>(null);
 
   const verify = useCallback(
-    async (token: string) => {
+    async (candidate: string) => {
       setState("checking");
       setError(null);
-      settings.broker.setToken(token);
+      broker.setToken(candidate);
       try {
-        const res = await settings.broker.verify();
+        const res = await broker.verify();
         if (res.ok) {
           setState("ok");
         } else {
@@ -29,11 +34,11 @@ export function AuthGate({ children }: { children: ReactNode }) {
         setError(e instanceof BrokerNetworkError ? "broker unreachable — is it running?" : String(e));
       }
     },
-    [settings.broker],
+    [broker],
   );
 
   useEffect(() => {
-    void verify(settings.bearer);
+    void verify(token);
     // verify only on mount — edits re-verify through the button
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -45,21 +50,21 @@ export function AuthGate({ children }: { children: ReactNode }) {
       <div className="auth-gate">
         <h2>Authentication required</h2>
         <p className="note">
-          Workspaces expose team activity and repository contents, so this page only renders after the broker
-          accepts your bearer token (a live GET /parent — not just a stored value).
+          This area exposes team activity and repository contents, so it only renders after the broker accepts
+          your bearer token (a live check — not just a stored value).
         </p>
         <label className="field">
           <span>bearer token</span>
           <input
             type="password"
-            value={settings.bearer}
+            value={token}
             placeholder="from [[client_tokens]] in config.toml"
-            onChange={(e) => settings.set("bearer", e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && void verify(settings.bearer)}
+            onChange={(e) => onTokenChange(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && void verify(token)}
           />
         </label>
         <div className="card-actions">
-          <button className="btn" disabled={state === "checking"} onClick={() => void verify(settings.bearer)}>
+          <button className="btn" disabled={state === "checking"} onClick={() => void verify(token)}>
             {state === "checking" ? "verifying…" : "authenticate"}
           </button>
           {error && <span className="card-error">{error}</span>}

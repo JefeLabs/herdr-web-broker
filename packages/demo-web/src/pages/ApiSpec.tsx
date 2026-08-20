@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { CATALOG, GROUPS, type EndpointSpec } from "../api/catalog";
 import { buildOpenApi } from "../api/openapi";
-import { AuthBadge, CopyButton, MethodChip, PathTemplate } from "../components/ui";
+import { AuthBadge, CopyButton, MethodChip, PathTemplate } from "@jefelabs/herdr-broker-ui";
 
 const pathParams = (t: string) => [...t.matchAll(/\{([^}]+)\}/g)].map((m) => m[1]);
 

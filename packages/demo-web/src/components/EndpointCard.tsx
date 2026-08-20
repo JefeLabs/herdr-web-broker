@@ -2,7 +2,7 @@ import { useState } from "react";
 import { send, toCurl, type BrokerResult, type EndpointRequest } from "../api/client";
 import type { EndpointSpec } from "../api/catalog";
 import { useSettings } from "../settings";
-import { AuthBadge, CopyButton, JsonView, MethodChip, PathTemplate, StatusPill } from "./ui";
+import { AuthBadge, CopyButton, JsonView, MethodChip, PathTemplate, StatusPill } from "@jefelabs/herdr-broker-ui";
 
 export const BROKER_ORIGIN = import.meta.env.VITE_BROKER_TARGET ?? "http://127.0.0.1:7591";
 

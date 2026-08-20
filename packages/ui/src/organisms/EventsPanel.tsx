@@ -1,6 +1,11 @@
-import { BrokerApiError } from "@jefelabs/herdr-broker-client";
+import { BrokerApiError, type BrokerClient } from "@jefelabs/herdr-broker-client";
 import { useEffect, useRef, useState } from "react";
-import { useSettings } from "../settings";
+
+export interface EventsPanelProps {
+  broker: BrokerClient;
+  instance: string;
+  session: string;
+}
 
 interface LogLine {
   dir: "in" | "out" | "sys";
@@ -12,13 +17,12 @@ const now = () => new Date().toLocaleTimeString([], { hour12: false });
 
 /** WS /parent/ws through the SDK's EventChannel: subprotocol bearer auth,
  * auto-reconnect, typed subscriptions, rpc frames on the same socket. */
-export function EventsCard() {
-  const settings = useSettings();
+export function EventsPanel({ broker, instance, session }: EventsPanelProps) {
   const logRef = useRef<HTMLDivElement | null>(null);
   const [connected, setConnected] = useState(false);
   const [log, setLog] = useState<LogLine[]>([]);
   const [frame, setFrame] = useState(
-    JSON.stringify({ instance: "runtime", session: "default", method: "agent.list", params: {} }, null, 2),
+    JSON.stringify({ instance, session, method: "agent.list", params: {} }, null, 2),
   );
 
   const push = (dir: LogLine["dir"], text: string) => setLog((old) => [...old.slice(-400), { dir, text, ts: now() }]);
@@ -29,7 +33,7 @@ export function EventsCard() {
   }, [log]);
 
   useEffect(() => {
-    const events = settings.broker.events;
+    const events = broker.events;
     const offs = [
       events.on("open", () => {
         setConnected(true);
@@ -45,7 +49,7 @@ export function EventsCard() {
       events.on("instance_offline", (e) => push("in", `instance_offline ${JSON.stringify(e)}`)),
     ];
     return () => offs.forEach((off) => off());
-  }, [settings.broker]);
+  }, [broker]);
 
   async function sendFrame() {
     let parsed: { instance?: string; session?: string; method?: string; params?: unknown };
@@ -57,9 +61,9 @@ export function EventsCard() {
     }
     push("out", frame.replace(/\s*\n\s*/g, " "));
     try {
-      const result = await settings.broker.events.rpc(
-        parsed.instance ?? settings.instance,
-        parsed.session ?? settings.session,
+      const result = await broker.events.rpc(
+        parsed.instance ?? instance,
+        parsed.session ?? session,
         parsed.method ?? "ping",
         parsed.params ?? {},
       );
@@ -85,11 +89,11 @@ export function EventsCard() {
         </p>
         <div className="card-actions">
           {!connected ? (
-            <button className="btn" onClick={() => settings.broker.events.connect()}>
+            <button className="btn" onClick={() => broker.events.connect()}>
               connect
             </button>
           ) : (
-            <button className="btn danger" onClick={() => settings.broker.events.close()}>
+            <button className="btn danger" onClick={() => broker.events.close()}>
               disconnect
             </button>
           )}
