@@ -6,3 +6,4 @@ dist/
 /docs/superpowers/plans/
 /docs/superpowers/specs/
 *.tsbuildinfo
+.playwright-mcp/
