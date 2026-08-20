@@ -29,5 +29,6 @@ export default defineConfig({
   plugins: [react()],
   server: { host: true, port: 5173, proxy },
   preview: { host: true, port: 5173, proxy },
-  test: { environment: "node" },
+  // e2e/ belongs to Playwright — vitest must not pick up its *.spec.ts files
+  test: { environment: "node", include: ["src/**/*.test.{ts,tsx}"] },
 });

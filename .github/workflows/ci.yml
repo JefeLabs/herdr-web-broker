@@ -1,0 +1,47 @@
+# The verification loop this repo runs by hand, codified: all four unit
+# suites plus the Playwright e2e pass (real broker daemon + FakeHerdr sim +
+# built site) on every push and PR.
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+
+      # root suite builds the broker (dist/) — the devstack rides that build
+      - name: broker unit suite (node:test)
+        run: npm test
+
+      - name: client SDK suite
+        run: npm run build -w packages/client && npm test -w packages/client
+
+      - name: ui suite
+        run: npm run build -w packages/ui && npm test -w packages/ui
+
+      - name: demo unit suite + site build
+        run: npm run build -w packages/demo-web && npm test -w packages/demo-web
+
+      - name: e2e (devstack + vite preview + Playwright)
+        run: |
+          npx playwright install --with-deps chromium
+          npm run e2e -w packages/demo-web
+
+      - name: keep traces on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-traces
+          path: packages/demo-web/test-results/
+          retention-days: 7

@@ -52,9 +52,10 @@ verify the methods exist before building on them:
 17. ~~**Live pane viewer.**~~ Done: `GET .../panes/{pane}/screen` long-polls
     by content version; SDK `watchScreen()`/`type()`/`keys()`; PaneViewer
     organism + demo Pane page (interactive — trust dialogs answered live).
-18. **Codify manual verification into CI:** a Playwright e2e suite for the
-    demo flows (gate → spawn → steer → kick), and a scheduled docker run
-    against real herdr to catch upstream drift.
+18. ~~**Codify manual verification into CI.**~~ Done: 12-test Playwright e2e
+    suite (gate/console/pane/kick vs the devstack) in ci.yml on every push/PR,
+    plus a weekly real-herdr wire probe (herdr-drift.yml) that auto-files a
+    `herdr-drift` issue on failure.
 19. **Demo Copilot auth passthrough.** Seed COPILOT_GITHUB_TOKEN into the
     env registry (kind `copilot`) at container boot so demo agents run
     authenticated instead of stopping at /login.

@@ -6,3 +6,7 @@ dist/
 /docs/superpowers/
 *.tsbuildinfo
 .playwright-mcp/
+
+# playwright e2e artifacts
+test-results/
+playwright-report/

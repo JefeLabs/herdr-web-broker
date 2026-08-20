@@ -1,0 +1,81 @@
+# Weekly canary against UPSTREAM drift: the demo image installs the LATEST
+# herdr + Copilot CLI at build time, so running the wire probe against it
+# catches protocol/behavior changes before users do. Failures auto-file
+# (or update) a 'herdr drift detected' issue — scheduled red runs are too
+# easy to miss.
+name: herdr-drift
+
+on:
+  schedule:
+    - cron: "0 6 * * 1" # Mondays 06:00 UTC
+  workflow_dispatch:
+
+permissions:
+  issues: write
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: build demo image (pulls latest herdr + Copilot CLI)
+        run: docker build -f packages/demo-web/Dockerfile -t herdr-web-demo .
+
+      - name: start container and wait for health
+        run: |
+          docker run -d --rm --name herdr-web-demo -p 7591:7591 herdr-web-demo
+          for i in $(seq 1 30); do
+            curl -fsS http://127.0.0.1:7591/health && exit 0
+            sleep 2
+          done
+          echo "broker never became healthy" >&2
+          docker logs herdr-web-demo >&2 || true
+          exit 1
+
+      - name: run the wire probe
+        run: node scripts/drift-probe.mjs | tee probe.log
+
+      - name: container logs on failure
+        if: failure()
+        run: docker logs herdr-web-demo > container.log 2>&1 || true
+
+      - name: file or update the drift issue
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require("fs");
+            const read = (p) => { try { return fs.readFileSync(p, "utf8").slice(-6000); } catch { return "(missing)"; } };
+            const body = [
+              "The weekly herdr drift probe failed — latest herdr no longer matches the broker's verified surface.",
+              "",
+              `Run: ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+              "",
+              "### Probe log",
+              "```",
+              read("probe.log"),
+              "```",
+            ].join("\n");
+            const { data: issues } = await github.rest.issues.listForRepo({
+              ...context.repo, state: "open", labels: "herdr-drift",
+            });
+            if (issues.length > 0) {
+              await github.rest.issues.createComment({ ...context.repo, issue_number: issues[0].number, body });
+            } else {
+              await github.rest.issues.create({
+                ...context.repo,
+                title: "herdr drift detected — probe failing against latest herdr",
+                labels: ["herdr-drift"],
+                body,
+              });
+            }
+
+      - name: stop container
+        if: always()
+        run: docker stop herdr-web-demo || true

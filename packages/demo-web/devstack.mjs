@@ -174,6 +174,12 @@ fake.handlers.set("agent.prompt", (p) => {
 await fake.listen();
 
 // ── the real broker ────────────────────────────────────────────────────────
+// e2e runs need a KNOWN admin token: pre-seed the state-dir file the daemon
+// would otherwise mint randomly (ensureAdminToken reads it if present).
+if (process.env.BROKER_ADMIN_TOKEN) {
+  mkdirSync(join(root, "state"), { recursive: true });
+  writeFileSync(join(root, "state", "admin-token"), process.env.BROKER_ADMIN_TOKEN, { mode: 0o600 });
+}
 const handle = await startDaemon({
   configDir: join(root, "config"),
   stateDir: join(root, "state"),
