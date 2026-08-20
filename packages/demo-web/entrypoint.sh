@@ -51,6 +51,23 @@ log "broker healthy on :7591"
 ADMIN_TOKEN_FILE=$(find "$HOME/.local/state/herdr" "$HOME/.config/herdr" -name admin-token 2>/dev/null | head -1 || true)
 [ -n "$ADMIN_TOKEN_FILE" ] && log "admin token: $(cat "$ADMIN_TOKEN_FILE") (loopback only — usable through the site's proxy)"
 
+# ------------------------------------------------- copilot auth passthrough
+# docker run -e COPILOT_GITHUB_TOKEN=... seeds the env registry (kind
+# copilot); spawn injection exports it into the pane before agent.start, so
+# demo Copilot agents start authenticated instead of stopping at /login.
+if [ -n "${COPILOT_GITHUB_TOKEN:-}" ]; then
+  BODY=$(printf '{"name":"COPILOT_GITHUB_TOKEN","value":"%s","kind":"copilot"}' "$COPILOT_GITHUB_TOKEN")
+  if curl -fsS -X POST http://127.0.0.1:7591/parent/runtime/env \
+      -H "Authorization: Bearer ${BROKER_TOKEN}" -H "content-type: application/json" \
+      -d "$BODY" >/dev/null; then
+    log "COPILOT_GITHUB_TOKEN seeded into the env registry (kind copilot) — Copilot agents spawn authenticated"
+  else
+    log "WARNING: could not seed COPILOT_GITHUB_TOKEN into the env registry"
+  fi
+else
+  log "no COPILOT_GITHUB_TOKEN — Copilot agents stop at /login (add: docker run -e COPILOT_GITHUB_TOKEN=...)"
+fi
+
 # ------------------------------------------------------------- demo site up
 log "serving the demo site on :5173 (proxy → 127.0.0.1:7591)"
 cd /opt/herdr-web-broker/packages/demo-web
@@ -58,5 +75,7 @@ cd /opt/herdr-web-broker/packages/demo-web
 # demo tokens) can forward it — the secret stays server-side
 ADMIN_TOKEN_VALUE=""
 [ -n "$ADMIN_TOKEN_FILE" ] && ADMIN_TOKEN_VALUE=$(cat "$ADMIN_TOKEN_FILE")
-VITE_BROKER_TARGET=http://127.0.0.1:7591 BROKER_ADMIN_TOKEN="$ADMIN_TOKEN_VALUE" \
+# DEMO_MINT_ALLOW_REMOTE: this container is a deliberately-open demo box
+# (its bearer is printed in the docs) — dev servers stay loopback-only
+VITE_BROKER_TARGET=http://127.0.0.1:7591 BROKER_ADMIN_TOKEN="$ADMIN_TOKEN_VALUE" DEMO_MINT_ALLOW_REMOTE=1 \
   exec npx vite preview --host 0.0.0.0 --port 5173

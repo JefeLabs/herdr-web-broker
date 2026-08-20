@@ -57,9 +57,10 @@ verify the methods exist before building on them:
     suite (gate/console/pane/kick vs the devstack) in ci.yml on every push/PR,
     plus a weekly real-herdr wire probe (herdr-drift.yml) that auto-files a
     `herdr-drift` issue on failure.
-19. **Demo Copilot auth passthrough.** Seed COPILOT_GITHUB_TOKEN into the
-    env registry (kind `copilot`) at container boot so demo agents run
-    authenticated instead of stopping at /login.
+19. ~~**Demo Copilot auth passthrough.**~~ Done: `docker run -e
+    COPILOT_GITHUB_TOKEN=...` seeds the env registry (kind `copilot`) at
+    boot; spawn injection carries it into the CLI process (verified via
+    /proc environ). All five field-found gaps are now closed.
 
 ## Release & ecosystem
 

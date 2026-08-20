@@ -32,8 +32,30 @@ const proxy = {
  * the broker still 403s unless [token_mint] enabled = true. */
 function demoMint(): Plugin {
   const adminToken = process.env.BROKER_ADMIN_TOKEN;
+  // `vite --host` binds 0.0.0.0, so an unauthenticated mint endpoint would
+  // hand LAN peers tokens to a possibly-REAL broker. Loopback-only unless
+  // explicitly opened (the demo container opts in — its bearer is public
+  // anyway); a small throttle stops drive-by token floods either way.
+  const allowRemote = process.env.DEMO_MINT_ALLOW_REMOTE === "1";
+  const mintTimes: number[] = [];
+  const refuse = (res: Parameters<Connect.NextHandleFunction>[1], status: number, code: string, message: string) => {
+    res.statusCode = status;
+    res.setHeader("content-type", "application/json");
+    res.end(JSON.stringify({ code, message }));
+  };
   const handler: Connect.NextHandleFunction = (req, res, next) => {
     if (req.url !== "/demo/mint" || req.method !== "POST") return next();
+    const peer = req.socket.remoteAddress ?? "";
+    const loopback = peer === "127.0.0.1" || peer === "::1" || peer === "::ffff:127.0.0.1";
+    if (!loopback && !allowRemote) {
+      return refuse(res, 403, "forbidden", "self-serve minting is loopback-only on dev servers (demo containers set DEMO_MINT_ALLOW_REMOTE=1)");
+    }
+    const now = Date.now();
+    while (mintTimes.length > 0 && mintTimes[0] < now - 60_000) mintTimes.shift();
+    if (mintTimes.length >= 10) {
+      return refuse(res, 429, "rate_limited", "too many demo tokens minted — wait a minute");
+    }
+    mintTimes.push(now);
     void (async () => {
       const name = `demo-${Math.random().toString(36).slice(2, 8)}`;
       const upstream = await fetch(`${target}/admin/tokens`, {

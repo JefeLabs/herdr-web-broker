@@ -23,6 +23,16 @@ docker build -f packages/demo-web/Dockerfile -t herdr-web-demo .
 docker run --rm -p 5173:5173 -p 7591:7591 herdr-web-demo
 ```
 
+Optional — pass a GitHub token so spawned Copilot agents start
+authenticated instead of stopping at `/login` (the entrypoint seeds the
+broker's env registry, kind `copilot`; spawn injection exports it into the
+pane before the CLI starts):
+
+```sh
+docker run --rm -p 5173:5173 -p 7591:7591 \
+  -e COPILOT_GITHUB_TOKEN=<your token> herdr-web-demo
+```
+
 - site → http://localhost:5173 — click **get a demo token** on the auth gate
   for a self-serve login (dev-only: the site server forwards the admin token
   to `POST /admin/tokens`; browsers never see the admin secret), or use the
