@@ -727,6 +727,75 @@ test("spec bundle plan: prompts the agent to write plan.md from the bundle; unkn
   }
 });
 
+test("ask: a second concurrent ask on the same pane answers 409 pane_busy; steering stays allowed", async () => {
+  const t = await setup();
+  try {
+    const cwd = scratchRepo();
+    t.deps.index.set("default", "w1", { cwd });
+    t.fake.handlers.set("pane.send_input", () => ({ type: "ok" }));
+    t.fake.handlers.set("agent.prompt", (p) => {
+      const text = String((p as { text: string }).text);
+      const m = /\.herdr\/answers\/([a-f0-9]{16})\.json/.exec(text);
+      if (m) setTimeout(() => writeFileSync(join(cwd, ".herdr", "answers", `${m[1]}.json`), '{"answer":1}'), 300);
+      return { type: "prompted" };
+    });
+    mkdirSync(join(cwd, ".herdr", "answers"), { recursive: true });
+
+    const first = runBrokerMethod(t.deps, "default", "broker.agent.ask", {
+      pane_id: "w1:p1",
+      prompt: "slow question",
+      timeout_ms: 5000,
+    });
+    await new Promise((r) => setTimeout(r, 60)); // first ask is now in flight
+
+    await assert.rejects(
+      runBrokerMethod(t.deps, "default", "broker.agent.ask", { pane_id: "w1:p1", prompt: "too eager", timeout_ms: 5000 }),
+      (e: BrokerError) => e.code === "pane_busy" && e.details.pane_id === "w1:p1",
+    );
+
+    // mid-ask steering is a FEATURE — it must not be blocked by the lock
+    const steer = (await runBrokerMethod(t.deps, "default", "broker.agent.prompt", {
+      pane_id: "w1:p1",
+      text: "also include totals",
+    })) as { status: string };
+    assert.equal(steer.status, "prompted");
+
+    assert.deepEqual(((await first) as { answer: unknown }).answer, 1);
+
+    // lock released after completion — a new ask works
+    const again = (await runBrokerMethod(t.deps, "default", "broker.agent.ask", {
+      pane_id: "w1:p1",
+      prompt: "next question",
+      timeout_ms: 5000,
+    })) as { answer: unknown };
+    assert.deepEqual(again.answer, 1);
+  } finally {
+    await t.teardown();
+  }
+});
+
+test("ask: the pane lock releases even when the ask fails", async () => {
+  const t = await setup();
+  t.deps.askStartGraceMs = 100;
+  try {
+    const cwd = scratchRepo();
+    t.deps.index.set("default", "w9", { cwd });
+    t.fake.agents.push({ pane_id: "w9:p1", name: "deadish", agent: "copilot", agent_status: "idle" });
+    t.fake.handlers.set("agent.prompt", () => ({ type: "prompted" }));
+    await assert.rejects(
+      runBrokerMethod(t.deps, "default", "broker.agent.ask", { pane_id: "w9:p1", prompt: "x", timeout_ms: 5000 }),
+      (e: BrokerError) => e.code === "agent_unresponsive",
+    );
+    // failure must not leave the pane permanently busy
+    await assert.rejects(
+      runBrokerMethod(t.deps, "default", "broker.agent.ask", { pane_id: "w9:p1", prompt: "y", timeout_ms: 5000 }),
+      (e: BrokerError) => e.code === "agent_unresponsive",
+    );
+  } finally {
+    await t.teardown();
+  }
+});
+
 test("ask: an agent that never starts working fails fast as agent_unresponsive, not a full-budget hang", async () => {
   const t = await setup();
   t.deps.askStartGraceMs = 120;

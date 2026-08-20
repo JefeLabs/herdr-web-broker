@@ -45,6 +45,8 @@ export interface OpsDeps {
   paneBusyDelayMs?: number;
   /** test override for spec-bundle long-poll pacing */
   filePollMs?: number;
+  /** in-flight ask locks, keyed `${session}:${pane}` — lazily initialized */
+  askLocks?: Set<string>;
 }
 
 export function isBrokerMethod(method: string): boolean {
@@ -720,6 +722,31 @@ function toAskResult(res: AnswerRead): unknown {
 async function ask(deps: OpsDeps, session: string, p: Record<string, unknown>): Promise<unknown> {
   const pane = str(p.pane_id, "pane_id");
   const prompt = str(p.prompt, "prompt");
+  // One ask at a time per pane: a second concurrent ask would interleave
+  // answer contracts at the agent. Steering (prompt/slash/model) stays
+  // unblocked — mid-ask redirection is a feature, not a conflict.
+  const lockKey = `${session}:${pane}`;
+  deps.askLocks ??= new Set();
+  if (deps.askLocks.has(lockKey)) {
+    throw new BrokerError("pane_busy", `an ask is already in flight on pane '${pane}' — one ask at a time per pane`, {
+      pane_id: pane,
+    });
+  }
+  deps.askLocks.add(lockKey);
+  try {
+    return await askInner(deps, session, pane, prompt, p);
+  } finally {
+    deps.askLocks.delete(lockKey);
+  }
+}
+
+async function askInner(
+  deps: OpsDeps,
+  session: string,
+  pane: string,
+  prompt: string,
+  p: Record<string, unknown>,
+): Promise<unknown> {
   const budget = Math.min(Math.max(typeof p.timeout_ms === "number" ? p.timeout_ms : 120_000, 1_000), 600_000);
   const workspaceId = pane.split(":")[0];
   const cwd = await resolveCwd(deps, session, workspaceId);

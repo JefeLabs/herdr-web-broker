@@ -41,6 +41,24 @@ verify the methods exist before building on them:
 10. ~~**OpenAPI response schemas.**~~ Done: all 38 operations declare
     success schemas (responses.ts), enforced by a completeness test.
 
+## Field-found gaps (2026-08-20 review)
+
+15. ~~**Per-pane conversation safety.**~~ Done: ask serializes per pane
+    (second concurrent ask answers 409 `pane_busy`, lock releases on
+    failure); steering during an ask stays allowed — that is a feature.
+16. **Security tier for shared instances:** hash client tokens at rest
+    (mint-once-show-once, like child secrets), rate-limit auth attempts,
+    and an audit trail for admin actions (kick/mint/revoke/env writes).
+17. **Live pane viewer.** A terminal-view organism (pane.read polling,
+    long-poll discipline) — watch the agent type from the browser; zero
+    new herdr surface needed.
+18. **Codify manual verification into CI:** a Playwright e2e suite for the
+    demo flows (gate → spawn → steer → kick), and a scheduled docker run
+    against real herdr to catch upstream drift.
+19. **Demo Copilot auth passthrough.** Seed COPILOT_GITHUB_TOKEN into the
+    env registry (kind `copilot`) at container boot so demo agents run
+    authenticated instead of stopping at /login.
+
 ## Release & ecosystem
 
 11. **The name.** `herdr-web-broker` vs `herdr-agent-api` /

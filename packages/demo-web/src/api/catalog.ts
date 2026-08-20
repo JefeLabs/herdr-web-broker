@@ -490,7 +490,7 @@ export const CATALOG: EndpointSpec[] = [
     docs:
       "The broker appends write-your-answer-to-.herdr/answers/<id>.json instructions to the prompt (the file must " +
       'be {"answer": <payload>} — the broker unwraps the envelope, so the response shape is deterministic), then ' +
-      "polls the file and the agent's status. An agent that never starts working fails fast as agent_unresponsive " +
+      "polls the file and the agent's status. One ask at a time per pane — a second concurrent ask answers 409 pane_busy; steering via prompt stays allowed mid-ask. An agent that never starts working fails fast as agent_unresponsive " +
       "instead of hanging the full budget. Oversize answers truncate at 768KB; unparseable ones return raw with parse_error.",
     response: {
       type: "object",

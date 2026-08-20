@@ -63,7 +63,10 @@ Two channels, same pane, same context:
   to write `{"answer": <payload>}` to a drop file, unwraps the envelope,
   and returns `{"answer": …}` deterministically. An agent that never
   starts working fails fast as `agent_unresponsive` (504) instead of
-  hanging the full budget.
+  hanging the full budget. **One ask at a time per pane**: a second
+  concurrent ask answers `409 pane_busy` (two contracts would interleave
+  at the agent); steering the pane with `prompt` during an ask remains
+  allowed — that's the mid-run redirection feature, not a conflict.
 
 **When to use which — `prompt` directs, `ask` queries.** Use `prompt` when
 the deliverable is the agent's *work* (file edits, tests run, a spec
