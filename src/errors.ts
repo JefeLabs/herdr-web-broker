@@ -15,6 +15,9 @@ const STATUS: Record<string, number> = {
   unknown_env: 404,
   unknown_model: 404,
   unknown_token: 404,
+  unknown_bundle: 404,
+  unknown_file: 404,
+  agent_unresponsive: 504,
   model_switch_unsupported: 400,
 };
 

@@ -30,6 +30,45 @@ test("ws upgrade requires a bearer token", async () => {
   await fake.close();
 });
 
+test("ws upgrade accepts ?token= for browser clients that cannot set headers", async () => {
+  const { fake, handle } = await boot();
+  const ws = new WebSocket(`ws://127.0.0.1:${handle.port}/parent/ws?token=tok`);
+  await new Promise((r) => ws.once("open", r));
+  const reply = new Promise<Record<string, unknown>>((r) => ws.once("message", (d) => r(JSON.parse(String(d)))));
+  ws.send(JSON.stringify({ id: "q1", method: "events.subscribe" }));
+  assert.deepEqual(await reply, { id: "q1", result: { subscribed: true } });
+  const bad = new WebSocket(`ws://127.0.0.1:${handle.port}/parent/ws?token=wrong`);
+  const err = await new Promise<Error>((r) => bad.once("error", r));
+  assert.match(err.message, /401/);
+  ws.close();
+  await handle.close();
+  await fake.close();
+});
+
+test("server pings keep idle client sockets alive through intermediaries", async () => {
+  const fake = new FakeHerdr(join(tmpDir(), "h.sock"));
+  fake.agents = [];
+  await fake.listen();
+  const handle = (await startDaemon({
+    configDir: tmpDir(),
+    stateDir: tmpDir(),
+    configOverrides: { listen: "127.0.0.1:0", client_tokens: [{ name: "t", token: "tok" }] },
+    localEndpoints: [{ session: "default", socketPath: fake.socketPath }],
+    herdrVersion: "0.8.0-test",
+    projectionDir: tmpDir(),
+    wsPingMs: 60,
+  }))!;
+  const ws = new WebSocket(`ws://127.0.0.1:${handle.port}/parent/ws?token=tok`);
+  await new Promise((r) => ws.once("open", r));
+  let pings = 0;
+  ws.on("ping", () => pings++);
+  await waitFor(() => pings >= 2);
+  assert.equal(ws.readyState, WebSocket.OPEN, "socket stays open across ping intervals");
+  ws.close();
+  await handle.close();
+  await fake.close();
+});
+
 test("rpc over ws round-trips; events.subscribe acks; events stream unsolicited", async () => {
   const { fake, handle } = await boot();
   const ws = new WebSocket(`ws://127.0.0.1:${handle.port}/parent/ws`, {

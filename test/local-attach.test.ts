@@ -25,7 +25,7 @@ async function setup() {
 test("adapters map herdr 0.8.0's real shapes and reject junk", () => {
   assert.deepEqual(
     mapAgentList({ type: "agent_list", agents: [{ pane_id: "w1:p1", name: "t", agent_status: "blocked" }] }),
-    [{ id: "w1:p1", title: "t", status: "blocked" }],
+    [{ id: "w1:p1", title: "t", status: "blocked", raw_status: "blocked" }],
   );
   assert.deepEqual(mapAgentList({ nope: 1 }), []);
   assert.deepEqual(
@@ -228,6 +228,19 @@ test("stop() is idempotent", async () => {
   assert.doesNotThrow(() => local.stop());
   assert.deepEqual(local.sessions(), []);
   await fake.close();
+});
+
+test("mapAgentList surfaces herdr's raw status and readiness so a dead-but-listed agent is visible", () => {
+  const [a] = mapAgentList({
+    type: "agent_list",
+    agents: [
+      { pane_id: "w2:p1", agent: "copilot", agent_status: "unknown", interactive_ready: false, launch_pending: false },
+    ],
+  });
+  assert.equal(a.status, "idle", "the three-bucket fold stays stable for counts");
+  assert.equal(a.raw_status, "unknown", "clients can see the unfolded truth");
+  assert.equal(a.interactive_ready, false);
+  assert.equal(a.launch_pending, false);
 });
 
 test("an unrecognized streamed status coerces to idle rather than corrupting counts", async () => {

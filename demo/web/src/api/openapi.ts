@@ -39,7 +39,10 @@ function toOperation(spec: EndpointSpec): Record<string, unknown> {
     tags: [spec.group],
     security: SECURITY[spec.auth],
     responses: {
-      [spec.id === "spawn" ? "201" : "200"]: { description: "Success" },
+      [spec.id === "spawn" ? "201" : "200"]: {
+        description: "Success",
+        ...(spec.response ? { content: { "application/json": { schema: spec.response } } } : {}),
+      },
       default: { description: "Error envelope: {code, message, ...details}" },
     },
   };

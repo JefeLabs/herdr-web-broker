@@ -1,5 +1,5 @@
-import { randomBytes } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, statSync } from "node:fs";
+import { createHash, randomBytes } from "node:crypto";
+import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { isAbsolute, join, sep } from "node:path";
 import type { EnvRegistry } from "./env-registry.js";
 import { BrokerError } from "./errors.js";
@@ -18,11 +18,15 @@ export interface OpsDeps {
   /** test overrides for broker.agent.ask pacing */
   askPollMs?: number;
   askGraceMs?: number;
+  /** how long ask() waits for the agent to start working before failing fast */
+  askStartGraceMs?: number;
   /** test override for post-injection shell settle */
   envSettleMs?: number;
   /** cold-pane agent.start retry pacing (agent_pane_busy) */
   paneBusyRetries?: number;
   paneBusyDelayMs?: number;
+  /** test override for spec-bundle long-poll pacing */
+  filePollMs?: number;
 }
 
 export function isBrokerMethod(method: string): boolean {
@@ -88,6 +92,8 @@ export async function runBrokerMethod(
       const cwd = await resolveCwd(deps, session, workspaceId);
       return { workspace_id: workspaceId, repo, ...(await repoDiff(resolveRepo(cwd, repo), base)) };
     }
+    case "broker.repo.file":
+      return repoFile(deps, session, p);
     case "broker.agent.spawn":
       return spawn(deps, session, p);
     case "broker.agent.ask":
@@ -96,6 +102,14 @@ export async function runBrokerMethod(
       return switchModel(deps, session, p);
     case "broker.agent.slash":
       return slash(deps, session, p);
+    case "broker.spec.drive":
+      return specDrive(deps, session, p);
+    case "broker.spec.plan":
+      return specPlan(deps, session, p);
+    case "broker.spec.get":
+      return specGet(deps, session, p);
+    case "broker.spec.list":
+      return specList(deps, session, p);
     default:
       throw new BrokerError("bad_request", `unknown broker method '${method}'`);
   }
@@ -353,6 +367,187 @@ async function switchModel(deps: OpsDeps, session: string, p: Record<string, unk
   return { status: "sent", pane_id: pane, kind, model, command };
 }
 
+/** Capped, binary-aware text read shared by the file endpoint and spec
+ * bundles. */
+function capText(buf: Buffer): { size: number; content: string; truncated?: boolean; binary?: boolean } {
+  if (buf.subarray(0, 8192).includes(0)) return { size: buf.length, content: "", binary: true };
+  if (buf.length > DIFF_CAP_BYTES) {
+    return { size: buf.length, content: buf.subarray(0, DIFF_CAP_BYTES).toString("utf8"), truncated: true };
+  }
+  return { size: buf.length, content: buf.toString("utf8") };
+}
+
+/** Raw file contents from a workspace repo — the piece tree/diff can't
+ * serve (an IDE-like UI can show changed files but couldn't open an
+ * unchanged one). Same trust model as the rest of the bearer surface: rpc
+ * passthrough could already read any file via the pane, so this adds
+ * convenience, not privilege — but containment is still enforced. */
+async function repoFile(deps: OpsDeps, session: string, p: Record<string, unknown>): Promise<unknown> {
+  const workspaceId = str(p.workspace_id, "workspace_id");
+  const repo = str(p.repo, "repo");
+  const rel = str(p.path, "path");
+  if (isAbsolute(rel) || rel.split("/").some((s) => s === "" || s === "." || s === ".." || s === ".git")) {
+    throw new BrokerError("bad_request", "'path' must be relative, inside the repo, and outside .git");
+  }
+  const cwd = await resolveCwd(deps, session, workspaceId);
+  const repoDir = resolveRepo(cwd, repo);
+  const abs = join(repoDir, rel);
+  if (!existsSync(abs) || !statSync(abs).isFile()) {
+    throw new BrokerError("unknown_file", `no file '${rel}' in repo '${repo}'`);
+  }
+  const real = realpathSync(abs);
+  if (real !== abs && !real.startsWith(repoDir + sep)) {
+    throw new BrokerError("bad_request", "'path' escapes the repo through a symlink");
+  }
+  return { workspace_id: workspaceId, repo, path: rel, ...capText(readFileSync(abs)) };
+}
+
+/* ── spec bundles ─────────────────────────────────────────────────────────
+ * A bundle is a directory of design files the agent maintains —
+ * docs/superpowers/specs/<YYYY-MM-DD-name>/ with overview.md as the entry
+ * point plus whatever the design needs (api.md, data-model.md, plan.md…).
+ * drive/plan prompt the agent at the bundle; get long-polls the combined
+ * content version so clients pull updates as they happen — long-poll rather
+ * than push so child instances stream through the request/response tunnel
+ * unchanged. Bundle ids and member names are single sanitized segments, so
+ * no client-supplied path can escape the spec root. */
+
+const SPEC_ROOT = "docs/superpowers/specs";
+const BUNDLE_ID = /^\d{4}-\d{2}-\d{2}-[a-z0-9][a-z0-9-]*$/;
+const MEMBER_NAME = /^[a-zA-Z0-9][a-zA-Z0-9._-]*$/;
+
+function bundleIdFrom(p: Record<string, unknown>): string {
+  if (typeof p.bundle === "string") {
+    if (!BUNDLE_ID.test(p.bundle) || p.bundle.length > 80) {
+      throw new BrokerError("bad_request", "'bundle' must be a YYYY-MM-DD-name id ([a-z0-9-])");
+    }
+    return p.bundle;
+  }
+  const slug = str(p.name, "name").trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+  if (!slug || slug.length > 64) throw new BrokerError("bad_request", "'name' must slug to 1-64 chars of [a-z0-9-]");
+  return `${new Date().toISOString().slice(0, 10)}-${slug}`;
+}
+
+function memberName(v: unknown, key: string): string {
+  const name = str(v, key);
+  if (!MEMBER_NAME.test(name) || name.length > 64) {
+    throw new BrokerError("bad_request", `'${key}' must be a bundle file name ([a-zA-Z0-9._-], no path)`);
+  }
+  return name;
+}
+
+interface BundleMember {
+  size: number;
+  content: string;
+  truncated?: boolean;
+  binary?: boolean;
+}
+
+function readBundle(cwd: string, bundle: string): { files: Record<string, BundleMember>; version: string } | undefined {
+  const dir = join(cwd, SPEC_ROOT, bundle);
+  if (!existsSync(dir)) return undefined;
+  const files: Record<string, BundleMember> = {};
+  const hash = createHash("sha256");
+  const names = readdirSync(dir, { withFileTypes: true })
+    .filter((e) => e.isFile() && !e.name.startsWith("."))
+    .map((e) => e.name)
+    .sort();
+  for (const name of names) {
+    const buf = readFileSync(join(dir, name));
+    hash.update(name).update(":").update(createHash("sha256").update(buf).digest("hex")).update("\n");
+    files[name] = capText(buf);
+  }
+  return { files, version: hash.digest("hex") };
+}
+
+async function specTarget(deps: OpsDeps, session: string, pane: string): Promise<{ target: string; cwd: string; workspaceId: string }> {
+  const { entry } = await agentInPane(deps, session, pane);
+  const target = typeof entry.name === "string" && entry.name ? entry.name : String(entry.agent ?? "");
+  if (!target) throw new BrokerError("upstream_error", `agent in pane '${pane}' has no addressable name`);
+  const workspaceId = pane.split(":")[0];
+  return { target, cwd: await resolveCwd(deps, session, workspaceId), workspaceId };
+}
+
+async function specDrive(deps: OpsDeps, session: string, p: Record<string, unknown>): Promise<unknown> {
+  const pane = str(p.pane_id, "pane_id");
+  const prompt = str(p.prompt, "prompt");
+  const bundle = bundleIdFrom(p);
+  const focus = p.file === undefined ? undefined : memberName(p.file, "file");
+  const { target, cwd, workspaceId } = await specTarget(deps, session, pane);
+  const dir = `${SPEC_ROOT}/${bundle}`;
+  mkdirSync(join(cwd, dir), { recursive: true });
+  const overview = join(cwd, dir, "overview.md");
+  if (!existsSync(overview)) writeFileSync(overview, `# ${bundle.slice(11)}\n\n_Drafting…_\n`);
+  const questionsIn = focus ?? "overview.md";
+  const text =
+    `You maintain the spec bundle at ${dir}/ (relative to ${cwd}) — a set of design files. ` +
+    `overview.md is the entry point; add files as the design needs them (api.md, data-model.md, ` +
+    `diagrams as mermaid in markdown).\n\n` +
+    (focus ? `The human is currently viewing ${dir}/${focus} — apply this instruction to that file, touching others only when required.\n\n` : "") +
+    `Instruction: ${prompt}\n\n` +
+    `Update the files incrementally and save often. If you need decisions from the human, list them under ` +
+    `an '## Open questions' section in ${questionsIn}. The files are the deliverable — do not answer in the terminal.`;
+  await deps.local.request(session, "agent.prompt", { target, text }, 30_000);
+  const b = readBundle(cwd, bundle)!;
+  return { workspace_id: workspaceId, bundle, dir, files: Object.keys(b.files), version: b.version, status: "prompted" };
+}
+
+async function specPlan(deps: OpsDeps, session: string, p: Record<string, unknown>): Promise<unknown> {
+  const pane = str(p.pane_id, "pane_id");
+  const bundle = bundleIdFrom(p);
+  const extra = typeof p.prompt === "string" && p.prompt.trim() ? p.prompt.trim() : undefined;
+  const { target, cwd, workspaceId } = await specTarget(deps, session, pane);
+  const dir = `${SPEC_ROOT}/${bundle}`;
+  if (!existsSync(join(cwd, dir))) {
+    throw new BrokerError("unknown_bundle", `no spec bundle '${bundle}' in this workspace`);
+  }
+  const text =
+    `The spec bundle at ${dir}/ (relative to ${cwd}) is ready for planning. Read every file in it, then ` +
+    `write the implementation plan to ${dir}/plan.md — concrete stages, the files each stage touches, and ` +
+    `a test strategy per stage. Keep updating plan.md as you refine it.` +
+    (extra ? ` Additional guidance: ${extra}` : "");
+  await deps.local.request(session, "agent.prompt", { target, text }, 30_000);
+  return { workspace_id: workspaceId, bundle, dir, file: "plan.md", status: "prompted" };
+}
+
+async function specGet(deps: OpsDeps, session: string, p: Record<string, unknown>): Promise<unknown> {
+  const workspaceId = str(p.workspace_id, "workspace_id");
+  const bundle = bundleIdFrom(p);
+  const cwd = await resolveCwd(deps, session, workspaceId);
+  const known = typeof p.version === "string" ? p.version : undefined;
+  const waitMs = Math.min(Math.max(typeof p.wait_ms === "number" ? p.wait_ms : 0, 0), 30_000);
+  const pollMs = deps.filePollMs ?? 500;
+  const deadline = Date.now() + waitMs;
+  for (;;) {
+    const b = readBundle(cwd, bundle);
+    if (!b) throw new BrokerError("unknown_bundle", `no spec bundle '${bundle}' in this workspace`);
+    if (!known || b.version !== known) {
+      return { workspace_id: workspaceId, bundle, dir: `${SPEC_ROOT}/${bundle}`, version: b.version, files: b.files };
+    }
+    if (Date.now() >= deadline) return { workspace_id: workspaceId, bundle, version: b.version, unchanged: true };
+    await new Promise((r) => setTimeout(r, pollMs));
+  }
+}
+
+async function specList(deps: OpsDeps, session: string, p: Record<string, unknown>): Promise<unknown> {
+  const workspaceId = str(p.workspace_id, "workspace_id");
+  const cwd = await resolveCwd(deps, session, workspaceId);
+  const root = join(cwd, SPEC_ROOT);
+  if (!existsSync(root)) return { workspace_id: workspaceId, bundles: [] };
+  const bundles = readdirSync(root, { withFileTypes: true })
+    .filter((e) => e.isDirectory() && BUNDLE_ID.test(e.name))
+    .map((e) => e.name)
+    .sort()
+    .map((bundle) => ({
+      bundle,
+      files: readdirSync(join(root, bundle), { withFileTypes: true })
+        .filter((f) => f.isFile() && !f.name.startsWith("."))
+        .map((f) => f.name)
+        .sort(),
+    }));
+  return { workspace_id: workspaceId, bundles };
+}
+
 type AnswerRead =
   | { kind: "ok"; answer: unknown }
   | { kind: "oversize"; raw: string; full_bytes: number }
@@ -375,7 +570,16 @@ function readAnswerFile(file: string): AnswerRead {
 }
 
 function toAskResult(res: AnswerRead): unknown {
-  if (res.kind === "ok") return { answer: res.answer };
+  if (res.kind === "ok") {
+    // The contract asks for {"answer": <payload>} — unwrap the envelope so
+    // clients get a deterministic shape; a non-conforming file (older
+    // agents, freeform output) still comes back verbatim under `answer`.
+    const a = res.answer;
+    if (a !== null && typeof a === "object" && !Array.isArray(a) && "answer" in a) {
+      return { answer: (a as Record<string, unknown>).answer };
+    }
+    return { answer: a };
+  }
   if (res.kind === "oversize") return { answer: null, raw: res.raw, truncated: true, full_bytes: res.full_bytes };
   return { answer: null, raw: res.raw, parse_error: true };
 }
@@ -413,14 +617,17 @@ async function ask(deps: OpsDeps, session: string, p: Record<string, unknown>): 
   const file = join(dir, `${id}.json`);
   const text =
     `${prompt}\n\n` +
-    `When you are finished, write ONLY the JSON answer to the file ` +
+    `When you are finished, write ONLY a JSON object of the form ` +
+    `{"answer": <your answer as JSON>} to the file ` +
     `.herdr/answers/${id}.json (relative to ${cwd}). ` +
     `The file must contain valid JSON and nothing else.`;
   await deps.local.request(session, "agent.prompt", { target, text }, 30_000);
 
   const pollMs = deps.askPollMs ?? 500;
   const graceMs = deps.askGraceMs ?? 10_000;
-  const deadline = Date.now() + budget;
+  const startGraceMs = deps.askStartGraceMs ?? 15_000;
+  const startedAt = Date.now();
+  const deadline = startedAt + budget;
   let sawWorking = false;
   let idleSince: number | undefined;
   while (Date.now() < deadline) {
@@ -442,6 +649,15 @@ async function ask(deps: OpsDeps, session: string, p: Record<string, unknown>): 
     } else if (sawWorking) {
       idleSince ??= Date.now();
       if (Date.now() - idleSince > graceMs) break;
+    } else if (Date.now() - startedAt > startGraceMs) {
+      // The pane's status folds "unknown"/"done" to idle, so a dead-but-
+      // listed agent looks idle and would otherwise hang for the whole
+      // budget on its first ask — fail fast with a distinct code instead.
+      throw new BrokerError(
+        "agent_unresponsive",
+        `agent in pane '${pane}' never started working within ${startGraceMs}ms — it may be dead or stuck`,
+        { pane_id: pane },
+      );
     }
     await new Promise((r) => setTimeout(r, pollMs));
   }

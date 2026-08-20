@@ -29,6 +29,8 @@ export function mapAgentList(result: unknown): AgentInfo[] {
       agent?: unknown;
       terminal_title_stripped?: unknown;
       agent_status?: unknown;
+      interactive_ready?: unknown;
+      launch_pending?: unknown;
     }>;
   };
   if (!Array.isArray(r?.agents)) return [];
@@ -36,6 +38,11 @@ export function mapAgentList(result: unknown): AgentInfo[] {
     id: String(a.pane_id ?? ""),
     title: String(a.terminal_title_stripped ?? a.name ?? a.agent ?? a.pane_id ?? "agent"),
     status: coerceStatus(a.agent_status),
+    // the unfolded truth: "unknown"/"done" fold to idle in `status`, which
+    // hides a dead-but-listed agent — clients can see it here
+    raw_status: String(a.agent_status ?? "unknown"),
+    ...(typeof a.interactive_ready === "boolean" ? { interactive_ready: a.interactive_ready } : {}),
+    ...(typeof a.launch_pending === "boolean" ? { launch_pending: a.launch_pending } : {}),
   }));
 }
 

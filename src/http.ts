@@ -257,6 +257,17 @@ export function createHttpHandler(deps: HttpDeps) {
       return;
     }
 
+    // GET .../workspaces/{w}/repos/{r}/file?path= — raw file contents
+    if (parts.length === 9 && parts[4] === "workspaces" && parts[6] === "repos" && parts[8] === "file" && req.method === "GET") {
+      const params = {
+        workspace_id: decodeURIComponent(parts[5]),
+        repo: decodeURIComponent(parts[7]),
+        path: url.searchParams.get("path") ?? "",
+      };
+      json(res, 200, await callInstance(instance, session, "broker.repo.file", params));
+      return;
+    }
+
     // GET .../workspaces/{w}/repos/{r}/git/diff?base=<ref> (spec §2.4)
     if (
       parts.length === 10 && parts[4] === "workspaces" && parts[6] === "repos" &&
@@ -301,6 +312,49 @@ export function createHttpHandler(deps: HttpDeps) {
         command: decodeURIComponent(parts[7]),
       };
       json(res, 200, await callInstance(instance, session, "broker.agent.slash", params));
+      return;
+    }
+
+    // Spec bundles — a directory of design files an agent maintains.
+    // POST .../agents/{pane}/spec-bundles            create/continue + prompt
+    // POST .../agents/{pane}/spec-bundles/{b}/plan   ask for plan.md
+    // GET  .../workspaces/{w}/spec-bundles           list
+    // GET  .../workspaces/{w}/spec-bundles/{b}?version=&wait_ms=  pull/long-poll
+    if (parts.length === 7 && parts[4] === "agents" && parts[6] === "spec-bundles" && req.method === "POST") {
+      const body = await readBody(req);
+      const params = { ...body, pane_id: decodeURIComponent(parts[5]) };
+      json(res, 201, await callInstance(instance, session, "broker.spec.drive", params, 45_000));
+      return;
+    }
+    if (
+      parts.length === 9 && parts[4] === "agents" && parts[6] === "spec-bundles" &&
+      parts[8] === "plan" && req.method === "POST"
+    ) {
+      const body = await readBody(req);
+      const params = {
+        ...body,
+        pane_id: decodeURIComponent(parts[5]),
+        bundle: decodeURIComponent(parts[7]),
+      };
+      json(res, 200, await callInstance(instance, session, "broker.spec.plan", params, 45_000));
+      return;
+    }
+    if (parts.length === 7 && parts[4] === "workspaces" && parts[6] === "spec-bundles" && req.method === "GET") {
+      const params = { workspace_id: decodeURIComponent(parts[5]) };
+      json(res, 200, await callInstance(instance, session, "broker.spec.list", params));
+      return;
+    }
+    if (parts.length === 8 && parts[4] === "workspaces" && parts[6] === "spec-bundles" && req.method === "GET") {
+      const params: Record<string, unknown> = {
+        workspace_id: decodeURIComponent(parts[5]),
+        bundle: decodeURIComponent(parts[7]),
+      };
+      const version = url.searchParams.get("version");
+      if (version !== null) params.version = version;
+      const waitRaw = url.searchParams.get("wait_ms");
+      const waitMs = waitRaw === null ? 0 : Math.min(Math.max(Number(waitRaw) || 0, 0), 30_000);
+      if (waitMs > 0) params.wait_ms = waitMs;
+      json(res, 200, await callInstance(instance, session, "broker.spec.get", params, waitMs + 15_000));
       return;
     }
 

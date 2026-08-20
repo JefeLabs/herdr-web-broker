@@ -404,6 +404,63 @@ test("slash route: POST .../slash/{command} types the command; args ride the bod
   }
 });
 
+test("spec-bundle routes: drive creates and prompts; get/list/plan wire through", async () => {
+  const t = await setup();
+  try {
+    const cwd = scratchRepo();
+    t.ops.index.set("default", "w1", { cwd });
+    t.fake.agents = [{ pane_id: "w1:p1", name: "claude", agent: "claude", agent_status: "idle" }];
+    t.fake.handlers.set("agent.prompt", () => ({ type: "prompted" }));
+
+    const drive = await t.authed("/parent/runtime/sessions/default/agents/w1%3Ap1/spec-bundles", {
+      method: "POST",
+      body: JSON.stringify({ name: "checkout", prompt: "draft it" }),
+    });
+    assert.equal(drive.status, 201);
+    const made = (await drive.json()) as { bundle: string; dir: string; files: string[]; version: string };
+    assert.deepEqual(made.files, ["overview.md"]);
+
+    const got = await t.authed(`/parent/runtime/sessions/default/workspaces/w1/spec-bundles/${made.bundle}`);
+    assert.equal(got.status, 200);
+    const body = (await got.json()) as { version: string; files: Record<string, { content: string }> };
+    assert.ok(body.files["overview.md"].content.includes("checkout"));
+
+    const idle = await t.authed(
+      `/parent/runtime/sessions/default/workspaces/w1/spec-bundles/${made.bundle}?version=${body.version}&wait_ms=150`,
+    );
+    assert.equal(((await idle.json()) as { unchanged?: boolean }).unchanged, true);
+
+    const list = await t.authed("/parent/runtime/sessions/default/workspaces/w1/spec-bundles");
+    assert.deepEqual(((await list.json()) as { bundles: { bundle: string }[] }).bundles.map((b) => b.bundle), [
+      made.bundle,
+    ]);
+
+    const plan = await t.authed(
+      `/parent/runtime/sessions/default/agents/w1%3Ap1/spec-bundles/${made.bundle}/plan`,
+      { method: "POST", body: JSON.stringify({ prompt: "backend first" }) },
+    );
+    assert.equal(plan.status, 200);
+    assert.equal(((await plan.json()) as { file: string }).file, "plan.md");
+  } finally {
+    await teardown(t);
+  }
+});
+
+test("repo file route: reads content by path; traversal answers 400", async () => {
+  const t = await setup();
+  try {
+    const cwd = scratchRepo();
+    t.ops.index.set("default", "w1", { cwd });
+    const ok = await t.authed("/parent/runtime/sessions/default/workspaces/w1/repos/-/file?path=a.txt");
+    assert.equal(ok.status, 200);
+    assert.equal(((await ok.json()) as { content: string }).content, "one\n");
+    const bad = await t.authed("/parent/runtime/sessions/default/workspaces/w1/repos/-/file?path=..%2Fescape");
+    assert.equal(bad.status, 400);
+  } finally {
+    await teardown(t);
+  }
+});
+
 test("env routes: store, list (redacted, with source), delete; value absent everywhere", async () => {
   const t = await setup();
   try {

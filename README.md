@@ -44,13 +44,18 @@ the local machine; anything else is an enrolled child.
 | `GET /parent/{instance}/sessions` | herdr sessions on that machine |
 | `GET /parent/{instance}/sessions/{s}/agents` | agents + status (`?fresh=1` re-queries) |
 | `POST /parent/{instance}/sessions/{s}/rpc` | any herdr socket method: `{"method", "params"}` |
-| `POST /parent/{instance}/sessions/{s}/agents` | spawn a team agent: `{kind, cwd|workspace_id, label?, name?, args?}` |
+| `POST /parent/{instance}/sessions/{s}/agents` | spawn a team agent: `{kind, cwd|workspace_id, label?, name?, args?}` — `workspace_id` creates a NEW workspace sharing that cwd (herdr 0.8.0 has no verified pane-create); unused workspaces are not auto-reaped yet |
 | `GET /parent/{instance}/sessions/{s}/workspaces` | working sets: team roster + discovered repos per workspace |
 | `GET .../workspaces/{w}/repos/{r}/tree` | repo file tree (`{r}` = repo path; `-` = workspace root) |
 | `GET .../workspaces/{w}/repos/{r}/git/diff?base=REF` | branch, status, unified diff |
+| `GET .../workspaces/{w}/repos/{r}/file?path=` | raw file contents (768KB cap, containment-guarded, `.git` refused) |
 | `POST .../agents/{pane}/ask` | structured JSON answer from a TUI agent (file-drop) |
 | `POST .../agents/{pane}/model` | switch a running agent's model: `{model}` typed as the CLI's own `/model` command |
 | `POST .../agents/{pane}/slash/{command}` | type any CLI slash command into the pane (`/clear`, `/instructions`…); optional single-line `{args}` |
+| `POST .../agents/{pane}/spec-bundles` | create/continue a spec bundle (a dir of design files) and prompt the agent to draft into it: `{name\|bundle, prompt, file?}` — `file` focuses the page being viewed |
+| `POST .../agents/{pane}/spec-bundles/{b}/plan` | ask the agent to distill the bundle into `plan.md` |
+| `GET .../workspaces/{w}/spec-bundles` | list bundles + member files |
+| `GET .../workspaces/{w}/spec-bundles/{b}?version=&wait_ms=` | pull all member files with a combined version; long-poll returns the moment the agent saves |
 | `GET /parent/{instance}/models?kind=` | model catalog per CLI kind with attributes (context window etc) — builtin defaults + `[[models.catalog]]` config overrides |
 | `POST /parent/{instance}/env` | store an env var for agent spawns: `{name, value, kind?, session?}` — write-only |
 | `GET /parent/{instance}/env` | stored names + scopes + source (`manual`/`hook`) — never values |

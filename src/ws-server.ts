@@ -22,6 +22,10 @@ export interface WsDeps {
   registry: Registry;
   config: BrokerConfig;
   callInstance?: CallInstance;
+  /** client-socket keepalive interval; intermediaries (nginx etc.) cull
+   * idle sockets, so the server pings rather than every deployment tuning
+   * its proxy */
+  pingIntervalMs?: number;
 }
 
 export interface UpgradeHandle {
@@ -36,8 +40,24 @@ export function attachUpgradeHandling(server: Server, deps: WsDeps): UpgradeHand
   const enrollWss = new WebSocketServer({ noServer: true });
   const clientWss = new WebSocketServer({ noServer: true });
 
+  // Keepalive: ping every interval; a socket that missed the previous pong
+  // is dead and gets terminated instead of lingering.
+  const alive = new WeakMap<WebSocket, boolean>();
+  const pinger = setInterval(() => {
+    for (const ws of clientWss.clients) {
+      if (alive.get(ws) === false) {
+        ws.terminate();
+        continue;
+      }
+      alive.set(ws, false);
+      ws.ping();
+    }
+  }, deps.pingIntervalMs ?? 30_000);
+  pinger.unref();
+
   server.on("upgrade", (req: IncomingMessage, socket: Duplex, head: Buffer) => {
-    const path = new URL(req.url ?? "/", "http://placeholder").pathname;
+    const reqUrl = new URL(req.url ?? "/", "http://placeholder");
+    const path = reqUrl.pathname;
     if (path === "/parent/enroll") {
       const name = String(req.headers["x-herdr-broker-name"] ?? "");
       const secret = String(req.headers["x-herdr-broker-secret"] ?? "");
@@ -49,12 +69,22 @@ export function attachUpgradeHandling(server: Server, deps: WsDeps): UpgradeHand
       }
       enrollWss.handleUpgrade(req, socket, head, (ws) => acceptChild(deps, name, ws));
     } else if (path === "/parent/ws") {
-      if (!checkBearer(req.headers.authorization, deps.config.client_tokens)) {
+      // Browsers cannot set an Authorization header on WebSocket upgrades,
+      // so ?token= is accepted as an equal alternative.
+      const queryToken = reqUrl.searchParams.get("token");
+      const ok =
+        checkBearer(req.headers.authorization, deps.config.client_tokens) ||
+        (queryToken !== null && checkBearer(`Bearer ${queryToken}`, deps.config.client_tokens));
+      if (!ok) {
         socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
         socket.destroy();
         return;
       }
-      clientWss.handleUpgrade(req, socket, head, (ws) => acceptClient(deps, ws));
+      clientWss.handleUpgrade(req, socket, head, (ws) => {
+        alive.set(ws, true);
+        ws.on("pong", () => alive.set(ws, true));
+        acceptClient(deps, ws);
+      });
     } else {
       socket.write("HTTP/1.1 404 Not Found\r\n\r\n");
       socket.destroy();
@@ -63,6 +93,7 @@ export function attachUpgradeHandling(server: Server, deps: WsDeps): UpgradeHand
 
   return {
     closeAllConnections() {
+      clearInterval(pinger);
       for (const ws of enrollWss.clients) ws.terminate();
       for (const ws of clientWss.clients) ws.terminate();
     },

@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, readdirSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { EnvRegistry } from "../src/env-registry.js";
 import { BrokerError } from "../src/errors.js";
@@ -400,6 +400,281 @@ test("spawn does not retry agent.start on non-busy errors", async () => {
       (e: BrokerError) => e.code === "invalid_request",
     );
     assert.equal(starts, 1, "a real error must fail fast, not burn the retry budget");
+  } finally {
+    await t.teardown();
+  }
+});
+
+test("spec bundle drive: creates the bundle dir with a seeded overview and sends the drafting contract", async () => {
+  const t = await setup();
+  try {
+    const cwd = scratchRepo();
+    t.deps.index.set("default", "w1", { cwd });
+    t.fake.handlers.set("agent.prompt", () => ({ type: "prompted" }));
+    const out = (await runBrokerMethod(t.deps, "default", "broker.spec.drive", {
+      pane_id: "w1:p1",
+      name: "Checkout Flow",
+      prompt: "draft the checkout flow design",
+    })) as { bundle: string; dir: string; files: string[]; version: string };
+    assert.match(out.bundle, /^\d{4}-\d{2}-\d{2}-checkout-flow$/);
+    assert.equal(out.dir, `docs/superpowers/specs/${out.bundle}`);
+    assert.deepEqual(out.files, ["overview.md"]);
+    assert.ok(existsSync(join(cwd, out.dir, "overview.md")), "overview seeded on disk");
+    const prompted = t.fake.received.find((r) => r.method === "agent.prompt");
+    const text = String((prompted?.params as { text: string }).text);
+    assert.ok(text.includes(out.dir), "contract names the bundle dir");
+    assert.ok(text.includes("overview.md"), "contract names the entry file");
+    assert.ok(text.includes("draft the checkout flow design"), "contract carries the instruction");
+    assert.ok(/Open questions/.test(text), "contract tells the agent where to ask the human");
+  } finally {
+    await t.teardown();
+  }
+});
+
+test("spec bundle drive: re-driving an existing bundle never clobbers its content", async () => {
+  const t = await setup();
+  try {
+    const cwd = scratchRepo();
+    t.deps.index.set("default", "w1", { cwd });
+    t.fake.handlers.set("agent.prompt", () => ({ type: "prompted" }));
+    const first = (await runBrokerMethod(t.deps, "default", "broker.spec.drive", {
+      pane_id: "w1:p1",
+      name: "thing",
+      prompt: "start",
+    })) as { bundle: string; dir: string };
+    writeFileSync(join(cwd, first.dir, "overview.md"), "# thing\n\nreal content the agent wrote\n");
+    await runBrokerMethod(t.deps, "default", "broker.spec.drive", {
+      pane_id: "w1:p1",
+      bundle: first.bundle,
+      prompt: "answer: use OAuth",
+    });
+    assert.match(readFileSync(join(cwd, first.dir, "overview.md"), "utf8"), /real content the agent wrote/);
+  } finally {
+    await t.teardown();
+  }
+});
+
+test("spec bundle drive: names that don't slug to [a-z0-9-] are rejected", async () => {
+  const t = await setup();
+  try {
+    t.deps.index.set("default", "w1", { cwd: scratchRepo() });
+    await assert.rejects(
+      runBrokerMethod(t.deps, "default", "broker.spec.drive", {
+        pane_id: "w1:p1",
+        bundle: "../../etc/passwd",
+        prompt: "x",
+      }),
+      (e: BrokerError) => e.code === "bad_request",
+    );
+  } finally {
+    await t.teardown();
+  }
+});
+
+test("spec bundle get: returns both files with a combined version; long-poll sees live updates", async () => {
+  const t = await setup();
+  t.deps.filePollMs = 25;
+  try {
+    const cwd = scratchRepo();
+    t.deps.index.set("default", "w1", { cwd });
+    t.fake.handlers.set("agent.prompt", () => ({ type: "prompted" }));
+    const made = (await runBrokerMethod(t.deps, "default", "broker.spec.drive", {
+      pane_id: "w1:p1",
+      name: "live",
+      prompt: "go",
+    })) as { bundle: string; dir: string };
+
+    const got = (await runBrokerMethod(t.deps, "default", "broker.spec.get", {
+      workspace_id: "w1",
+      bundle: made.bundle,
+    })) as { version: string; files: Record<string, { content: string }> };
+    assert.ok(got.files["overview.md"].content.length > 0);
+
+    // unchanged long-poll: same version + wait → {unchanged}
+    const idle = (await runBrokerMethod(t.deps, "default", "broker.spec.get", {
+      workspace_id: "w1",
+      bundle: made.bundle,
+      version: got.version,
+      wait_ms: 200,
+    })) as { unchanged?: boolean };
+    assert.equal(idle.unchanged, true);
+
+    // a NEW member file lands mid-wait → the combined version moves and the
+    // long-poll returns it (adding files counts as an update, not just edits)
+    setTimeout(() => writeFileSync(join(cwd, made.dir, "api.md"), "# api\n\n## Open questions\n- pick a db?\n"), 80);
+    const fresh = (await runBrokerMethod(t.deps, "default", "broker.spec.get", {
+      workspace_id: "w1",
+      bundle: made.bundle,
+      version: got.version,
+      wait_ms: 3000,
+    })) as { version: string; files: Record<string, { content: string }> };
+    assert.notEqual(fresh.version, got.version);
+    assert.match(fresh.files["api.md"].content, /pick a db\?/);
+  } finally {
+    await t.teardown();
+  }
+});
+
+test("spec bundle get/list: unknown bundle 404s; list finds bundles on disk", async () => {
+  const t = await setup();
+  try {
+    const cwd = scratchRepo();
+    t.deps.index.set("default", "w1", { cwd });
+    t.fake.handlers.set("agent.prompt", () => ({ type: "prompted" }));
+    await assert.rejects(
+      runBrokerMethod(t.deps, "default", "broker.spec.get", { workspace_id: "w1", bundle: "2026-01-01-ghost" }),
+      (e: BrokerError) => e.code === "unknown_bundle",
+    );
+    const a = (await runBrokerMethod(t.deps, "default", "broker.spec.drive", {
+      pane_id: "w1:p1",
+      name: "alpha",
+      prompt: "x",
+    })) as { bundle: string };
+    const listed = (await runBrokerMethod(t.deps, "default", "broker.spec.list", { workspace_id: "w1" })) as {
+      bundles: { bundle: string; files: string[] }[];
+    };
+    assert.deepEqual(listed.bundles.map((b) => [b.bundle, b.files]), [[a.bundle, ["overview.md"]]]);
+  } finally {
+    await t.teardown();
+  }
+});
+
+test("spec bundle drive: an active file focuses the contract (and its questions) on that page", async () => {
+  const t = await setup();
+  try {
+    const cwd = scratchRepo();
+    t.deps.index.set("default", "w1", { cwd });
+    t.fake.handlers.set("agent.prompt", () => ({ type: "prompted" }));
+    const made = (await runBrokerMethod(t.deps, "default", "broker.spec.drive", {
+      pane_id: "w1:p1",
+      name: "focused",
+      prompt: "start",
+    })) as { bundle: string };
+    await runBrokerMethod(t.deps, "default", "broker.spec.drive", {
+      pane_id: "w1:p1",
+      bundle: made.bundle,
+      file: "api.md",
+      prompt: "add the pagination endpoints",
+    });
+    const text = String((t.fake.received.filter((r) => r.method === "agent.prompt").at(-1)?.params as { text: string }).text);
+    assert.ok(/api\.md/.test(text), "contract names the active file");
+    assert.ok(/Open questions/.test(text) && text.indexOf("api.md") < text.indexOf("Open questions"), "questions target the active page");
+    await assert.rejects(
+      runBrokerMethod(t.deps, "default", "broker.spec.drive", {
+        pane_id: "w1:p1",
+        bundle: made.bundle,
+        file: "../escape.md",
+        prompt: "x",
+      }),
+      (e: BrokerError) => e.code === "bad_request",
+    );
+  } finally {
+    await t.teardown();
+  }
+});
+
+test("spec bundle plan: prompts the agent to write plan.md from the bundle; unknown bundle 404s", async () => {
+  const t = await setup();
+  try {
+    const cwd = scratchRepo();
+    t.deps.index.set("default", "w1", { cwd });
+    t.fake.handlers.set("agent.prompt", () => ({ type: "prompted" }));
+    await assert.rejects(
+      runBrokerMethod(t.deps, "default", "broker.spec.plan", { pane_id: "w1:p1", bundle: "2026-01-01-ghost" }),
+      (e: BrokerError) => e.code === "unknown_bundle",
+    );
+    const made = (await runBrokerMethod(t.deps, "default", "broker.spec.drive", {
+      pane_id: "w1:p1",
+      name: "planned",
+      prompt: "spec it",
+    })) as { bundle: string; dir: string };
+    const out = (await runBrokerMethod(t.deps, "default", "broker.spec.plan", {
+      pane_id: "w1:p1",
+      bundle: made.bundle,
+      prompt: "sequence backend before UI",
+    })) as { bundle: string; file: string; status: string };
+    assert.equal(out.status, "prompted");
+    assert.equal(out.file, "plan.md");
+    const planPrompt = t.fake.received.filter((r) => r.method === "agent.prompt").at(-1);
+    const text = String((planPrompt?.params as { text: string }).text);
+    assert.ok(text.includes(`${made.dir}/plan.md`), "contract names the plan file inside the bundle");
+    assert.ok(/implementation plan/i.test(text), "contract asks for an implementation plan");
+    assert.ok(text.includes("sequence backend before UI"), "extra guidance rides along");
+  } finally {
+    await t.teardown();
+  }
+});
+
+test("ask: an agent that never starts working fails fast as agent_unresponsive, not a full-budget hang", async () => {
+  const t = await setup();
+  t.deps.askStartGraceMs = 120;
+  try {
+    const cwd = scratchRepo();
+    t.deps.index.set("default", "w9", { cwd });
+    t.fake.agents.push({ pane_id: "w9:p1", name: "deadone", agent: "copilot", agent_status: "idle" });
+    t.fake.handlers.set("agent.prompt", () => ({ type: "prompted" }));
+    const started = Date.now();
+    await assert.rejects(
+      runBrokerMethod(t.deps, "default", "broker.agent.ask", {
+        pane_id: "w9:p1",
+        prompt: "anyone home?",
+        timeout_ms: 30_000,
+      }),
+      (e: BrokerError) => e.code === "agent_unresponsive",
+    );
+    assert.ok(Date.now() - started < 3_000, "must fail at the start grace, not the 30s budget");
+  } finally {
+    await t.teardown();
+  }
+});
+
+test("ask: the contract demands an {\"answer\": …} envelope and the broker unwraps it", async () => {
+  const t = await setup();
+  try {
+    const cwd = scratchRepo();
+    t.deps.index.set("default", "w1", { cwd });
+    t.fake.handlers.set("agent.prompt", (p) => {
+      const text = String((p as { text: string }).text);
+      assert.ok(text.includes(`{"answer":`), "instruction specifies the envelope shape");
+      const file = extractAnswerPath(cwd, text);
+      setTimeout(() => writeFileSync(file, '{"answer":{"x":1}}'), 50);
+      return { type: "prompted" };
+    });
+    const out = (await runBrokerMethod(t.deps, "default", "broker.agent.ask", {
+      pane_id: "w1:p1",
+      prompt: "give me x",
+      timeout_ms: 5000,
+    })) as { answer: unknown };
+    assert.deepEqual(out.answer, { x: 1 }, "envelope unwrapped to the inner answer");
+  } finally {
+    await t.teardown();
+  }
+});
+
+test("repo file read: content with version-safe caps; traversal, .git, and missing paths refused", async () => {
+  const t = await setup();
+  try {
+    const cwd = scratchRepo();
+    t.deps.index.set("default", "w1", { cwd });
+    const ok = (await runBrokerMethod(t.deps, "default", "broker.repo.file", {
+      workspace_id: "w1",
+      repo: "-",
+      path: "a.txt",
+    })) as { content: string; size: number; path: string };
+    assert.equal(ok.content, "one\n");
+    assert.equal(ok.size, 4);
+    await assert.rejects(
+      runBrokerMethod(t.deps, "default", "broker.repo.file", { workspace_id: "w1", repo: "-", path: "../escape" }),
+      (e: BrokerError) => e.code === "bad_request",
+    );
+    await assert.rejects(
+      runBrokerMethod(t.deps, "default", "broker.repo.file", { workspace_id: "w1", repo: "-", path: ".git/config" }),
+      (e: BrokerError) => e.code === "bad_request",
+    );
+    await assert.rejects(
+      runBrokerMethod(t.deps, "default", "broker.repo.file", { workspace_id: "w1", repo: "-", path: "nope.txt" }),
+      (e: BrokerError) => e.code === "unknown_file",
+    );
   } finally {
     await t.teardown();
   }

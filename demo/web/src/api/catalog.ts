@@ -33,6 +33,8 @@ export interface EndpointSpec {
   pathTemplate: string;
   auth: "bearer" | "admin" | "none";
   fields: FieldSpec[];
+  /** JSON schema of the success response — surfaces in the OpenAPI doc for codegen */
+  response?: Record<string, unknown>;
   build(values: Record<string, string>, ctx: Ctx): EndpointRequest;
 }
 
@@ -61,6 +63,7 @@ export const GROUPS = [
   "Workspaces & Repos",
   "Ask",
   "Slash",
+  "Spec Bundles",
   "RPC",
   "Env Registry",
   "Models",
@@ -117,10 +120,39 @@ export const CATALOG: EndpointSpec[] = [
     group: "Sessions & Agents",
     title: "List agents",
     summary: "Agents in the session with pane ids and folded status. fresh=1 re-queries herdr instead of serving the cached snapshot.",
+    docs:
+      "status folds herdr's five states to working/blocked/idle for counts; raw_status carries the unfolded " +
+      "truth (unknown/done fold to idle, so a dead-but-listed agent is only visible there) and fresh=1 also " +
+      "returns interactive_ready/launch_pending.",
     method: "GET",
     pathTemplate: "/parent/{instance}/sessions/{session}/agents",
     auth: "bearer",
     fields: [{ key: "fresh", label: "fresh — re-query herdr", kind: "toggle" }],
+    response: {
+      type: "object",
+      properties: {
+        instance: { type: "string" },
+        session: { type: "string" },
+        online: { type: "boolean" },
+        as_of: { type: "string" },
+        agents: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              id: { type: "string" },
+              title: { type: "string" },
+              status: { type: "string", enum: ["working", "blocked", "idle"] },
+              raw_status: { type: "string" },
+              interactive_ready: { type: "boolean" },
+              launch_pending: { type: "boolean" },
+            },
+            required: ["id", "title", "status"],
+          },
+        },
+      },
+      required: ["instance", "session", "agents"],
+    },
     build: (v, ctx) => ({
       method: "GET",
       path: `${sess(ctx)}/agents`,
@@ -134,9 +166,22 @@ export const CATALOG: EndpointSpec[] = [
     title: "Spawn agent",
     summary: "Create a workspace pane and start a coding agent in it. Mode A: a new working set from cwd. Mode B: grow an existing workspace's team.",
     docs:
-      "Exactly one of cwd / workspace_id is required. Env-registry values scoped to the agent kind are exported " +
-      "into the pane shell before agent.start, so the CLI starts authenticated. On agent_pane_busy (a cold pane " +
-      "whose shell is still booting) the broker retries the same pane internally.",
+      "Exactly one of cwd / workspace_id is required. NOTE: workspace_id grows the team by creating a NEW " +
+      "workspace sharing that cwd (herdr 0.8.0 has no verified pane-create) — it does not add a pane to the " +
+      "existing workspace, and unused workspaces are not auto-reaped yet. Env-registry values scoped to the " +
+      "agent kind are exported into the pane shell before agent.start, so the CLI starts authenticated. On " +
+      "agent_pane_busy (a cold pane whose shell is still booting) the broker retries the same pane internally. " +
+      "Response: agent is a STRING (the agent's name); status is top-level.",
+    response: {
+      type: "object",
+      properties: {
+        workspace_id: { type: "string" },
+        pane_id: { type: "string" },
+        agent: { type: "string", description: "the agent's name — a string, not an object" },
+        status: { type: "string", enum: ["working", "blocked", "idle"] },
+      },
+      required: ["workspace_id", "pane_id", "agent", "status"],
+    },
     method: "POST",
     pathTemplate: "/parent/{instance}/sessions/{session}/agents",
     auth: "bearer",
@@ -213,13 +258,59 @@ export const CATALOG: EndpointSpec[] = [
     }),
   },
   {
+    id: "repo-file",
+    group: "Workspaces & Repos",
+    title: "Repo file contents",
+    summary: "Raw file contents by path — the piece tree/diff can't serve, so IDE-like UIs can open unchanged files too.",
+    docs: "Size-capped at 768KB with the same containment guards as the rest of the API; .git internals are refused; binary files return {binary: true} without content.",
+    method: "GET",
+    pathTemplate: "/parent/{instance}/sessions/{session}/workspaces/{workspace_id}/repos/{repo}/file",
+    auth: "bearer",
+    fields: [
+      { key: "workspace_id", label: "workspace_id", kind: "text", required: true, placeholder: "w1" },
+      { key: "repo", label: "repo", kind: "text", required: true, placeholder: "-" },
+      { key: "path", label: "path", kind: "text", required: true, placeholder: "src/index.ts" },
+    ],
+    response: {
+      type: "object",
+      properties: {
+        workspace_id: { type: "string" },
+        repo: { type: "string" },
+        path: { type: "string" },
+        size: { type: "number" },
+        content: { type: "string" },
+        truncated: { type: "boolean" },
+        binary: { type: "boolean" },
+      },
+      required: ["workspace_id", "repo", "path", "size", "content"],
+    },
+    build: (v, ctx) => ({
+      method: "GET",
+      path: `${sess(ctx)}/workspaces/${enc(need(v, "workspace_id"))}/repos/${enc(need(v, "repo"))}/file`,
+      auth: "bearer",
+      query: { path: need(v, "path") },
+    }),
+  },
+  {
     id: "ask",
     group: "Ask",
     title: "Ask (structured answer)",
     summary: "Prompt a TUI agent and get a JSON answer back through a file-drop handshake — never scraped off the terminal.",
     docs:
-      "The broker appends write-your-answer-to-.herdr/answers/<id>.json instructions to the prompt, then polls the " +
-      "file and the agent's status. Oversize answers are truncated at 768KB; unparseable ones return raw with parse_error.",
+      "The broker appends write-your-answer-to-.herdr/answers/<id>.json instructions to the prompt (the file must " +
+      'be {"answer": <payload>} — the broker unwraps the envelope, so the response shape is deterministic), then ' +
+      "polls the file and the agent's status. An agent that never starts working fails fast as agent_unresponsive " +
+      "instead of hanging the full budget. Oversize answers truncate at 768KB; unparseable ones return raw with parse_error.",
+    response: {
+      type: "object",
+      properties: {
+        answer: { description: "the agent's JSON payload, unwrapped from the envelope" },
+        raw: { type: "string" },
+        truncated: { type: "boolean" },
+        parse_error: { type: "boolean" },
+      },
+      required: ["answer"],
+    },
     method: "POST",
     pathTemplate: "/parent/{instance}/sessions/{session}/agents/{pane_id}/ask",
     auth: "bearer",
@@ -258,6 +349,98 @@ export const CATALOG: EndpointSpec[] = [
       auth: "bearer",
       body: v.args?.trim() ? { args: v.args.trim() } : {},
     }),
+  },
+  {
+    id: "spec-drive",
+    group: "Spec Bundles",
+    title: "Create / drive spec bundle",
+    summary: "Create a bundle (a directory of design files the agent maintains) and prompt the agent to draft into it — or continue an existing one.",
+    docs:
+      "A bundle lives at docs/superpowers/specs/<YYYY-MM-DD-name>/ with overview.md seeded as the entry point; " +
+      "the agent adds files as the design needs them (api.md, data-model.md, diagrams). Pass 'file' to target " +
+      "the page you're viewing — the agent focuses there and puts its '## Open questions' in that file. Answer " +
+      "questions by driving again with the same bundle id.",
+    method: "POST",
+    pathTemplate: "/parent/{instance}/sessions/{session}/agents/{pane_id}/spec-bundles",
+    auth: "bearer",
+    fields: [
+      { key: "pane_id", label: "pane_id", kind: "text", required: true, placeholder: "w1:p1" },
+      { key: "name", label: "name (new bundle)", kind: "text", placeholder: "checkout-flow" },
+      { key: "bundle", label: "bundle id (continue)", kind: "text", placeholder: "2026-08-20-checkout-flow" },
+      { key: "prompt", label: "prompt", kind: "text", required: true, placeholder: "draft the checkout flow design" },
+      { key: "file", label: "active file (focus)", kind: "text", placeholder: "api.md" },
+    ],
+    build: (v, ctx) => {
+      const body: Record<string, unknown> = { prompt: need(v, "prompt") };
+      if (v.bundle?.trim()) body.bundle = v.bundle.trim();
+      else body.name = need(v, "name");
+      if (v.file?.trim()) body.file = v.file.trim();
+      return { method: "POST", path: `${sess(ctx)}/agents/${enc(need(v, "pane_id"))}/spec-bundles`, auth: "bearer", body };
+    },
+  },
+  {
+    id: "spec-plan",
+    group: "Spec Bundles",
+    title: "Request implementation plan",
+    summary: "Ask the agent to distill the bundle's design files into plan.md inside the same bundle.",
+    method: "POST",
+    pathTemplate: "/parent/{instance}/sessions/{session}/agents/{pane_id}/spec-bundles/{bundle}/plan",
+    auth: "bearer",
+    fields: [
+      { key: "pane_id", label: "pane_id", kind: "text", required: true, placeholder: "w1:p1" },
+      { key: "bundle", label: "bundle id", kind: "text", required: true, placeholder: "2026-08-20-checkout-flow" },
+      { key: "prompt", label: "extra guidance", kind: "text", placeholder: "sequence backend before UI" },
+    ],
+    build: (v, ctx) => ({
+      method: "POST",
+      path: `${sess(ctx)}/agents/${enc(need(v, "pane_id"))}/spec-bundles/${enc(need(v, "bundle"))}/plan`,
+      auth: "bearer",
+      body: v.prompt?.trim() ? { prompt: v.prompt.trim() } : {},
+    }),
+  },
+  {
+    id: "spec-list",
+    group: "Spec Bundles",
+    title: "List spec bundles",
+    summary: "Bundles found in the workspace with their member files.",
+    method: "GET",
+    pathTemplate: "/parent/{instance}/sessions/{session}/workspaces/{workspace_id}/spec-bundles",
+    auth: "bearer",
+    fields: [{ key: "workspace_id", label: "workspace_id", kind: "text", required: true, placeholder: "w1" }],
+    build: (v, ctx) => ({
+      method: "GET",
+      path: `${sess(ctx)}/workspaces/${enc(need(v, "workspace_id"))}/spec-bundles`,
+      auth: "bearer",
+    }),
+  },
+  {
+    id: "spec-get",
+    group: "Spec Bundles",
+    title: "Pull spec bundle (long-poll)",
+    summary: "All member files with a combined version hash. Pass your last version + wait_ms to long-poll: the reply arrives the moment the agent saves — edits and new files alike.",
+    docs:
+      "Long-poll instead of push so child instances stream through the parent↔child tunnel unchanged. Loop " +
+      "GET → render → GET with the returned version to follow the bundle live.",
+    method: "GET",
+    pathTemplate: "/parent/{instance}/sessions/{session}/workspaces/{workspace_id}/spec-bundles/{bundle}",
+    auth: "bearer",
+    fields: [
+      { key: "workspace_id", label: "workspace_id", kind: "text", required: true, placeholder: "w1" },
+      { key: "bundle", label: "bundle id", kind: "text", required: true, placeholder: "2026-08-20-checkout-flow" },
+      { key: "version", label: "last seen version", kind: "text", placeholder: "sha256…" },
+      { key: "wait_ms", label: "wait_ms (long-poll)", kind: "number", placeholder: "25000" },
+    ],
+    build: (v, ctx) => {
+      const query: Record<string, string> = {};
+      if (v.version?.trim()) query.version = v.version.trim();
+      if (v.wait_ms?.trim()) query.wait_ms = v.wait_ms.trim();
+      return {
+        method: "GET",
+        path: `${sess(ctx)}/workspaces/${enc(need(v, "workspace_id"))}/spec-bundles/${enc(need(v, "bundle"))}`,
+        auth: "bearer",
+        ...(Object.keys(query).length > 0 ? { query } : {}),
+      };
+    },
   },
   {
     id: "rpc",

@@ -66,6 +66,18 @@ describe("buildOpenApi", () => {
   test("every catalog entry appears exactly once as an operation", () => {
     const ids = Object.values(paths).flatMap((ops) => Object.values(ops).map((op) => op.operationId));
     expect(new Set(ids).size).toBe(ids.length);
-    expect(ids).toHaveLength(22);
+    expect(ids).toHaveLength(27);
+  });
+
+  test("endpoints with declared response schemas surface them for codegen", () => {
+    const spawn = paths["/parent/{instance}/sessions/{session}/agents"].post as Op & {
+      responses: Record<string, { content?: { "application/json": { schema: { properties: Record<string, { type?: string }> } } } }>;
+    };
+    const schema = spawn.responses["201"].content?.["application/json"].schema;
+    expect(schema).toBeDefined();
+    expect(schema!.properties.agent.type).toBe("string");
+    expect(Object.keys(schema!.properties)).toEqual(
+      expect.arrayContaining(["workspace_id", "pane_id", "agent", "status"]),
+    );
   });
 });

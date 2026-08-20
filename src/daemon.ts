@@ -26,6 +26,8 @@ export interface DaemonOptions {
   localEndpoints?: HerdrEndpoint[];
   herdrVersion?: string;
   projectionDir?: string;
+  /** client-WS keepalive ping interval (test override) */
+  wsPingMs?: number;
 }
 
 export interface DaemonHandle {
@@ -129,6 +131,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<DaemonHandle | u
       registry,
       config,
       callInstance: makeCallInstance({ registry, local, hub, remoteDeny: config.policy.remote_deny, ops }),
+      pingIntervalMs: opts.wsPingMs,
     });
     await new Promise<void>((resolve, reject) => {
       server.once("error", reject);

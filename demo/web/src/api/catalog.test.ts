@@ -22,8 +22,13 @@ test("every broker route in the README is present exactly once", () => {
     "workspaces",
     "tree",
     "diff",
+    "repo-file",
     "ask",
     "slash",
+    "spec-drive",
+    "spec-plan",
+    "spec-list",
+    "spec-get",
     "rpc",
     "env-set",
     "env-list",
@@ -89,6 +94,13 @@ test("diff: base ref rides the query string only when given", () => {
   expect(spec("diff").build({ workspace_id: "w1", repo: "-" }, ctx).query).toBeUndefined();
 });
 
+test("repo-file: path rides the query, repo and workspace are path segments", () => {
+  const req = spec("repo-file").build({ workspace_id: "w1", repo: "pkg/app", path: "src/index.ts" }, ctx);
+  expect(req.path).toBe("/parent/runtime/sessions/default/workspaces/w1/repos/pkg%2Fapp/file");
+  expect(req.query).toEqual({ path: "src/index.ts" });
+  expect(() => spec("repo-file").build({ workspace_id: "w1", repo: "-" }, ctx)).toThrow(/path/);
+});
+
 test("ask: pane id is encoded and prompt is required", () => {
   const req = spec("ask").build({ pane_id: "w1:p1", prompt: "list files", timeout_ms: "60000" }, ctx);
   expect(req.path).toBe("/parent/runtime/sessions/default/agents/w1%3Ap1/ask");
@@ -103,6 +115,30 @@ test("slash: command joins the path, args ride the body only when set", () => {
   expect(req.body).toEqual({ args: "keep it short" });
   expect(spec("slash").build({ pane_id: "w1:p1", command: "clear" }, ctx).body).toEqual({});
   expect(() => spec("slash").build({ pane_id: "w1:p1" }, ctx)).toThrow(/command/);
+});
+
+test("spec bundle specs: drive body, plan path, get long-poll query", () => {
+  const drive = spec("spec-drive").build(
+    { pane_id: "w1:p1", name: "checkout", prompt: "draft it", file: "api.md" },
+    ctx,
+  );
+  expect(drive.path).toBe("/parent/runtime/sessions/default/agents/w1%3Ap1/spec-bundles");
+  expect(drive.body).toEqual({ name: "checkout", prompt: "draft it", file: "api.md" });
+
+  const plan = spec("spec-plan").build({ pane_id: "w1:p1", bundle: "2026-08-20-checkout" }, ctx);
+  expect(plan.path).toBe("/parent/runtime/sessions/default/agents/w1%3Ap1/spec-bundles/2026-08-20-checkout/plan");
+
+  const get = spec("spec-get").build(
+    { workspace_id: "w1", bundle: "2026-08-20-checkout", version: "abc", wait_ms: "25000" },
+    ctx,
+  );
+  expect(get.path).toBe("/parent/runtime/sessions/default/workspaces/w1/spec-bundles/2026-08-20-checkout");
+  expect(get.query).toEqual({ version: "abc", wait_ms: "25000" });
+  expect(spec("spec-get").build({ workspace_id: "w1", bundle: "b" }, ctx).query).toBeUndefined();
+
+  expect(spec("spec-list").build({ workspace_id: "w1" }, ctx).path).toBe(
+    "/parent/runtime/sessions/default/workspaces/w1/spec-bundles",
+  );
 });
 
 test("rpc: params must be valid JSON", () => {

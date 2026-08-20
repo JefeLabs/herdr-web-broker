@@ -14,6 +14,11 @@ export interface AgentInfo {
   id: string;
   title: string;
   status: AgentStatus;
+  /** herdr's unfolded five-valued status — "unknown"/"done" fold to idle in
+   * `status`, so this is where a dead-but-listed agent stays visible */
+  raw_status?: string;
+  interactive_ready?: boolean;
+  launch_pending?: boolean;
 }
 
 export interface SessionSnapshot {

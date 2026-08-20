@@ -114,8 +114,41 @@ const setStatus = (name, status) => {
 };
 
 fake.handlers.set("agent.prompt", (p) => {
-  const m = /\.herdr\/answers\/([a-f0-9]{16})\.json \(relative to (.+?)\)\./.exec(String(p?.text ?? ""));
+  const text = String(p?.text ?? "");
   const target = String(p?.target ?? "agent");
+
+  // spec-bundle drafting: the sim "agent" writes design files over a few
+  // seconds so the long-poll GET has live updates to return
+  const spec = /spec bundle at (docs\/superpowers\/specs\/[0-9a-z-]+)\/ \(relative to (.+?)\)/.exec(text);
+  if (spec) {
+    const dir = join(spec[2], spec[1]);
+    setStatus(target, "working");
+    const plan = /implementation plan to .*plan\.md/.test(text);
+    setTimeout(() => {
+      if (plan) {
+        writeFileSync(
+          join(dir, "plan.md"),
+          "# plan\n\n1. Build the API layer (api.md) — tests first.\n2. Wire the data model.\n3. Demo + docs.\n",
+        );
+      } else {
+        writeFileSync(
+          join(dir, "overview.md"),
+          "# overview\n\nThe simulated agent is drafting this bundle.\n\n## Goals\n- prove the long-poll\n\n## Open questions\n- Which auth flow do you prefer?\n",
+        );
+      }
+    }, 900);
+    if (!plan) {
+      setTimeout(() => {
+        writeFileSync(join(dir, "api.md"), "# api\n\n`GET /things` — list things.\n`POST /things` — make one.\n");
+        setStatus(target, "idle");
+      }, 2200);
+    } else {
+      setTimeout(() => setStatus(target, "idle"), 1200);
+    }
+    return { type: "prompted" };
+  }
+
+  const m = /\.herdr\/answers\/([a-f0-9]{16})\.json \(relative to (.+?)\)\./.exec(text);
   setStatus(target, "working");
   if (m) {
     const file = join(m[2], ".herdr", "answers", `${m[1]}.json`);
