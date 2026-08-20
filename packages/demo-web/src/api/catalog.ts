@@ -61,6 +61,7 @@ export const GROUPS = [
   "Sessions & Agents",
   "Spawn",
   "Workspaces & Repos",
+  "Git",
   "Ask",
   "Slash",
   "Spec Bundles",
@@ -289,6 +290,107 @@ export const CATALOG: EndpointSpec[] = [
       path: `${sess(ctx)}/workspaces/${enc(need(v, "workspace_id"))}/repos/${enc(need(v, "repo"))}/file`,
       auth: "bearer",
       query: { path: need(v, "path") },
+    }),
+  },
+  {
+    id: "git-commit",
+    group: "Git",
+    title: "Commit",
+    summary: "Stage everything and commit — the 'keep it' step of the vibe-coding loop. A clean tree answers {committed:false, clean:true} instead of erroring.",
+    docs:
+      "add_all:false commits only what's already staged. Identity: body author wins, else repo/global config, " +
+      "else a herdr-web-broker fallback so commits never fail on missing identity.",
+    method: "POST",
+    pathTemplate: "/parent/{instance}/sessions/{session}/workspaces/{workspace_id}/repos/{repo}/git/commit",
+    auth: "bearer",
+    fields: [
+      { key: "workspace_id", label: "workspace_id", kind: "text", required: true, placeholder: "w1" },
+      { key: "repo", label: "repo", kind: "text", required: true, placeholder: "-" },
+      { key: "message", label: "message", kind: "text", required: true, placeholder: "vibe: agent work" },
+    ],
+    response: {
+      type: "object",
+      properties: {
+        committed: { type: "boolean" },
+        clean: { type: "boolean" },
+        commit: { type: "string" },
+        branch: { type: "string" },
+        subject: { type: "string" },
+      },
+      required: ["committed"],
+    },
+    build: (v, ctx) => ({
+      method: "POST",
+      path: `${sess(ctx)}/workspaces/${enc(need(v, "workspace_id"))}/repos/${enc(need(v, "repo"))}/git/commit`,
+      auth: "bearer",
+      body: { message: need(v, "message") },
+    }),
+  },
+  {
+    id: "git-log",
+    group: "Git",
+    title: "Log",
+    summary: "Recent commits, newest first — {sha, subject, author, when}.",
+    method: "GET",
+    pathTemplate: "/parent/{instance}/sessions/{session}/workspaces/{workspace_id}/repos/{repo}/git/log",
+    auth: "bearer",
+    fields: [
+      { key: "workspace_id", label: "workspace_id", kind: "text", required: true, placeholder: "w1" },
+      { key: "repo", label: "repo", kind: "text", required: true, placeholder: "-" },
+      { key: "limit", label: "limit", kind: "number", placeholder: "20" },
+    ],
+    build: (v, ctx) => ({
+      method: "GET",
+      path: `${sess(ctx)}/workspaces/${enc(need(v, "workspace_id"))}/repos/${enc(need(v, "repo"))}/git/log`,
+      auth: "bearer",
+      ...(v.limit?.trim() ? { query: { limit: v.limit.trim() } } : {}),
+    }),
+  },
+  {
+    id: "git-push",
+    group: "Git",
+    title: "Push",
+    summary: "Push the branch (defaults: origin, current branch). Credential and network failures surface git's own stderr as git_error.",
+    method: "POST",
+    pathTemplate: "/parent/{instance}/sessions/{session}/workspaces/{workspace_id}/repos/{repo}/git/push",
+    auth: "bearer",
+    fields: [
+      { key: "workspace_id", label: "workspace_id", kind: "text", required: true, placeholder: "w1" },
+      { key: "repo", label: "repo", kind: "text", required: true, placeholder: "-" },
+      { key: "remote", label: "remote", kind: "text", placeholder: "origin" },
+      { key: "branch", label: "branch", kind: "text", placeholder: "current branch" },
+    ],
+    build: (v, ctx) => {
+      const body: Record<string, unknown> = {};
+      if (v.remote?.trim()) body.remote = v.remote.trim();
+      if (v.branch?.trim()) body.branch = v.branch.trim();
+      return {
+        method: "POST",
+        path: `${sess(ctx)}/workspaces/${enc(need(v, "workspace_id"))}/repos/${enc(need(v, "repo"))}/git/push`,
+        auth: "bearer",
+        body,
+      };
+    },
+  },
+  {
+    id: "git-checkout",
+    group: "Git",
+    title: "Checkout",
+    summary: "Switch to a branch or ref; create:true makes the branch first.",
+    method: "POST",
+    pathTemplate: "/parent/{instance}/sessions/{session}/workspaces/{workspace_id}/repos/{repo}/git/checkout",
+    auth: "bearer",
+    fields: [
+      { key: "workspace_id", label: "workspace_id", kind: "text", required: true, placeholder: "w1" },
+      { key: "repo", label: "repo", kind: "text", required: true, placeholder: "-" },
+      { key: "ref", label: "ref", kind: "text", required: true, placeholder: "feat/vibe" },
+      { key: "create", label: "create branch", kind: "toggle" },
+    ],
+    build: (v, ctx) => ({
+      method: "POST",
+      path: `${sess(ctx)}/workspaces/${enc(need(v, "workspace_id"))}/repos/${enc(need(v, "repo"))}/git/checkout`,
+      auth: "bearer",
+      body: { ref: need(v, "ref"), ...(v.create === "1" ? { create: true } : {}) },
     }),
   },
   {

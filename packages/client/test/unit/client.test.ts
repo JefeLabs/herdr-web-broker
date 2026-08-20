@@ -58,6 +58,23 @@ describe("BrokerClient", () => {
     expect(calls[1].url).toBe("/parent/runtime/sessions/default/workspaces/w1/repos/-/file?path=notes.md");
   });
 
+  test("git verbs: commit/log/push/checkout hit their routes with the right shapes", async () => {
+    const { calls, fetchFn } = fake(200, '{"committed":true,"commit":"abc","branch":"main"}');
+    const repo = new BrokerClient({ origin: "", token: "t", fetchFn }).instance("runtime").session("default").repo("w1", ".");
+    await repo.commit({ message: "vibe: keep it" });
+    await repo.log(5);
+    await repo.push();
+    await repo.checkout("feat/x", { create: true });
+    expect(calls.map((c) => c.url)).toEqual([
+      "/parent/runtime/sessions/default/workspaces/w1/repos/-/git/commit",
+      "/parent/runtime/sessions/default/workspaces/w1/repos/-/git/log?limit=5",
+      "/parent/runtime/sessions/default/workspaces/w1/repos/-/git/push",
+      "/parent/runtime/sessions/default/workspaces/w1/repos/-/git/checkout",
+    ]);
+    expect(JSON.parse(String(calls[0].init.body))).toEqual({ message: "vibe: keep it" });
+    expect(JSON.parse(String(calls[3].init.body))).toEqual({ ref: "feat/x", create: true });
+  });
+
   test("setToken applies to subsequent calls", async () => {
     const { calls, fetchFn } = fake(200, "{}");
     const broker = new BrokerClient({ origin: "", token: "old", fetchFn });

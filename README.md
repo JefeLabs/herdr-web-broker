@@ -49,6 +49,10 @@ the local machine; anything else is an enrolled child.
 | `GET .../workspaces/{w}/repos/{r}/tree` | repo file tree (`{r}` = repo path; `-` = workspace root) |
 | `GET .../workspaces/{w}/repos/{r}/git/diff?base=REF` | branch, status, unified diff |
 | `GET .../workspaces/{w}/repos/{r}/file?path=` | raw file contents (768KB cap, containment-guarded, `.git` refused) |
+| `POST .../repos/{r}/git/commit` | stage + commit: `{message, add_all?, author?}` — clean tree answers `{committed:false, clean:true}` |
+| `GET .../repos/{r}/git/log?limit=` | recent commits: `{sha, subject, author, when}` |
+| `POST .../repos/{r}/git/push` | push (default origin/current branch); failures carry git stderr |
+| `POST .../repos/{r}/git/checkout` | switch or create a branch: `{ref, create?}` |
 | `POST .../agents/{pane}/ask` | structured JSON answer from a TUI agent (file-drop) |
 | `POST .../agents/{pane}/prompt` | fire-and-forget steering: `{text}` to the same agent — spawn once, keep prompting the pane |
 | `POST .../agents/{pane}/model` | switch a running agent's model: `{model}` typed as the CLI's own `/model` command |

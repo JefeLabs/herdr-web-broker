@@ -15,7 +15,7 @@ import { createHttpHandler } from "../src/http.js";
 import { WorkspaceIndex } from "../src/state.js";
 import type { OpsDeps } from "../src/workspace-ops.js";
 import { FakeHerdr } from "./fake-herdr.js";
-import { scratchRepo, tmpDir } from "./util.js";
+import { scratchRepo, sh, tmpDir } from "./util.js";
 
 async function setup() {
   const fake = new FakeHerdr(join(tmpDir(), "h.sock"));
@@ -473,6 +473,53 @@ test("repo file route: reads content by path; traversal answers 400", async () =
     assert.equal(ok.status, 200);
     assert.equal(((await ok.json()) as { content: string }).content, "one\n");
     const bad = await t.authed("/parent/runtime/sessions/default/workspaces/w1/repos/-/file?path=..%2Fescape");
+    assert.equal(bad.status, 400);
+  } finally {
+    await teardown(t);
+  }
+});
+
+test("git routes: commit → log → checkout → push against a real repo with a bare remote", async () => {
+  const t = await setup();
+  try {
+    const cwd = scratchRepo();
+    const bare = tmpDir();
+    sh(bare, ["init", "-q", "--bare"]);
+    sh(cwd, ["remote", "add", "origin", bare]);
+    t.ops.index.set("default", "w1", { cwd });
+    writeFileSync(join(cwd, "vibe.txt"), "made by an agent\n");
+
+    const commit = await t.authed("/parent/runtime/sessions/default/workspaces/w1/repos/-/git/commit", {
+      method: "POST",
+      body: JSON.stringify({ message: "vibe: agent work" }),
+    });
+    assert.equal(commit.status, 200);
+    const made = (await commit.json()) as { committed: boolean; commit: string; branch: string };
+    assert.equal(made.committed, true);
+    assert.equal(made.branch, "main");
+
+    const log = await t.authed("/parent/runtime/sessions/default/workspaces/w1/repos/-/git/log?limit=5");
+    const commits = ((await log.json()) as { commits: { subject: string }[] }).commits;
+    assert.equal(commits[0].subject, "vibe: agent work");
+
+    const co = await t.authed("/parent/runtime/sessions/default/workspaces/w1/repos/-/git/checkout", {
+      method: "POST",
+      body: JSON.stringify({ ref: "feat/vibe", create: true }),
+    });
+    assert.deepEqual(await co.json(), { workspace_id: "w1", repo: "-", branch: "feat/vibe" });
+
+    const push = await t.authed("/parent/runtime/sessions/default/workspaces/w1/repos/-/git/push", {
+      method: "POST",
+      body: JSON.stringify({}),
+    });
+    const pushed = (await push.json()) as { pushed: boolean; branch: string };
+    assert.equal(pushed.pushed, true);
+    assert.equal(pushed.branch, "feat/vibe");
+
+    const bad = await t.authed("/parent/runtime/sessions/default/workspaces/w1/repos/-/git/commit", {
+      method: "POST",
+      body: JSON.stringify({ message: "   " }),
+    });
     assert.equal(bad.status, 400);
   } finally {
     await teardown(t);

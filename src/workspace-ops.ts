@@ -4,7 +4,17 @@ import { isAbsolute, join, sep } from "node:path";
 import type { EnvRegistry } from "./env-registry.js";
 import { BrokerError } from "./errors.js";
 import type { ModelRegistry } from "./model-registry.js";
-import { DIFF_CAP_BYTES, discoverRepos, repoDiff, repoTree, resolveRepo } from "./git-exec.js";
+import {
+  DIFF_CAP_BYTES,
+  discoverRepos,
+  repoCheckout,
+  repoCommit,
+  repoDiff,
+  repoLog,
+  repoPush,
+  repoTree,
+  resolveRepo,
+} from "./git-exec.js";
 import type { LocalHerdr } from "./local-attach.js";
 import type { Registry } from "./registry.js";
 import type { WorkspaceIndex } from "./state.js";
@@ -94,6 +104,48 @@ export async function runBrokerMethod(
     }
     case "broker.repo.file":
       return repoFile(deps, session, p);
+    case "broker.repo.commit": {
+      const workspaceId = str(p.workspace_id, "workspace_id");
+      const repo = str(p.repo, "repo");
+      const cwd = await resolveCwd(deps, session, workspaceId);
+      const author =
+        p.author && typeof p.author === "object"
+          ? { name: str((p.author as Record<string, unknown>).name, "author.name"), email: str((p.author as Record<string, unknown>).email, "author.email") }
+          : undefined;
+      const result = await repoCommit(resolveRepo(cwd, repo), {
+        message: str(p.message, "message"),
+        addAll: p.add_all === false ? false : true,
+        ...(author ? { author } : {}),
+      });
+      return { workspace_id: workspaceId, repo, ...result };
+    }
+    case "broker.repo.log": {
+      const workspaceId = str(p.workspace_id, "workspace_id");
+      const repo = str(p.repo, "repo");
+      const cwd = await resolveCwd(deps, session, workspaceId);
+      const limit = typeof p.limit === "number" ? p.limit : 20;
+      return { workspace_id: workspaceId, repo, commits: await repoLog(resolveRepo(cwd, repo), limit) };
+    }
+    case "broker.repo.push": {
+      const workspaceId = str(p.workspace_id, "workspace_id");
+      const repo = str(p.repo, "repo");
+      const cwd = await resolveCwd(deps, session, workspaceId);
+      const result = await repoPush(resolveRepo(cwd, repo), {
+        ...(typeof p.remote === "string" ? { remote: p.remote } : {}),
+        ...(typeof p.branch === "string" ? { branch: p.branch } : {}),
+      });
+      return { workspace_id: workspaceId, repo, ...result };
+    }
+    case "broker.repo.checkout": {
+      const workspaceId = str(p.workspace_id, "workspace_id");
+      const repo = str(p.repo, "repo");
+      const cwd = await resolveCwd(deps, session, workspaceId);
+      const result = await repoCheckout(resolveRepo(cwd, repo), {
+        ref: str(p.ref, "ref"),
+        ...(p.create === true ? { create: true } : {}),
+      });
+      return { workspace_id: workspaceId, repo, ...result };
+    }
     case "broker.agent.spawn":
       return spawn(deps, session, p);
     case "broker.agent.ask":

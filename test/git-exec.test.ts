@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdirSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { BrokerError } from "../src/errors.js";
-import { discoverRepos, foldTree, git, repoDiff, repoTree, resolveRepo, validateRef } from "../src/git-exec.js";
+import { discoverRepos, foldTree, git, repoCheckout, repoCommit, repoDiff, repoLog, repoPush, repoTree, resolveRepo, validateRef } from "../src/git-exec.js";
 import { scratchRepo, sh, tmpDir } from "./util.js";
 
 test("git() returns stdout and maps failures to git_error", async () => {
@@ -142,4 +142,73 @@ test("repoDiff: oversized diffs truncate under the cap with full_bytes reported"
   assert.equal(d.truncated, true);
   assert.ok(Buffer.byteLength(d.diff) <= 768 * 1024);
   assert.ok((d.full_bytes ?? 0) > 1_000_000);
+});
+
+test("repoCommit stages and commits; a clean tree reports clean instead of erroring", async () => {
+  const repo = scratchRepo();
+  writeFileSync(join(repo, "new.txt"), "hi\n");
+  const out = await repoCommit(repo, { message: "vibe: add new.txt" });
+  assert.equal(out.committed, true);
+  assert.match(String(out.commit), /^[0-9a-f]{7,40}$/);
+  assert.equal(out.subject, "vibe: add new.txt");
+  assert.equal(out.branch, "main");
+  const again = await repoCommit(repo, { message: "nothing here" });
+  assert.deepEqual(again, { committed: false, clean: true });
+});
+
+test("repoCommit: explicit author wins; identity falls back when no config exists anywhere", async () => {
+  const repo = scratchRepo();
+  writeFileSync(join(repo, "a.txt"), "x\n");
+  const custom = await repoCommit(repo, { message: "m", author: { name: "Vibe", email: "v@x.dev" } });
+  assert.equal(custom.committed, true);
+  assert.match(await git(repo, ["log", "-1", "--format=%an <%ae>"]), /Vibe <v@x\.dev>/);
+
+  // hide global/system config so the fallback branch is deterministic
+  const bare = tmpDir();
+  sh(bare, ["init", "-q", "-b", "main"]);
+  writeFileSync(join(bare, "b.txt"), "y\n");
+  const saved = { g: process.env.GIT_CONFIG_GLOBAL, s: process.env.GIT_CONFIG_SYSTEM };
+  process.env.GIT_CONFIG_GLOBAL = "/dev/null";
+  process.env.GIT_CONFIG_SYSTEM = "/dev/null";
+  try {
+    const out = await repoCommit(bare, { message: "fallback" });
+    assert.equal(out.committed, true);
+    assert.match(await git(bare, ["log", "-1", "--format=%an <%ae>"]), /herdr-web-broker <broker@herdr\.local>/);
+  } finally {
+    if (saved.g === undefined) delete process.env.GIT_CONFIG_GLOBAL;
+    else process.env.GIT_CONFIG_GLOBAL = saved.g;
+    if (saved.s === undefined) delete process.env.GIT_CONFIG_SYSTEM;
+    else process.env.GIT_CONFIG_SYSTEM = saved.s;
+  }
+});
+
+test("repoLog returns commits newest-first with subject/author/when", async () => {
+  const repo = scratchRepo();
+  writeFileSync(join(repo, "second.txt"), "2\n");
+  await repoCommit(repo, { message: "second commit" });
+  const log = await repoLog(repo, 10);
+  assert.equal(log.length, 2);
+  assert.equal(log[0].subject, "second commit");
+  assert.equal(log[1].subject, "init");
+  assert.ok(log[0].sha && log[0].author && log[0].when);
+});
+
+test("repoPush pushes to a local bare remote; a missing remote is git_error", async () => {
+  const repo = scratchRepo();
+  const bare = tmpDir();
+  sh(bare, ["init", "-q", "--bare"]);
+  sh(repo, ["remote", "add", "origin", bare]);
+  const out = await repoPush(repo, {});
+  assert.equal(out.pushed, true);
+  assert.equal(out.remote, "origin");
+  assert.equal(out.branch, "main");
+  assert.equal((await git(bare, ["rev-parse", "main"])).trim(), (await git(repo, ["rev-parse", "main"])).trim());
+  await assert.rejects(repoPush(repo, { remote: "ghost" }), (e: BrokerError) => e.code === "git_error");
+});
+
+test("repoCheckout switches and creates branches; option smuggling is rejected", async () => {
+  const repo = scratchRepo();
+  assert.deepEqual(await repoCheckout(repo, { ref: "feat/x", create: true }), { branch: "feat/x" });
+  assert.deepEqual(await repoCheckout(repo, { ref: "main" }), { branch: "main" });
+  await assert.rejects(repoCheckout(repo, { ref: "-rf" }), (e: BrokerError) => e.code === "bad_request");
 });

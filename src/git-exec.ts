@@ -10,12 +10,12 @@ export const TREE_CAP_ENTRIES = 20_000;
 
 /** All git runs go through execFile — never a shell — with a hard timeout.
  * ENOENT (no git binary) and nonzero exits both surface as git_error. */
-export function git(cwd: string, args: string[]): Promise<string> {
+export function git(cwd: string, args: string[], timeoutMs = GIT_TIMEOUT_MS): Promise<string> {
   return new Promise((resolve, reject) => {
     execFile(
       "git",
       args,
-      { cwd, timeout: GIT_TIMEOUT_MS, maxBuffer: GIT_MAX_BUFFER, encoding: "utf8" },
+      { cwd, timeout: timeoutMs, maxBuffer: GIT_MAX_BUFFER, encoding: "utf8" },
       (err, stdout, stderr) => {
         if (!err) return resolve(stdout);
         if ((err as NodeJS.ErrnoException).code === "ENOENT") {
@@ -169,4 +169,84 @@ export async function repoDiff(repoDir: string, base?: string): Promise<DiffResu
   const truncated = full > DIFF_CAP_BYTES;
   if (truncated) diff = Buffer.from(diff).subarray(0, DIFF_CAP_BYTES).toString("utf8");
   return { branch, status, diff, truncated, ...(truncated ? { full_bytes: full } : {}) };
+}
+
+/* ── basic git verbs (vibe-coding loop: keep, navigate, share) ─────────── */
+
+export interface CommitResult {
+  committed: boolean;
+  clean?: boolean;
+  commit?: string;
+  branch?: string;
+  subject?: string;
+}
+
+/** Stage-and-commit. A clean tree answers {committed:false, clean:true}
+ * rather than erroring — "nothing to do" is not a failure in this flow.
+ * Identity: explicit author wins; else the repo/global config; else a
+ * broker fallback so commits never fail on missing identity. */
+export async function repoCommit(
+  repoDir: string,
+  opts: { message: string; addAll?: boolean; author?: { name: string; email: string } },
+): Promise<CommitResult> {
+  const message = opts.message.trim();
+  if (!message) throw new BrokerError("bad_request", "'message' must be a non-empty string");
+  if (opts.addAll !== false) await git(repoDir, ["add", "-A"]);
+  const status = await git(repoDir, ["status", "--porcelain"]);
+  const staged = status.split("\n").some((l) => l.length > 0 && l[0] !== " " && l[0] !== "?");
+  if (!staged) return { committed: false, clean: true };
+  let idArgs: string[] = [];
+  if (opts.author) {
+    idArgs = ["-c", `user.name=${opts.author.name}`, "-c", `user.email=${opts.author.email}`];
+  } else {
+    const name = await git(repoDir, ["config", "user.name"]).then((s) => s.trim()).catch(() => "");
+    const email = await git(repoDir, ["config", "user.email"]).then((s) => s.trim()).catch(() => "");
+    if (!name || !email) idArgs = ["-c", "user.name=herdr-web-broker", "-c", "user.email=broker@herdr.local"];
+  }
+  await git(repoDir, [...idArgs, "commit", "-m", message]);
+  const commit = (await git(repoDir, ["rev-parse", "HEAD"])).trim();
+  const branch = (await git(repoDir, ["rev-parse", "--abbrev-ref", "HEAD"])).trim();
+  return { committed: true, commit, branch, subject: message.split("\n")[0] };
+}
+
+export interface LogEntry {
+  sha: string;
+  subject: string;
+  author: string;
+  when: string;
+}
+
+export async function repoLog(repoDir: string, limit = 20): Promise<LogEntry[]> {
+  const n = Math.min(Math.max(Math.floor(limit), 1), 200);
+  const out = await git(repoDir, ["log", `-${n}`, "--format=%H%x1f%s%x1f%an%x1f%ar"]).catch(() => "");
+  return out
+    .split("\n")
+    .filter(Boolean)
+    .map((line) => {
+      const [sha, subject, author, when] = line.split("\x1f");
+      return { sha, subject, author, when };
+    });
+}
+
+/** Push gets a longer leash than local git (network), and failures carry
+ * git's own stderr — credentials are the deployment's business. */
+export async function repoPush(
+  repoDir: string,
+  opts: { remote?: string; branch?: string },
+): Promise<{ pushed: true; remote: string; branch: string; detail: string }> {
+  const remote = opts.remote?.trim() || "origin";
+  validateRef(remote);
+  const branch = opts.branch?.trim() || (await git(repoDir, ["rev-parse", "--abbrev-ref", "HEAD"])).trim();
+  validateRef(branch);
+  const out = await git(repoDir, ["push", remote, branch], 60_000);
+  return { pushed: true, remote, branch, detail: out.trim() || "ok" };
+}
+
+export async function repoCheckout(
+  repoDir: string,
+  opts: { ref: string; create?: boolean },
+): Promise<{ branch: string }> {
+  validateRef(opts.ref);
+  await git(repoDir, opts.create ? ["checkout", "-b", opts.ref] : ["checkout", opts.ref]);
+  return { branch: (await git(repoDir, ["rev-parse", "--abbrev-ref", "HEAD"])).trim() };
 }

@@ -143,6 +143,32 @@ export interface EnvEntry {
   set_at: string;
 }
 
+export interface CommitResult {
+  workspace_id?: string;
+  repo?: string;
+  committed: boolean;
+  clean?: boolean;
+  commit?: string;
+  branch?: string;
+  subject?: string;
+}
+
+export interface LogEntry {
+  sha: string;
+  subject: string;
+  author: string;
+  when: string;
+}
+
+export interface PushResult {
+  workspace_id?: string;
+  repo?: string;
+  pushed: true;
+  remote: string;
+  branch: string;
+  detail: string;
+}
+
 export interface BundleMember {
   content: string;
   size: number;

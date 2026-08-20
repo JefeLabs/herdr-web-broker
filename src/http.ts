@@ -283,6 +283,24 @@ export function createHttpHandler(deps: HttpDeps) {
       return;
     }
 
+    // Basic git verbs (the vibe-coding loop): commit / log / push / checkout
+    if (parts.length === 10 && parts[4] === "workspaces" && parts[6] === "repos" && parts[8] === "git") {
+      const verb = parts[9];
+      const base = { workspace_id: decodeURIComponent(parts[5]), repo: decodeURIComponent(parts[7]) };
+      if (verb === "log" && req.method === "GET") {
+        const limitRaw = url.searchParams.get("limit");
+        const params: Record<string, unknown> = { ...base };
+        if (limitRaw !== null) params.limit = Number(limitRaw) || 20;
+        json(res, 200, await callInstance(instance, session, "broker.repo.log", params));
+        return;
+      }
+      if ((verb === "commit" || verb === "push" || verb === "checkout") && req.method === "POST") {
+        const body = await readBody(req);
+        json(res, 200, await callInstance(instance, session, `broker.repo.${verb}`, { ...body, ...base }, 90_000));
+        return;
+      }
+    }
+
     // POST .../agents/{pane}/ask — structured answer via file-drop (spec §2.5)
     if (parts.length === 7 && parts[4] === "agents" && parts[6] === "ask" && req.method === "POST") {
       const body = await readBody(req);

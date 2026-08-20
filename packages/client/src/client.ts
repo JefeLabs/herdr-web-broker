@@ -5,12 +5,15 @@ import { EventChannel, type WsFactory } from "./events.js";
 import { request, type HttpConfig } from "./http.js";
 import type {
   AgentInfo,
+  CommitResult,
   DiffResult,
   EnvEntry,
   FileContent,
   InstanceDetail,
   InstanceRollup,
+  LogEntry,
   ModelInfo,
+  PushResult,
   SessionSummary,
   SpawnOpts,
   SpawnResult,
@@ -198,5 +201,40 @@ export class RepoHandle {
 
   file(path: string): Promise<FileContent> {
     return request(this.session.cfg, "GET", `${this.#base()}/file`, { query: { path } });
+  }
+
+  /* ── basic git verbs (vibe-coding loop) ── */
+
+  commit(opts: {
+    message: string;
+    addAll?: boolean;
+    author?: { name: string; email: string };
+  }): Promise<CommitResult> {
+    return request(this.session.cfg, "POST", `${this.#base()}/git/commit`, {
+      body: {
+        message: opts.message,
+        ...(opts.addAll === false ? { add_all: false } : {}),
+        ...(opts.author ? { author: opts.author } : {}),
+      },
+      timeoutMs: 60_000,
+    });
+  }
+
+  async log(limit?: number): Promise<LogEntry[]> {
+    const r = await request<{ commits: LogEntry[] }>(this.session.cfg, "GET", `${this.#base()}/git/log`, {
+      ...(limit ? { query: { limit: String(limit) } } : {}),
+    });
+    return r.commits;
+  }
+
+  push(opts: { remote?: string; branch?: string } = {}): Promise<PushResult> {
+    return request(this.session.cfg, "POST", `${this.#base()}/git/push`, { body: opts, timeoutMs: 90_000 });
+  }
+
+  checkout(ref: string, opts: { create?: boolean } = {}): Promise<{ branch: string }> {
+    return request(this.session.cfg, "POST", `${this.#base()}/git/checkout`, {
+      body: { ref, ...(opts.create ? { create: true } : {}) },
+      timeoutMs: 60_000,
+    });
   }
 }
