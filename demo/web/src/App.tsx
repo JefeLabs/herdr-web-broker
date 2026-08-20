@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { send } from "./api/client";
+import { AuthGate } from "./components/AuthGate";
 import { ApiSpec } from "./pages/ApiSpec";
 import { Console } from "./pages/Console";
 import { Intro } from "./pages/Intro";
@@ -64,9 +65,13 @@ export function App() {
         </span>
       </header>
       {route === "#/console" ? (
-        <Console />
+        <AuthGate>
+          <Console />
+        </AuthGate>
       ) : route === "#/workspace" ? (
-        <WorkspaceBrowser />
+        <AuthGate>
+          <WorkspaceBrowser />
+        </AuthGate>
       ) : route === "#/api" ? (
         <ApiSpec />
       ) : (

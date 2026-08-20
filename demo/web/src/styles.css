@@ -399,6 +399,28 @@ label.check input { width: auto; }
 .param-table td:first-child { color: var(--amber); }
 .param-table .in-path { color: var(--cyan); }
 
+/* ── auth gate ── */
+.auth-gate {
+  max-width: 26rem;
+  margin: 5rem auto;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-top: 2px solid var(--amber);
+  padding: 1.6rem 1.8rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+}
+.auth-gate h2 {
+  font-family: var(--display);
+  font-size: 1.05rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  margin: 0;
+  color: var(--amber);
+}
+.auth-gate p { margin: 0; }
+
 footer.site {
   border-top: 1px solid var(--line); margin-top: 4rem; padding: 1.2rem;
   text-align: center; color: var(--ink-faint); font-size: 0.72rem;

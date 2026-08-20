@@ -27,7 +27,8 @@ function load(): Record<string, string> {
 
 export function SettingsProvider({ children }: { children: ReactNode }) {
   const stored = useMemo(load, []);
-  const [bearer, setBearer] = useState(stored.bearer ?? "demo-token");
+  // no default token: the auth gate must be passed explicitly on first visit
+  const [bearer, setBearer] = useState(stored.bearer ?? "");
   const [admin, setAdmin] = useState(stored.admin ?? "");
   const [instance, setInstance] = useState(stored.instance ?? "runtime");
   const [session, setSession] = useState(stored.session ?? "default");
