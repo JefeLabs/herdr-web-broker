@@ -38,7 +38,12 @@ export interface UpgradeHandle {
 
 export function attachUpgradeHandling(server: Server, deps: WsDeps): UpgradeHandle {
   const enrollWss = new WebSocketServer({ noServer: true });
-  const clientWss = new WebSocketServer({ noServer: true });
+  // Clients may offer ["bearer", <token>] as subprotocols; the server always
+  // selects the literal "bearer" so the token itself is never echoed back.
+  const clientWss = new WebSocketServer({
+    noServer: true,
+    handleProtocols: (protocols) => (protocols.has("bearer") ? "bearer" : false),
+  });
 
   // Keepalive: ping every interval; a socket that missed the previous pong
   // is dead and gets terminated instead of lingering.
@@ -69,11 +74,20 @@ export function attachUpgradeHandling(server: Server, deps: WsDeps): UpgradeHand
       }
       enrollWss.handleUpgrade(req, socket, head, (ws) => acceptChild(deps, name, ws));
     } else if (path === "/parent/ws") {
-      // Browsers cannot set an Authorization header on WebSocket upgrades,
-      // so ?token= is accepted as an equal alternative.
+      // Browsers cannot set an Authorization header on WebSocket upgrades.
+      // Preferred alternative: offer ["bearer", <token>] as subprotocols —
+      // the token rides a header, not the URL. ?token= is also accepted as
+      // a fallback, with the documented caveat that query strings land in
+      // access logs, so deployments keeping it should scrub the param at
+      // their proxy.
+      const offered = String(req.headers["sec-websocket-protocol"] ?? "")
+        .split(",")
+        .map((s) => s.trim())
+        .filter((s) => s && s !== "bearer");
       const queryToken = reqUrl.searchParams.get("token");
       const ok =
         checkBearer(req.headers.authorization, deps.config.client_tokens) ||
+        offered.some((t) => checkBearer(`Bearer ${t}`, deps.config.client_tokens)) ||
         (queryToken !== null && checkBearer(`Bearer ${queryToken}`, deps.config.client_tokens));
       if (!ok) {
         socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");

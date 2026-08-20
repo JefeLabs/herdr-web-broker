@@ -45,6 +45,22 @@ test("ws upgrade accepts ?token= for browser clients that cannot set headers", a
   await fake.close();
 });
 
+test("ws upgrade accepts the token via Sec-WebSocket-Protocol (preferred over ?token= — no URL leakage)", async () => {
+  const { fake, handle } = await boot();
+  const ws = new WebSocket(`ws://127.0.0.1:${handle.port}/parent/ws`, ["bearer", "tok"]);
+  await new Promise((r) => ws.once("open", r));
+  assert.equal(ws.protocol, "bearer", "server selects the 'bearer' subprotocol, never echoing the token");
+  const reply = new Promise<Record<string, unknown>>((r) => ws.once("message", (d) => r(JSON.parse(String(d)))));
+  ws.send(JSON.stringify({ id: "p1", method: "events.subscribe" }));
+  assert.deepEqual(await reply, { id: "p1", result: { subscribed: true } });
+  const bad = new WebSocket(`ws://127.0.0.1:${handle.port}/parent/ws`, ["bearer", "wrong"]);
+  const err = await new Promise<Error>((r) => bad.once("error", r));
+  assert.match(err.message, /401/);
+  ws.close();
+  await handle.close();
+  await fake.close();
+});
+
 test("server pings keep idle client sockets alive through intermediaries", async () => {
   const fake = new FakeHerdr(join(tmpDir(), "h.sock"));
   fake.agents = [];
