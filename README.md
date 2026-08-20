@@ -95,8 +95,9 @@ unknown-method.
 
 How herdr 0.8.0 actually behaves on the wire — one-shot rpc connections,
 subscribe-only event channels, per-pane status subscriptions, real frame
-shapes — is written up in
-[docs/herdr-0.8-protocol-notes.md](docs/superpowers/specs/herdr-0.8-protocol-notes.md).
+shapes — is captured in internal field notes kept outside the repo; the
+verified behaviors themselves are encoded in `src/local-attach.ts` and
+mirrored by `test/fake-herdr.ts`.
 
 Remote sessions are also projected as local sockets —
 `HERDR_SOCKET_PATH=~/.config/herdr/remotes/laptop/default.sock herdr agent list`

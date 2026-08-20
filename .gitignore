@@ -3,7 +3,6 @@ dist/
 .screenshots/
 .idea
 .env
-/docs/superpowers/plans/
-/docs/superpowers/specs/
+/docs/superpowers/
 *.tsbuildinfo
 .playwright-mcp/
