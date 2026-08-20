@@ -526,6 +526,45 @@ test("git routes: commit → log → checkout → push against a real repo with 
   }
 });
 
+test("context routes: raw upload → list → binary download → toggle → delete", async () => {
+  const t = await setup();
+  try {
+    const cwd = scratchRepo();
+    t.ops.index.set("default", "w1", { cwd });
+    const bytes = Buffer.from([0x25, 0x50, 0x44, 0x46, 0x00, 0xff, 0x01]); // %PDF + binary tail
+
+    const up = await t.authed("/parent/runtime/sessions/default/workspaces/w1/context/spec.pdf", {
+      method: "PUT",
+      headers: { "content-type": "application/pdf" },
+      body: bytes,
+    });
+    assert.equal(up.status, 201);
+    assert.equal(((await up.json()) as { active: boolean }).active, true);
+
+    const list = await t.authed("/parent/runtime/sessions/default/workspaces/w1/context");
+    const attachments = ((await list.json()) as { attachments: { name: string; content_type: string }[] }).attachments;
+    assert.deepEqual([attachments[0].name, attachments[0].content_type], ["spec.pdf", "application/pdf"]);
+
+    const dl = await t.authed("/parent/runtime/sessions/default/workspaces/w1/context/spec.pdf");
+    assert.equal(dl.headers.get("content-type"), "application/pdf");
+    assert.deepEqual(Buffer.from(await dl.arrayBuffer()), bytes, "binary round-trips exactly");
+
+    const toggled = await t.authed("/parent/runtime/sessions/default/workspaces/w1/context/spec.pdf", {
+      method: "POST",
+      body: JSON.stringify({ active: false }),
+    });
+    assert.equal(((await toggled.json()) as { active: boolean }).active, false);
+
+    const gone = await t.authed("/parent/runtime/sessions/default/workspaces/w1/context/spec.pdf", {
+      method: "DELETE",
+    });
+    assert.equal(gone.status, 200);
+    assert.equal((await t.authed("/parent/runtime/sessions/default/workspaces/w1/context/spec.pdf")).status, 404);
+  } finally {
+    await teardown(t);
+  }
+});
+
 test("env routes: store, list (redacted, with source), delete; value absent everywhere", async () => {
   const t = await setup();
   try {

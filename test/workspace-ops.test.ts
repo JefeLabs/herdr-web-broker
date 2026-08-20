@@ -421,6 +421,31 @@ test("broker.agent.prompt: fire-and-forget steering to the pane's agent by name"
   }
 });
 
+test("broker.agent.prompt: a just-launched agent listed without its kind is re-polled, not failed", async () => {
+  const t = await setup();
+  t.deps.paneBusyDelayMs = 5;
+  try {
+    let lists = 0;
+    t.fake.handlers.set("agent.list", () => ({
+      type: "agent_list",
+      agents: [
+        ++lists < 2
+          ? { pane_id: "w1:p1", name: "copilot", agent_status: "idle" } // launch window: no `agent` field yet
+          : { pane_id: "w1:p1", name: "copilot", agent: "copilot", agent_status: "idle" },
+      ],
+    }));
+    t.fake.handlers.set("agent.prompt", () => ({ type: "prompted" }));
+    const out = (await runBrokerMethod(t.deps, "default", "broker.agent.prompt", {
+      pane_id: "w1:p1",
+      text: "hello",
+    })) as { kind: string };
+    assert.equal(out.kind, "copilot");
+    assert.ok(lists >= 2, "the kindless listing was re-polled");
+  } finally {
+    await t.teardown();
+  }
+});
+
 test("broker.agent.prompt: empty text and empty panes are bad_request; nothing reaches herdr", async () => {
   const t = await setup();
   try {
@@ -433,6 +458,70 @@ test("broker.agent.prompt: empty text and empty panes are bad_request; nothing r
       (e: BrokerError) => e.code === "bad_request" && /no agent in pane/.test(e.message),
     );
     assert.ok(!t.fake.received.some((r) => r.method === "agent.prompt"));
+  } finally {
+    await t.teardown();
+  }
+});
+
+test("broker.context.*: base64 round-trip through put/list/get/set/delete", async () => {
+  const t = await setup();
+  try {
+    const cwd = scratchRepo();
+    t.deps.index.set("default", "w1", { cwd });
+    const bytes = Buffer.from("fake-pdf-bytes");
+    const put = (await runBrokerMethod(t.deps, "default", "broker.context.put", {
+      workspace_id: "w1",
+      name: "spec.pdf",
+      content_b64: bytes.toString("base64"),
+      content_type: "application/pdf",
+    })) as { name: string; size: number; active: boolean };
+    assert.deepEqual([put.name, put.size, put.active], ["spec.pdf", bytes.length, true]);
+
+    const listed = (await runBrokerMethod(t.deps, "default", "broker.context.list", { workspace_id: "w1" })) as {
+      attachments: { name: string; content_type: string }[];
+    };
+    assert.equal(listed.attachments[0].content_type, "application/pdf");
+
+    const got = (await runBrokerMethod(t.deps, "default", "broker.context.get", {
+      workspace_id: "w1",
+      name: "spec.pdf",
+    })) as { content_b64: string; content_type: string };
+    assert.equal(Buffer.from(got.content_b64, "base64").toString(), "fake-pdf-bytes");
+
+    await runBrokerMethod(t.deps, "default", "broker.context.set", { workspace_id: "w1", name: "spec.pdf", active: false });
+    await runBrokerMethod(t.deps, "default", "broker.context.delete", { workspace_id: "w1", name: "spec.pdf" });
+    const empty = (await runBrokerMethod(t.deps, "default", "broker.context.list", { workspace_id: "w1" })) as {
+      attachments: unknown[];
+    };
+    assert.equal(empty.attachments.length, 0);
+  } finally {
+    await t.teardown();
+  }
+});
+
+test("active context rides prompt and ask text; inactive context stays out", async () => {
+  const t = await setup();
+  try {
+    const cwd = scratchRepo();
+    t.deps.index.set("default", "w1", { cwd });
+    t.fake.handlers.set("agent.prompt", () => ({ type: "prompted" }));
+    await runBrokerMethod(t.deps, "default", "broker.context.put", {
+      workspace_id: "w1",
+      name: "mockup.png",
+      content_b64: Buffer.from("png").toString("base64"),
+      content_type: "image/png",
+    });
+
+    await runBrokerMethod(t.deps, "default", "broker.agent.prompt", { pane_id: "w1:p1", text: "build the header" });
+    let text = String((t.fake.received.filter((r) => r.method === "agent.prompt").at(-1)?.params as { text: string }).text);
+    assert.ok(text.includes("Context files attached"), "steering carries the context preamble");
+    assert.ok(text.includes("mockup.png") && text.includes("image/png"));
+    assert.ok(text.endsWith("build the header"), "the human's text comes last, unmodified");
+
+    await runBrokerMethod(t.deps, "default", "broker.context.set", { workspace_id: "w1", name: "mockup.png", active: false });
+    await runBrokerMethod(t.deps, "default", "broker.agent.prompt", { pane_id: "w1:p1", text: "no context now" });
+    text = String((t.fake.received.filter((r) => r.method === "agent.prompt").at(-1)?.params as { text: string }).text);
+    assert.ok(!text.includes("Context files attached"), "inactive attachments stay out of prompts");
   } finally {
     await t.teardown();
   }

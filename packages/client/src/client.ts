@@ -2,10 +2,11 @@ import { AgentHandle } from "./agent.js";
 import { BundleScope } from "./bundles.js";
 import { BrokerApiError } from "./errors.js";
 import { EventChannel, type WsFactory } from "./events.js";
-import { request, type HttpConfig } from "./http.js";
+import { request, requestRaw, type HttpConfig } from "./http.js";
 import type {
   AgentInfo,
   CommitResult,
+  ContextEntry,
   DiffResult,
   EnvEntry,
   FileContent,
@@ -165,12 +166,59 @@ export class SessionHandle {
     return new BundleScope(this, workspaceId);
   }
 
+  context(workspaceId: string): ContextScope {
+    return new ContextScope(this, workspaceId);
+  }
+
   /** herdr passthrough escape hatch — any socket method. */
   rpc(method: string, params: unknown = {}, timeoutMs?: number): Promise<unknown> {
     return request(this.cfg, "POST", `${this.base()}/rpc`, {
       body: { method, params, ...(timeoutMs ? { timeout_ms: timeoutMs } : {}) },
       ...(timeoutMs ? { timeoutMs: timeoutMs + 15_000 } : {}),
     });
+  }
+}
+
+/** Workspace context attachments: files the human uploads for the agent
+ * (PDFs, images, notes). Active attachments are automatically listed in the
+ * text of every prompt/ask/spec sent to agents in that workspace. */
+export class ContextScope {
+  constructor(
+    private readonly session: SessionHandle,
+    readonly workspaceId: string,
+  ) {}
+
+  #base(): string {
+    return `${this.session.base()}/workspaces/${enc(this.workspaceId)}/context`;
+  }
+
+  upload(
+    name: string,
+    content: Uint8Array,
+    opts: { contentType?: string; active?: boolean } = {},
+  ): Promise<ContextEntry> {
+    return requestRaw(this.session.cfg, "PUT", `${this.#base()}/${enc(name)}`, {
+      body: content,
+      contentType: opts.contentType,
+      ...(opts.active === false ? { query: { active: "0" } } : {}),
+    }).then(() => this.list().then((all) => all.find((e) => e.name === name)!));
+  }
+
+  async list(): Promise<ContextEntry[]> {
+    const r = await request<{ attachments: ContextEntry[] }>(this.session.cfg, "GET", this.#base());
+    return r.attachments;
+  }
+
+  download(name: string): Promise<{ content: Uint8Array; contentType: string }> {
+    return requestRaw(this.session.cfg, "GET", `${this.#base()}/${enc(name)}`);
+  }
+
+  setActive(name: string, active: boolean): Promise<ContextEntry> {
+    return request(this.session.cfg, "POST", `${this.#base()}/${enc(name)}`, { body: { active } });
+  }
+
+  async delete(name: string): Promise<void> {
+    await request(this.session.cfg, "DELETE", `${this.#base()}/${enc(name)}`);
   }
 }
 

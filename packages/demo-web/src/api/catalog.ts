@@ -62,6 +62,7 @@ export const GROUPS = [
   "Spawn",
   "Workspaces & Repos",
   "Git",
+  "Context",
   "Ask",
   "Slash",
   "Spec Bundles",
@@ -391,6 +392,63 @@ export const CATALOG: EndpointSpec[] = [
       path: `${sess(ctx)}/workspaces/${enc(need(v, "workspace_id"))}/repos/${enc(need(v, "repo"))}/git/checkout`,
       auth: "bearer",
       body: { ref: need(v, "ref"), ...(v.create === "1" ? { create: true } : {}) },
+    }),
+  },
+  {
+    id: "context-list",
+    group: "Context",
+    title: "List attachments",
+    summary: "Files the human uploaded for the agent (PDFs, images, notes) — stored in .herdr/context/, never part of the repos.",
+    docs:
+      "Active attachments are automatically listed in the text of every prompt/ask/spec sent to agents in the " +
+      "workspace, so the agent knows to read them. Upload rides PUT .../context/{name} with a raw binary body " +
+      "(8MB cap) — use the upload card above or the SDK's context scope.",
+    method: "GET",
+    pathTemplate: "/parent/{instance}/sessions/{session}/workspaces/{workspace_id}/context",
+    auth: "bearer",
+    fields: [{ key: "workspace_id", label: "workspace_id", kind: "text", required: true, placeholder: "w1" }],
+    build: (v, ctx) => ({
+      method: "GET",
+      path: `${sess(ctx)}/workspaces/${enc(need(v, "workspace_id"))}/context`,
+      auth: "bearer",
+    }),
+  },
+  {
+    id: "context-set",
+    group: "Context",
+    title: "Toggle active",
+    summary: "active:false keeps the file but drops it from future prompts; active:true re-attaches it.",
+    method: "POST",
+    pathTemplate: "/parent/{instance}/sessions/{session}/workspaces/{workspace_id}/context/{name}",
+    auth: "bearer",
+    fields: [
+      { key: "workspace_id", label: "workspace_id", kind: "text", required: true, placeholder: "w1" },
+      { key: "name", label: "name", kind: "text", required: true, placeholder: "spec.pdf" },
+      { key: "active", label: "active — rides prompts", kind: "toggle" },
+    ],
+    build: (v, ctx) => ({
+      method: "POST",
+      path: `${sess(ctx)}/workspaces/${enc(need(v, "workspace_id"))}/context/${enc(need(v, "name"))}`,
+      auth: "bearer",
+      body: { active: v.active === "1" },
+    }),
+  },
+  {
+    id: "context-delete",
+    group: "Context",
+    title: "Delete attachment",
+    summary: "Remove the file from the workspace context store.",
+    method: "DELETE",
+    pathTemplate: "/parent/{instance}/sessions/{session}/workspaces/{workspace_id}/context/{name}",
+    auth: "bearer",
+    fields: [
+      { key: "workspace_id", label: "workspace_id", kind: "text", required: true, placeholder: "w1" },
+      { key: "name", label: "name", kind: "text", required: true, placeholder: "spec.pdf" },
+    ],
+    build: (v, ctx) => ({
+      method: "DELETE",
+      path: `${sess(ctx)}/workspaces/${enc(need(v, "workspace_id"))}/context/${enc(need(v, "name"))}`,
+      auth: "bearer",
     }),
   },
   {

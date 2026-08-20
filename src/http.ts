@@ -76,6 +76,21 @@ function fail(res: ServerResponse, e: unknown): void {
   }
 }
 
+/** Raw upload reader for context attachments — binary-safe, capped. */
+async function readRawBody(req: IncomingMessage, capBytes: number): Promise<Buffer> {
+  const chunks: Buffer[] = [];
+  let size = 0;
+  for await (const chunk of req) {
+    size += (chunk as Buffer).length;
+    if (size > capBytes) {
+      req.socket.destroy();
+      throw new BrokerError("bad_request", `body exceeds ${Math.round(capBytes / (1024 * 1024))}MB`);
+    }
+    chunks.push(chunk as Buffer);
+  }
+  return Buffer.concat(chunks);
+}
+
 async function readBody(req: IncomingMessage): Promise<Record<string, unknown>> {
   const chunks: Buffer[] = [];
   let size = 0;
@@ -281,6 +296,48 @@ export function createHttpHandler(deps: HttpDeps) {
       if (base !== null) params.base = base;
       json(res, 200, await callInstance(instance, session, "broker.repo.diff", params));
       return;
+    }
+
+    // Workspace context attachments: uploads the agent should read (PDFs,
+    // images…), stored under .herdr/context/ outside the repos; ACTIVE
+    // attachments are listed in every prompt/ask/spec text automatically.
+    if (parts.length === 7 && parts[4] === "workspaces" && parts[6] === "context" && req.method === "GET") {
+      const params = { workspace_id: decodeURIComponent(parts[5]) };
+      json(res, 200, await callInstance(instance, session, "broker.context.list", params));
+      return;
+    }
+    if (parts.length === 8 && parts[4] === "workspaces" && parts[6] === "context") {
+      const base = { workspace_id: decodeURIComponent(parts[5]), name: decodeURIComponent(parts[7]) };
+      if (req.method === "PUT") {
+        const content = await readRawBody(req, 8 * 1024 * 1024);
+        const params: Record<string, unknown> = {
+          ...base,
+          content_b64: content.toString("base64"),
+          content_type: req.headers["content-type"] ?? "application/octet-stream",
+        };
+        if (url.searchParams.get("active") === "0") params.active = false;
+        json(res, 201, await callInstance(instance, session, "broker.context.put", params, 60_000));
+        return;
+      }
+      if (req.method === "GET") {
+        const got = (await callInstance(instance, session, "broker.context.get", base)) as {
+          content_b64: string;
+          content_type: string;
+        };
+        const buf = Buffer.from(got.content_b64, "base64");
+        res.writeHead(200, { "content-type": got.content_type, "content-length": buf.length });
+        res.end(buf);
+        return;
+      }
+      if (req.method === "POST") {
+        const body = await readBody(req);
+        json(res, 200, await callInstance(instance, session, "broker.context.set", { ...base, active: body.active }));
+        return;
+      }
+      if (req.method === "DELETE") {
+        json(res, 200, await callInstance(instance, session, "broker.context.delete", base));
+        return;
+      }
     }
 
     // Basic git verbs (the vibe-coding loop): commit / log / push / checkout

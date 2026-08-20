@@ -169,6 +169,15 @@ export interface PushResult {
   detail: string;
 }
 
+export interface ContextEntry {
+  name: string;
+  size: number;
+  content_type: string;
+  /** active attachments are listed in every prompt/ask/spec sent to agents */
+  active: boolean;
+  uploaded_at: string;
+}
+
 export interface BundleMember {
   content: string;
   size: number;

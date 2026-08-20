@@ -75,6 +75,39 @@ describe("BrokerClient", () => {
     expect(JSON.parse(String(calls[3].init.body))).toEqual({ ref: "feat/x", create: true });
   });
 
+  test("context scope: raw upload body, list, binary download, toggle, delete", async () => {
+    const calls: { url: string; init: RequestInit }[] = [];
+    const fetchFn = (async (url: string | URL | Request, init?: RequestInit) => {
+      calls.push({ url: String(url), init: init ?? {} });
+      if (String(url).endsWith("/context")) {
+        return new Response(
+          '{"attachments":[{"name":"spec.pdf","size":4,"content_type":"application/pdf","active":true,"uploaded_at":"now"}]}',
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if ((init?.method ?? "GET") === "GET") {
+        return new Response(new Uint8Array([1, 2, 3, 4]), { status: 200, headers: { "content-type": "application/pdf" } });
+      }
+      return new Response("{}", { status: 200, headers: { "content-type": "application/json" } });
+    }) as typeof fetch;
+    const ctx = new BrokerClient({ origin: "", token: "t", fetchFn }).instance("runtime").session("default").context("w1");
+
+    const up = await ctx.upload("spec.pdf", new Uint8Array([1, 2, 3, 4]), { contentType: "application/pdf" });
+    expect(up.name).toBe("spec.pdf");
+    expect(calls[0].url).toBe("/parent/runtime/sessions/default/workspaces/w1/context/spec.pdf");
+    expect(calls[0].init.method).toBe("PUT");
+    expect((calls[0].init.headers as Record<string, string>)["content-type"]).toBe("application/pdf");
+
+    const dl = await ctx.download("spec.pdf");
+    expect([...dl.content]).toEqual([1, 2, 3, 4]);
+    expect(dl.contentType).toBe("application/pdf");
+
+    await ctx.setActive("spec.pdf", false);
+    expect(JSON.parse(String(calls.at(-1)!.init.body))).toEqual({ active: false });
+    await ctx.delete("spec.pdf");
+    expect(calls.at(-1)!.init.method).toBe("DELETE");
+  });
+
   test("setToken applies to subsequent calls", async () => {
     const { calls, fetchFn } = fake(200, "{}");
     const broker = new BrokerClient({ origin: "", token: "old", fetchFn });

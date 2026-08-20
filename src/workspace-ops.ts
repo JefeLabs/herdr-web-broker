@@ -1,6 +1,14 @@
 import { createHash, randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { isAbsolute, join, sep } from "node:path";
+import {
+  activeContextPreamble,
+  deleteContext,
+  getContext,
+  listContext,
+  putContext,
+  setContextActive,
+} from "./context-store.js";
 import type { EnvRegistry } from "./env-registry.js";
 import { BrokerError } from "./errors.js";
 import type { ModelRegistry } from "./model-registry.js";
@@ -135,6 +143,35 @@ export async function runBrokerMethod(
         ...(typeof p.branch === "string" ? { branch: p.branch } : {}),
       });
       return { workspace_id: workspaceId, repo, ...result };
+    }
+    // Workspace context attachments — binary rides base64 so the same
+    // methods work through the parent↔child tunnel unchanged.
+    case "broker.context.put": {
+      const cwd = await resolveCwd(deps, session, str(p.workspace_id, "workspace_id"));
+      const content = Buffer.from(str(p.content_b64, "content_b64"), "base64");
+      return putContext(cwd, str(p.name, "name"), content, {
+        ...(typeof p.content_type === "string" ? { contentType: p.content_type } : {}),
+        ...(p.active === false ? { active: false } : {}),
+      });
+    }
+    case "broker.context.list": {
+      const cwd = await resolveCwd(deps, session, str(p.workspace_id, "workspace_id"));
+      return { workspace_id: p.workspace_id, attachments: listContext(cwd) };
+    }
+    case "broker.context.get": {
+      const cwd = await resolveCwd(deps, session, str(p.workspace_id, "workspace_id"));
+      const { content, meta } = getContext(cwd, str(p.name, "name"));
+      return { ...meta, content_b64: content.toString("base64") };
+    }
+    case "broker.context.set": {
+      const cwd = await resolveCwd(deps, session, str(p.workspace_id, "workspace_id"));
+      if (typeof p.active !== "boolean") throw new BrokerError("bad_request", "'active' must be a boolean");
+      return setContextActive(cwd, str(p.name, "name"), p.active);
+    }
+    case "broker.context.delete": {
+      const cwd = await resolveCwd(deps, session, str(p.workspace_id, "workspace_id"));
+      deleteContext(cwd, str(p.name, "name"));
+      return { status: "deleted" };
     }
     case "broker.repo.checkout": {
       const workspaceId = str(p.workspace_id, "workspace_id");
@@ -354,20 +391,39 @@ async function spawn(deps: OpsDeps, session: string, p: Record<string, unknown>)
 }
 
 /** Resolves the agent occupying a pane (or throws) — shared by the
- * pane-targeted TUI drivers below. */
+ * pane-targeted TUI drivers below. A just-launched agent can be listed
+ * WITHOUT its `agent` (kind) field for a moment (observed on real herdr
+ * 0.8.0 right after agent.start), so a listed-but-kindless entry is
+ * re-polled briefly before falling back to the agent's name. */
 async function agentInPane(
   deps: OpsDeps,
   session: string,
   pane: string,
 ): Promise<{ kind: string; entry: Record<string, unknown> }> {
-  const raw = (await deps.local.request(session, "agent.list", {}, 10_000)) as {
-    agents?: Array<Record<string, unknown>>;
-  };
-  const entry = raw.agents?.find((a) => a.pane_id === pane);
-  if (!entry) throw new BrokerError("bad_request", `no agent in pane '${pane}'`);
-  const kind = typeof entry.agent === "string" && entry.agent ? entry.agent : undefined;
-  if (!kind) throw new BrokerError("upstream_error", `agent in pane '${pane}' reports no kind`);
-  return { kind, entry };
+  let entry: Record<string, unknown> | undefined;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    if (attempt > 0) await new Promise((r) => setTimeout(r, deps.paneBusyDelayMs ?? 300));
+    const raw = (await deps.local.request(session, "agent.list", {}, 10_000)) as {
+      agents?: Array<Record<string, unknown>>;
+    };
+    entry = raw.agents?.find((a) => a.pane_id === pane);
+    if (!entry) throw new BrokerError("bad_request", `no agent in pane '${pane}'`);
+    if (typeof entry.agent === "string" && entry.agent) return { kind: entry.agent, entry };
+  }
+  const nameAsKind = typeof entry!.name === "string" && entry!.name ? entry!.name : undefined;
+  if (!nameAsKind) throw new BrokerError("upstream_error", `agent in pane '${pane}' reports no kind`);
+  return { kind: nameAsKind, entry: entry! };
+}
+
+/** Active context attachments ride every prompt — resolved best-effort so a
+ * workspace the index doesn't know about still steers, just without them. */
+async function contextPreambleFor(deps: OpsDeps, session: string, pane: string): Promise<string | undefined> {
+  try {
+    const cwd = await resolveCwd(deps, session, pane.split(":")[0]);
+    return activeContextPreamble(cwd);
+  } catch {
+    return undefined;
+  }
 }
 
 /** Fire-and-forget steering: a free-form prompt to the pane's agent with no
@@ -381,7 +437,9 @@ async function steer(deps: OpsDeps, session: string, p: Record<string, unknown>)
   const { kind, entry } = await agentInPane(deps, session, pane);
   const target = typeof entry.name === "string" && entry.name ? entry.name : String(entry.agent ?? "");
   if (!target) throw new BrokerError("upstream_error", `agent in pane '${pane}' has no addressable name`);
-  await deps.local.request(session, "agent.prompt", { target, text }, 30_000);
+  const preamble = await contextPreambleFor(deps, session, pane);
+  const full = preamble ? `${preamble}\n\n${text}` : text;
+  await deps.local.request(session, "agent.prompt", { target, text: full }, 30_000);
   return { status: "prompted", pane_id: pane, kind, agent: target };
 }
 
@@ -548,7 +606,9 @@ async function specDrive(deps: OpsDeps, session: string, p: Record<string, unkno
   const overview = join(cwd, dir, "overview.md");
   if (!existsSync(overview)) writeFileSync(overview, `# ${bundle.slice(11)}\n\n_Drafting…_\n`);
   const questionsIn = focus ?? "overview.md";
+  const contextLine = activeContextPreamble(cwd);
   const text =
+    (contextLine ? `${contextLine}\n\n` : "") +
     `You maintain the spec bundle at ${dir}/ (relative to ${cwd}) — a set of design files. ` +
     `overview.md is the entry point; add files as the design needs them (api.md, data-model.md, ` +
     `diagrams as mermaid in markdown).\n\n` +
@@ -684,7 +744,9 @@ async function ask(deps: OpsDeps, session: string, p: Record<string, unknown>): 
     throw new BrokerError("unknown_workspace", "workspace answers dir escapes the workspace");
   }
   const file = join(dir, `${id}.json`);
+  const contextLine = activeContextPreamble(cwd);
   const text =
+    (contextLine ? `${contextLine}\n\n` : "") +
     `${prompt}\n\n` +
     `When you are finished, write ONLY a JSON object of the form ` +
     `{"answer": <your answer as JSON>} to the file ` +

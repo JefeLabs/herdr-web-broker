@@ -2,6 +2,7 @@ import { useId, useState } from "react";
 import { CATALOG, GROUPS } from "../api/catalog";
 import { EndpointCard } from "../components/EndpointCard";
 import { EventsPanel } from "@jefelabs/herdr-broker-ui";
+import { ContextUploadCard } from "../components/ContextUploadCard";
 import { useSettings } from "../settings";
 
 const RAIL = [...GROUPS, "Live Events"];
@@ -36,6 +37,7 @@ export function Console() {
               <h2 className="group-title" id={`group-${g}`}>
                 {g}
               </h2>
+              {g === "Context" && <ContextUploadCard />}
               {CATALOG.filter((s) => s.group === g).map((s) => (
                 <EndpointCard key={s.id} spec={s} />
               ))}

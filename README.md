@@ -53,6 +53,10 @@ the local machine; anything else is an enrolled child.
 | `GET .../repos/{r}/git/log?limit=` | recent commits: `{sha, subject, author, when}` |
 | `POST .../repos/{r}/git/push` | push (default origin/current branch); failures carry git stderr |
 | `POST .../repos/{r}/git/checkout` | switch or create a branch: `{ref, create?}` |
+| `PUT .../workspaces/{w}/context/{name}` | upload a context attachment (raw body, 8MB cap) — stored in `.herdr/context/`, never part of the repos; active files are auto-listed in every prompt/ask/spec text |
+| `GET .../workspaces/{w}/context[/{name}]` | list attachments / download one |
+| `POST .../workspaces/{w}/context/{name}` | toggle `{active}` — drop a file from prompts without deleting it |
+| `DELETE .../workspaces/{w}/context/{name}` | remove an attachment |
 | `POST .../agents/{pane}/ask` | structured JSON answer from a TUI agent (file-drop) |
 | `POST .../agents/{pane}/prompt` | fire-and-forget steering: `{text}` to the same agent — spawn once, keep prompting the pane |
 | `POST .../agents/{pane}/model` | switch a running agent's model: `{model}` typed as the CLI's own `/model` command |
