@@ -41,14 +41,22 @@ class FakeSocket {
   }
 }
 
-function channel() {
+function channel(probeStatus = 200) {
   FakeSocket.instances = [];
+  const probes: string[] = [];
   const ch = new EventChannel({
     origin: "http://broker:7591",
     token: () => "tok",
     wsFactory: (url, protocols) => new FakeSocket(url, protocols) as unknown as WebSocket,
+    fetchFn: (async (url: string | URL | Request) => {
+      probes.push(String(url));
+      return new Response(probeStatus === 200 ? "{}" : '{"code":"unauthorized","message":"nope"}', {
+        status: probeStatus,
+        headers: { "content-type": "application/json" },
+      });
+    }) as typeof fetch,
   });
-  return ch;
+  return Object.assign(ch, { probes });
 }
 
 afterEach(() => vi.useRealTimers());
@@ -112,6 +120,24 @@ describe("EventChannel", () => {
     FakeSocket.instances[1].emitOpen();
     ch.close();
     await vi.advanceTimersByTimeAsync(60_000);
+    expect(FakeSocket.instances.length).toBe(2);
+  });
+
+  test("a revoked token stops the reconnect loop with auth_failed instead of retrying forever", async () => {
+    vi.useFakeTimers();
+    const ch = channel(401);
+    const authFailures: unknown[] = [];
+    ch.on("auth_failed", (e) => authFailures.push(e));
+    ch.connect();
+    FakeSocket.instances[0].emitOpen();
+    FakeSocket.instances[0].emitDrop(); // kicked: server terminated the socket
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(FakeSocket.instances.length).toBe(1); // no reconnect attempts against a dead token
+    expect(authFailures.length).toBe(1);
+    expect(ch.probes.length).toBeGreaterThan(0);
+
+    // after fixing the token, connect() works again
+    ch.connect();
     expect(FakeSocket.instances.length).toBe(2);
   });
 });

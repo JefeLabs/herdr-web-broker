@@ -2,13 +2,23 @@ import { BrokerApiError, BrokerNetworkError } from "./errors.js";
 
 export type WsFactory = (url: string, protocols: string[]) => WebSocket;
 
-export type EventType = "agent_status" | "instance_online" | "instance_offline" | "open" | "close";
+export type EventType =
+  | "agent_status"
+  | "instance_online"
+  | "instance_offline"
+  | "open"
+  | "close"
+  /** the token was rejected (revoked/kicked) — reconnecting stopped; fix
+   * the token and call connect() again */
+  | "auth_failed";
 
 export interface EventChannelOpts {
   origin: string;
   /** read at (re)connect time so setToken() applies to reconnects */
   token: () => string;
   wsFactory?: WsFactory;
+  /** used by the pre-reconnect auth probe; defaults to global fetch */
+  fetchFn?: typeof fetch;
 }
 
 /** WS /parent/ws: unsolicited status events plus duplex rpc frames on one
@@ -79,11 +89,31 @@ export class EventChannel {
       this.#emit("close", { clean });
       for (const p of this.#pending.values()) p.reject(new BrokerNetworkError("event socket closed"));
       this.#pending.clear();
-      if (this.#wanted) {
-        const delay = Math.min(1_000 * 2 ** this.#attempts++, 30_000) + Math.floor(Math.random() * 250);
-        this.#reconnect = setTimeout(() => this.#open(), delay);
-      }
+      if (this.#wanted) void this.#maybeReconnect();
     };
+  }
+
+  /** Browsers hide the HTTP status of a failed upgrade, so before each
+   * reconnect a cheap authed probe asks whether the token is still alive:
+   * 401 means revoked/kicked — stop and emit auth_failed rather than
+   * retrying forever. Network failures keep the retry loop going (an
+   * outage is not an eviction). */
+  async #maybeReconnect(): Promise<void> {
+    try {
+      const res = await (this.#opts.fetchFn ?? fetch)(this.#opts.origin + "/parent", {
+        headers: { authorization: `Bearer ${this.#opts.token()}` },
+      });
+      if (res.status === 401) {
+        this.#wanted = false;
+        this.#emit("auth_failed", undefined);
+        return;
+      }
+    } catch {
+      // broker unreachable — keep retrying on the normal backoff
+    }
+    if (!this.#wanted) return;
+    const delay = Math.min(1_000 * 2 ** this.#attempts++, 30_000) + Math.floor(Math.random() * 250);
+    this.#reconnect = setTimeout(() => this.#open(), delay);
   }
 
   #onFrame(text: string): void {

@@ -37,9 +37,8 @@ verify the methods exist before building on them:
 
 ## Known rough edges (small fixes)
 
-9. **EventChannel reconnect after kick.** A kicked client's SDK retries
-   forever with backoff against a dead token; it should recognize 401 and
-   stop.
+9. ~~**EventChannel reconnect after kick.**~~ Done: a pre-reconnect auth
+   probe detects 401, stops the loop, and emits `auth_failed`.
 10. **OpenAPI response schemas.** Only ~8 of 37 operations declare them;
     full coverage would make client codegen complete.
 
@@ -59,6 +58,6 @@ verify the methods exist before building on them:
 
 ## Suggested order
 
-Name (11) → cheapest fix (9) → the herdr probe (1–3) whenever a live 0.8.x
+Name (11) → the herdr probe (1–3) whenever a live 0.8.x
 is available, since it unblocks the biggest structural items → publication
 (12) once the name is settled.

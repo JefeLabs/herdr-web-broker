@@ -44,6 +44,10 @@ export function EventsPanel({ broker, instance, session }: EventsPanelProps) {
         const clean = (e as { clean?: boolean })?.clean;
         push("sys", clean ? "closed" : "dropped — reconnecting with backoff");
       }),
+      events.on("auth_failed", () => {
+        setConnected(false);
+        push("sys", "token rejected (revoked or kicked) — reconnect stopped; re-authenticate to resume");
+      }),
       events.on("agent_status", (e) => push("in", `agent_status ${JSON.stringify(e)}`)),
       events.on("instance_online", (e) => push("in", `instance_online ${JSON.stringify(e)}`)),
       events.on("instance_offline", (e) => push("in", `instance_offline ${JSON.stringify(e)}`)),

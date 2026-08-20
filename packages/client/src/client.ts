@@ -88,6 +88,7 @@ export class BrokerClient {
     this.#events ??= new EventChannel({
       origin: this.#origin,
       token: () => this.cfg.token ?? "",
+      fetchFn: this.cfg.fetchFn,
       wsFactory: this.#wsFactory,
     });
     return this.#events;
