@@ -1,0 +1,6 @@
+.git
+node_modules
+dist
+demo/web/node_modules
+demo/web/dist
+.env
