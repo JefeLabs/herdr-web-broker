@@ -1,31 +1,36 @@
+import { BrokerNetworkError } from "@jefelabs/herdr-broker-client";
 import { useCallback, useEffect, useState, type ReactNode } from "react";
-import { send } from "../api/client";
 import { useSettings } from "../settings";
 
 /** Live auth gate: the wrapped page renders only after the bearer token has
- * been verified against the broker (GET /parent → 200). A stored token is
- * re-verified on mount — possession of localStorage is not authentication. */
+ * been verified against the broker (broker.verify() → GET /parent). A
+ * stored token is re-verified on mount — possession of localStorage is not
+ * authentication. */
 export function AuthGate({ children }: { children: ReactNode }) {
   const settings = useSettings();
   const [state, setState] = useState<"checking" | "ok" | "denied">("checking");
   const [error, setError] = useState<string | null>(null);
 
-  const verify = useCallback(async (token: string) => {
-    setState("checking");
-    setError(null);
-    try {
-      const res = await send({ method: "GET", path: "/parent", auth: "bearer" }, { bearer: token });
-      if (res.ok) {
-        setState("ok");
-      } else {
+  const verify = useCallback(
+    async (token: string) => {
+      setState("checking");
+      setError(null);
+      settings.broker.setToken(token);
+      try {
+        const res = await settings.broker.verify();
+        if (res.ok) {
+          setState("ok");
+        } else {
+          setState("denied");
+          setError(res.error?.message ?? "token rejected");
+        }
+      } catch (e) {
         setState("denied");
-        setError((res.body as { message?: string })?.message ?? `broker answered ${res.status}`);
+        setError(e instanceof BrokerNetworkError ? "broker unreachable — is it running?" : String(e));
       }
-    } catch {
-      setState("denied");
-      setError("broker unreachable — is it running?");
-    }
-  }, []);
+    },
+    [settings.broker],
+  );
 
   useEffect(() => {
     void verify(settings.bearer);

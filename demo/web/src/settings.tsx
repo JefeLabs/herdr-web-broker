@@ -1,3 +1,4 @@
+import { BrokerClient } from "@jefelabs/herdr-broker-client";
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import { send } from "./api/client";
 
@@ -8,6 +9,8 @@ export interface Settings {
   session: string;
   instances: string[];
   sessions: string[];
+  /** the shared interaction model — one client, token kept in sync */
+  broker: BrokerClient;
   set(key: "bearer" | "admin" | "instance" | "session", value: string): void;
   /** re-pulls /parent and /parent/{i} to feed the instance/session pickers */
   refresh(): Promise<void>;
@@ -34,6 +37,11 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState(stored.session ?? "default");
   const [instances, setInstances] = useState<string[]>([]);
   const [sessions, setSessions] = useState<string[]>([]);
+  const broker = useMemo(() => new BrokerClient({ origin: "" }), []);
+
+  useEffect(() => {
+    broker.setToken(bearer);
+  }, [broker, bearer]);
 
   useEffect(() => {
     localStorage.setItem(LS_KEY, JSON.stringify({ bearer, admin, instance, session }));
@@ -64,7 +72,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     else setSession(value);
   };
 
-  const value: Settings = { bearer, admin, instance, session, instances, sessions, set, refresh };
+  const value: Settings = { bearer, admin, instance, session, instances, sessions, broker, set, refresh };
   return <SettingsCtx.Provider value={value}>{children}</SettingsCtx.Provider>;
 }
 

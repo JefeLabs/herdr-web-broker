@@ -92,6 +92,15 @@ Remote sessions are also projected as local sockets —
 `HERDR_SOCKET_PATH=~/.config/herdr/remotes/laptop/default.sock herdr agent list`
 drives the laptop with the stock CLI.
 
+## Client SDK
+
+[packages/client](packages/client) is `@jefelabs/herdr-broker-client` — a
+zero-dependency TypeScript SDK (browser + Node ≥ 20) exposing the API as
+handles: `broker.instance().session().spawn()` → `agent.prompt/ask/slash/
+setModel/interrupt`, repo reads, spec-bundle `follow()` long-polling, and a
+WS event channel with subprotocol auth and reconnect. The demo site's
+workspace browser, auth gate, and events panel are built on it.
+
 ## Demo site
 
 [demo/web](demo/web) is a React site that exercises every endpoint above,

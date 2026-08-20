@@ -28,9 +28,8 @@ COPY . /opt/herdr-web-broker
 RUN cd /opt/herdr-web-broker \
   && npm install --include=dev \
   && npm run build \
-  && cd demo/web \
-  && npm install --include=dev \
-  && npm run build
+  && npm -w packages/client run build \
+  && npm -w demo/web run build
 
 COPY demo/web/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh

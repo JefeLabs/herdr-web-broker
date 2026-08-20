@@ -1,54 +1,21 @@
+import { BrokerApiError, type DiffResult, type TreeNode, type Workspace } from "@jefelabs/herdr-broker-client";
 import { useState } from "react";
-import { send, type BrokerResult } from "../api/client";
-import { CATALOG, type Ctx } from "../api/catalog";
-import { DiffView, JsonView } from "../components/ui";
+import { DiffView } from "../components/ui";
 import { useSettings } from "../settings";
 
-interface RepoInfo {
-  name: string;
-  path: string;
-  branch: string;
-  dirty: boolean;
-}
-interface AgentInfo {
-  agent: string;
-  pane_id: string;
-  status: "working" | "blocked" | "idle";
-}
-interface Workspace {
-  workspace_id: string;
-  cwd: string | null;
-  label?: string;
-  agents: AgentInfo[];
-  repos: RepoInfo[];
-}
-interface TreeNode {
-  name: string;
-  type: "dir" | "file";
-  children?: TreeNode[];
-}
-interface DiffResult {
-  branch: string;
-  status: { path: string; state: string }[];
-  diff: string;
-  truncated: boolean;
-}
-
-const specOf = (id: string) => {
-  const s = CATALOG.find((e) => e.id === id);
-  if (!s) throw new Error(`missing catalog entry ${id}`);
-  return s;
-};
+const describe = (e: unknown) =>
+  e instanceof BrokerApiError ? `${e.code}: ${e.message}` : e instanceof Error ? e.message : String(e);
 
 /** Dedicated demo: one workspace, n repos — roster, file trees straight from
- * git's index, diffs against any base. Everything on this page is served by
- * the three Workspaces & Repos endpoints. */
+ * git's index, diffs against any base. This page consumes the
+ * @jefelabs/herdr-broker-client SDK (session/repo handles), not raw fetches. */
 export function WorkspaceBrowser() {
   const settings = useSettings();
-  const ctx: Ctx = { instance: settings.instance, session: settings.session };
-  const tokens = { bearer: settings.bearer, admin: settings.admin };
+  const session = settings.broker.instance(settings.instance).session(settings.session);
 
-  const [res, setRes] = useState<BrokerResult | null>(null);
+  const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
+  const [loaded, setLoaded] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [selected, setSelected] = useState<{ ws: string; repo: string } | null>(null);
   const [tree, setTree] = useState<{ tree: TreeNode; truncated: boolean } | null>(null);
@@ -61,32 +28,30 @@ export function WorkspaceBrowser() {
     setSelected(null);
     setTree(null);
     setDiff(null);
+    setLoadError(null);
     try {
-      setRes(await send(specOf("workspaces").build({}, ctx), tokens));
+      setWorkspaces(await session.workspaces());
+    } catch (e) {
+      setWorkspaces([]);
+      setLoadError(describe(e));
     } finally {
+      setLoaded(true);
       setBusy(false);
     }
   }
 
-  async function browse(ws: string, repo: string, baseRef = base) {
-    setSelected({ ws, repo });
+  async function browse(ws: string, repoPath: string, baseRef = base) {
+    setSelected({ ws, repo: repoPath });
     setTree(null);
     setDiff(null);
     setPaneError(null);
-    const [t, d] = await Promise.all([
-      send(specOf("tree").build({ workspace_id: ws, repo }, ctx), tokens),
-      send(
-        specOf("diff").build({ workspace_id: ws, repo, ...(baseRef.trim() ? { base: baseRef } : {}) }, ctx),
-        tokens,
-      ),
-    ]);
-    if (t.ok) setTree(t.body as { tree: TreeNode; truncated: boolean });
-    else setPaneError(JSON.stringify(t.body));
-    if (d.ok) setDiff(d.body as DiffResult);
-    else if (!paneError) setPaneError(JSON.stringify(d.body));
+    const repo = session.repo(ws, repoPath);
+    const [t, d] = await Promise.allSettled([repo.tree(), repo.diff(baseRef.trim() || undefined)]);
+    if (t.status === "fulfilled") setTree(t.value);
+    else setPaneError(describe(t.reason));
+    if (d.status === "fulfilled") setDiff(d.value);
+    else setPaneError((prev) => prev ?? describe(d.reason));
   }
-
-  const workspaces = ((res?.body as { workspaces?: Workspace[] })?.workspaces ?? []).filter(Boolean);
 
   return (
     <div className="page">
@@ -116,8 +81,8 @@ export function WorkspaceBrowser() {
         </div>
       </div>
 
-      {res && !res.ok && <JsonView value={res.body} />}
-      {res?.ok && workspaces.length === 0 && (
+      {loadError && <p className="card-error">{loadError}</p>}
+      {loaded && !loadError && !busy && workspaces.length === 0 && (
         <div className="empty-hint">
           No workspaces in this session yet — spawn one from the console (POST …/agents with a cwd) and reload.
         </div>
