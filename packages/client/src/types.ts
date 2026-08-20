@@ -169,6 +169,14 @@ export interface PushResult {
   detail: string;
 }
 
+export interface PresenceEntry {
+  token: string;
+  name?: string;
+  email?: string;
+  since: string;
+  last_seen: string;
+}
+
 export interface ContextEntry {
   name: string;
   size: number;

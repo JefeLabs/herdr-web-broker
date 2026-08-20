@@ -14,6 +14,7 @@ import type {
   InstanceRollup,
   LogEntry,
   ModelInfo,
+  PresenceEntry,
   PushResult,
   SessionSummary,
   SpawnOpts,
@@ -64,6 +65,18 @@ export class BrokerClient {
   async instances(): Promise<InstanceRollup[]> {
     const r = await request<{ instances: InstanceRollup[] }>(this.cfg, "GET", "/parent");
     return r.instances;
+  }
+
+  /** Opt-in identity: tell others who is using this instance. Rides the
+   * presented token; shows up in /parent's in_use_by until kicked/expired. */
+  identify(id: { name?: string; email?: string } = {}): Promise<PresenceEntry> {
+    return request(this.cfg, "POST", "/parent/auth", { body: id });
+  }
+
+  /** Who is currently using the instance (identified tokens only). */
+  async presence(): Promise<PresenceEntry[]> {
+    const r = await request<{ in_use_by?: PresenceEntry[] }>(this.cfg, "GET", "/parent");
+    return r.in_use_by ?? [];
   }
 
   instance(name: string): InstanceHandle {

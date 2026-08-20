@@ -1,6 +1,7 @@
 import { createHash, timingSafeEqual } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { checkBearer, hashSecret, mintSecret } from "./auth.js";
+import { checkBearer, hashSecret, matchToken, mintSecret } from "./auth.js";
+import type { Presence } from "./presence.js";
 import type { BrokerConfig } from "./config.js";
 import { BrokerError, httpStatus } from "./errors.js";
 import { LocalHerdr, mapAgentList } from "./local-attach.js";
@@ -24,6 +25,10 @@ export interface HttpDeps {
   /** invoked after admin token revocation mutates config.client_tokens —
    * the daemon persists the new set to config.toml */
   onTokensChanged?: () => void;
+  /** who is using the instance (opt-in identity via POST /parent/auth) */
+  presence: Presence;
+  /** terminates live WS sockets authed with the token; returns how many */
+  onKickSockets?: (tokenName: string) => number;
 }
 
 export function makeCallInstance(deps: {
@@ -152,16 +157,31 @@ export function createHttpHandler(deps: HttpDeps) {
 
     // Auth is checked before route existence so an unauthenticated caller
     // learns nothing about which routes exist (401, never a route's 404).
-    if (!checkBearer(req.headers.authorization, deps.config.client_tokens)) {
+    const tokenName = matchToken(req.headers.authorization, deps.config.client_tokens);
+    if (tokenName === undefined) {
       throw new BrokerError("unauthorized", "missing or invalid bearer token");
     }
+    deps.presence.touch(tokenName);
     if (parts[0] !== "parent") {
       throw new BrokerError("unknown_instance", `no route ${url.pathname}`);
     }
 
     // GET /parent
     if (parts.length === 1 && req.method === "GET") {
-      json(res, 200, { instances: deps.registry.rollup() });
+      json(res, 200, { instances: deps.registry.rollup(), in_use_by: deps.presence.list() });
+      return;
+    }
+
+    // POST /parent/auth — opt-in identity: who is using this instance.
+    // ("auth" is therefore a reserved instance name.)
+    if (parts.length === 2 && parts[1] === "auth" && req.method === "POST") {
+      const body = await readBody(req);
+      const name = typeof body.name === "string" ? body.name.trim().slice(0, 64) : undefined;
+      const email = typeof body.email === "string" ? body.email.trim().slice(0, 128) : undefined;
+      if (email !== undefined && email !== "" && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+        throw new BrokerError("bad_request", "'email' must look like an email address");
+      }
+      json(res, 200, deps.presence.identify(tokenName, { ...(name ? { name } : {}), ...(email ? { email } : {}) }));
       return;
     }
 
@@ -469,6 +489,47 @@ export function createHttpHandler(deps: HttpDeps) {
         listen: deps.config.listen,
         instances: deps.registry.rollup(),
         children: deps.children.names(),
+        in_use_by: deps.presence.list(),
+      });
+      return;
+    }
+    // POST /admin/kick/{tokenName} — full eviction: revoke the token
+    // (immediate + persisted), terminate their live WS sockets, type
+    // /logout into matching agent panes, clear presence.
+    if (req.method === "POST" && parts[1] === "kick" && parts.length === 3) {
+      const name = decodeURIComponent(parts[2]);
+      const body = await readBody(req);
+      const remaining = deps.config.client_tokens.filter((t) => t.name !== name);
+      const tokenRevoked = remaining.length !== deps.config.client_tokens.length;
+      const known = tokenRevoked || deps.presence.list().some((e) => e.token === name);
+      if (!known) throw new BrokerError("unknown_token", `no client token or presence named '${name}'`);
+      if (tokenRevoked) {
+        deps.config.client_tokens = remaining;
+        deps.onTokensChanged?.();
+      }
+      const socketsClosed = deps.onKickSockets?.(name) ?? 0;
+      const kinds = Array.isArray(body.kinds) ? body.kinds.map(String) : ["copilot"];
+      const loggedOut: string[] = [];
+      if (body.logout_agents !== false) {
+        for (const session of deps.local.sessions()) {
+          const raw = (await deps.local
+            .request(session, "agent.list", {}, 10_000)
+            .catch(() => ({}))) as { agents?: Array<Record<string, unknown>> };
+          for (const a of raw.agents ?? []) {
+            if (typeof a.pane_id !== "string" || !kinds.includes(String(a.agent ?? ""))) continue;
+            await deps.local
+              .request(session, "pane.send_input", { pane_id: a.pane_id, text: "/logout", keys: ["Enter"] }, 10_000)
+              .then(() => loggedOut.push(a.pane_id as string))
+              .catch(() => undefined); // a dead pane must not abort the eviction
+          }
+        }
+      }
+      deps.presence.remove(name);
+      json(res, 200, {
+        kicked: name,
+        token_revoked: tokenRevoked,
+        sockets_closed: socketsClosed,
+        logged_out_panes: loggedOut,
       });
       return;
     }

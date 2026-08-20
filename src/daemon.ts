@@ -11,6 +11,7 @@ import { EnvRegistry } from "./env-registry.js";
 import { createHttpHandler, makeCallInstance } from "./http.js";
 import { LocalHerdr, type HerdrEndpoint } from "./local-attach.js";
 import { ModelRegistry } from "./model-registry.js";
+import { Presence } from "./presence.js";
 import { Projection } from "./projection.js";
 import { Registry } from "./registry.js";
 import { ParentLink } from "./south.js";
@@ -110,6 +111,9 @@ export async function startDaemon(opts: DaemonOptions): Promise<DaemonHandle | u
     ops,
     onReload: () => startLink({ ...loadConfig(opts.configDir), ...opts.configOverrides }),
     onTokensChanged: () => saveConfig(opts.configDir, config),
+    presence: new Presence(),
+    // late-bound: `upgrade` exists once the server is listening
+    onKickSockets: (tokenName) => upgrade?.closeToken(tokenName) ?? 0,
   });
 
   const lastColon = config.listen.lastIndexOf(":");

@@ -16,6 +16,7 @@ test("every broker route in the README is present exactly once", () => {
     "health",
     "instances",
     "instance",
+    "auth-identify",
     "sessions",
     "agents",
     "spawn",
@@ -47,6 +48,7 @@ test("every broker route in the README is present exactly once", () => {
     "admin-child-add",
     "admin-child-revoke",
     "admin-token-revoke",
+    "admin-kick",
     "admin-reload",
   ]) {
     expect(ids).toContain(id);

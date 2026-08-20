@@ -5,6 +5,7 @@ import { writeFileSync } from "node:fs";
 import type { AddressInfo } from "node:net";
 import { join } from "node:path";
 import { EnvRegistry } from "../src/env-registry.js";
+import { Presence } from "../src/presence.js";
 import { ModelRegistry } from "../src/model-registry.js";
 import { Registry } from "../src/registry.js";
 import { LocalHerdr } from "../src/local-attach.js";
@@ -41,6 +42,8 @@ async function setup() {
     askGraceMs: 150,
   };
   const persisted: string[] = [];
+  const presence = new Presence();
+  const kicked: string[] = [];
   const server = createServer(
     createHttpHandler({
       registry,
@@ -51,13 +54,18 @@ async function setup() {
       adminToken: "admin-tok",
       ops,
       onTokensChanged: () => persisted.push("saved"),
+      presence,
+      onKickSockets: (name) => {
+        kicked.push(name);
+        return 2;
+      },
     }),
   );
   await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
   const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   const authed = (path: string, init: RequestInit = {}) =>
     fetch(base + path, { ...init, headers: { authorization: "Bearer tok", ...init.headers } });
-  return { fake, registry, local, children, server, base, authed, ops, config, persisted };
+  return { fake, registry, local, children, server, base, authed, ops, config, persisted, presence, kicked };
 }
 
 async function teardown(t: { server: import("node:http").Server; local: LocalHerdr; fake: FakeHerdr }) {
@@ -560,6 +568,51 @@ test("context routes: raw upload → list → binary download → toggle → del
     });
     assert.equal(gone.status, 200);
     assert.equal((await t.authed("/parent/runtime/sessions/default/workspaces/w1/context/spec.pdf")).status, 404);
+  } finally {
+    await teardown(t);
+  }
+});
+
+test("presence: POST /parent/auth records identity; /parent shows in_use_by; kick evicts everything", async () => {
+  const t = await setup();
+  try {
+    t.fake.agents = [{ pane_id: "w1:p1", name: "claude", agent: "claude", agent_status: "idle" }];
+    t.fake.handlers.set("pane.send_input", () => ({ type: "ok" }));
+
+    const id = await t.authed("/parent/auth", {
+      method: "POST",
+      body: JSON.stringify({ name: "Kathia", email: "kathia@example.com" }),
+    });
+    assert.equal(id.status, 200);
+    const entry = (await id.json()) as { token: string; name: string; email: string };
+    assert.deepEqual([entry.token, entry.name, entry.email], ["t", "Kathia", "kathia@example.com"]);
+
+    const roll = (await (await t.authed("/parent")).json()) as { in_use_by: { token: string; name: string }[] };
+    assert.deepEqual(roll.in_use_by.map((u) => [u.token, u.name]), [["t", "Kathia"]]);
+
+    const badEmail = await t.authed("/parent/auth", { method: "POST", body: JSON.stringify({ email: "not-an-email" }) });
+    assert.equal(badEmail.status, 400);
+
+    const kick = await fetch(t.base + "/admin/kick/t", {
+      method: "POST",
+      headers: { "x-admin-token": "admin-tok", "content-type": "application/json" },
+      body: JSON.stringify({ kinds: ["claude"] }),
+    });
+    assert.equal(kick.status, 200);
+    const out = (await kick.json()) as {
+      kicked: string;
+      token_revoked: boolean;
+      sockets_closed: number;
+      logged_out_panes: string[];
+    };
+    assert.deepEqual(out, { kicked: "t", token_revoked: true, sockets_closed: 2, logged_out_panes: ["w1:p1"] });
+    assert.deepEqual(t.kicked, ["t"]);
+    const sent = t.fake.received.find((r) => r.method === "pane.send_input");
+    assert.deepEqual(sent?.params, { pane_id: "w1:p1", text: "/logout", keys: ["Enter"] });
+
+    // the kicked token is dead immediately, and presence is cleared
+    assert.equal((await t.authed("/parent")).status, 401);
+    assert.equal(t.presence.list().length, 0);
   } finally {
     await teardown(t);
   }

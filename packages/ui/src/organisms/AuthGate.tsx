@@ -6,24 +6,32 @@ export interface AuthGateProps {
   /** current token value (controlled by the host app) */
   token: string;
   onTokenChange: (token: string) => void;
+  /** when provided, optional name/email fields are shown and sent here
+   * after a successful verify — "let others see who's using this instance" */
+  onIdentify?: (id: { name?: string; email?: string }) => Promise<unknown>;
   children: ReactNode;
 }
 
 /** Live auth gate: children render only after the bearer token has been
  * verified against the broker (broker.verify()). A stored token is
  * re-verified on mount — possession of storage is not authentication. */
-export function AuthGate({ broker, token, onTokenChange, children }: AuthGateProps) {
+export function AuthGate({ broker, token, onTokenChange, onIdentify, children }: AuthGateProps) {
   const [state, setState] = useState<"checking" | "ok" | "denied">("checking");
   const [error, setError] = useState<string | null>(null);
+  const [name, setName] = useState("");
+  const [email, setEmail] = useState("");
 
   const verify = useCallback(
-    async (candidate: string) => {
+    async (candidate: string, identity?: { name?: string; email?: string }) => {
       setState("checking");
       setError(null);
       broker.setToken(candidate);
       try {
         const res = await broker.verify();
         if (res.ok) {
+          if (onIdentify && identity && (identity.name || identity.email)) {
+            await onIdentify(identity).catch(() => undefined); // presence is best-effort
+          }
           setState("ok");
         } else {
           setState("denied");
@@ -34,7 +42,7 @@ export function AuthGate({ broker, token, onTokenChange, children }: AuthGatePro
         setError(e instanceof BrokerNetworkError ? "broker unreachable — is it running?" : String(e));
       }
     },
-    [broker],
+    [broker, onIdentify],
   );
 
   useEffect(() => {
@@ -60,11 +68,28 @@ export function AuthGate({ broker, token, onTokenChange, children }: AuthGatePro
             value={token}
             placeholder="from [[client_tokens]] in config.toml"
             onChange={(e) => onTokenChange(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && void verify(token)}
+            onKeyDown={(e) => e.key === "Enter" && void verify(token, { name, email })}
           />
         </label>
+        {onIdentify && (
+          <>
+            <p className="note">Optional — let others see who is using this instance:</p>
+            <label className="field">
+              <span>your name</span>
+              <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Kathia" />
+            </label>
+            <label className="field">
+              <span>your email</span>
+              <input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@example.com" />
+            </label>
+          </>
+        )}
         <div className="card-actions">
-          <button className="btn" disabled={state === "checking"} onClick={() => void verify(token)}>
+          <button
+            className="btn"
+            disabled={state === "checking"}
+            onClick={() => void verify(token, { name, email })}
+          >
             {state === "checking" ? "verifying…" : "authenticate"}
           </button>
           {error && <span className="card-error">{error}</span>}

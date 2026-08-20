@@ -1,7 +1,7 @@
 import type { IncomingMessage, Server } from "node:http";
 import type { Duplex } from "node:stream";
 import { WebSocketServer, type WebSocket } from "ws";
-import { checkBearer, verifySecret } from "./auth.js";
+import { checkBearer, matchToken, verifySecret } from "./auth.js";
 import type { BrokerConfig } from "./config.js";
 import { BrokerError } from "./errors.js";
 import type { Registry } from "./registry.js";
@@ -34,6 +34,9 @@ export interface UpgradeHandle {
    * a socket handed off via the 'upgrade' event is no longer tracked as an
    * HTTP connection, only as a ws WebSocketServer client. */
   closeAllConnections(): void;
+  /** Terminates the client sockets that authed with the named token
+   * (kickout); returns how many were closed. */
+  closeToken(tokenName: string): number;
 }
 
 export function attachUpgradeHandling(server: Server, deps: WsDeps): UpgradeHandle {
@@ -48,6 +51,8 @@ export function attachUpgradeHandling(server: Server, deps: WsDeps): UpgradeHand
   // Keepalive: ping every interval; a socket that missed the previous pong
   // is dead and gets terminated instead of lingering.
   const alive = new WeakMap<WebSocket, boolean>();
+  // Which token authed each client socket — the kickout key.
+  const socketToken = new WeakMap<WebSocket, string>();
   const pinger = setInterval(() => {
     for (const ws of clientWss.clients) {
       if (alive.get(ws) === false) {
@@ -85,17 +90,25 @@ export function attachUpgradeHandling(server: Server, deps: WsDeps): UpgradeHand
         .map((s) => s.trim())
         .filter((s) => s && s !== "bearer");
       const queryToken = reqUrl.searchParams.get("token");
-      const ok =
-        checkBearer(req.headers.authorization, deps.config.client_tokens) ||
-        offered.some((t) => checkBearer(`Bearer ${t}`, deps.config.client_tokens)) ||
-        (queryToken !== null && checkBearer(`Bearer ${queryToken}`, deps.config.client_tokens));
-      if (!ok) {
+      const candidates = [
+        req.headers.authorization,
+        ...offered.map((t) => `Bearer ${t}`),
+        ...(queryToken !== null ? [`Bearer ${queryToken}`] : []),
+      ];
+      let matched: string | undefined;
+      for (const c of candidates) {
+        matched = matchToken(c, deps.config.client_tokens);
+        if (matched !== undefined) break;
+      }
+      if (matched === undefined) {
         socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
         socket.destroy();
         return;
       }
+      const tokenName = matched;
       clientWss.handleUpgrade(req, socket, head, (ws) => {
         alive.set(ws, true);
+        socketToken.set(ws, tokenName);
         ws.on("pong", () => alive.set(ws, true));
         acceptClient(deps, ws);
       });
@@ -110,6 +123,16 @@ export function attachUpgradeHandling(server: Server, deps: WsDeps): UpgradeHand
       clearInterval(pinger);
       for (const ws of enrollWss.clients) ws.terminate();
       for (const ws of clientWss.clients) ws.terminate();
+    },
+    closeToken(tokenName: string): number {
+      let closed = 0;
+      for (const ws of clientWss.clients) {
+        if (socketToken.get(ws) === tokenName) {
+          ws.terminate();
+          closed++;
+        }
+      }
+      return closed;
     },
   };
 }

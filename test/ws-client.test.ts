@@ -85,6 +85,29 @@ test("server pings keep idle client sockets alive through intermediaries", async
   await fake.close();
 });
 
+test("kick closes the kicked token's live WS sockets and revokes the token", async () => {
+  const { fake, handle } = await boot();
+  const ws = new WebSocket(`ws://127.0.0.1:${handle.port}/parent/ws?token=tok`);
+  await new Promise((r) => ws.once("open", r));
+  const closed = new Promise<void>((r) => ws.once("close", () => r()));
+
+  const kick = await fetch(`http://127.0.0.1:${handle.port}/admin/kick/t`, {
+    method: "POST",
+    headers: { "x-admin-token": handle.adminToken, "content-type": "application/json" },
+    body: JSON.stringify({ logout_agents: false }),
+  });
+  const out = (await kick.json()) as { token_revoked: boolean; sockets_closed: number };
+  assert.equal(out.token_revoked, true);
+  assert.equal(out.sockets_closed, 1);
+  await closed;
+
+  const reconnect = new WebSocket(`ws://127.0.0.1:${handle.port}/parent/ws?token=tok`);
+  const err = await new Promise<Error>((r) => reconnect.once("error", r));
+  assert.match(err.message, /401/, "the revoked token cannot reconnect");
+  await handle.close();
+  await fake.close();
+});
+
 test("rpc over ws round-trips; events.subscribe acks; events stream unsolicited", async () => {
   const { fake, handle } = await boot();
   const ws = new WebSocket(`ws://127.0.0.1:${handle.port}/parent/ws`, {

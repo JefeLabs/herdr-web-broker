@@ -107,6 +107,37 @@ export const CATALOG: EndpointSpec[] = [
     build: (_v, ctx) => ({ method: "GET", path: `/parent/${enc(ctx.instance)}`, auth: "bearer" }),
   },
   {
+    id: "auth-identify",
+    group: "Instances",
+    title: "Identify (who's using this)",
+    summary: "Opt-in identity for the presented token — name/email show up in /parent's in_use_by so others can see the instance is occupied.",
+    docs: "Presence is in-memory and expires after ~10 minutes of silence; every authed request refreshes it. 'auth' is a reserved instance name.",
+    method: "POST",
+    pathTemplate: "/parent/auth",
+    auth: "bearer",
+    fields: [
+      { key: "name", label: "your name", kind: "text", placeholder: "Kathia" },
+      { key: "email", label: "your email", kind: "text", placeholder: "you@example.com" },
+    ],
+    response: {
+      type: "object",
+      properties: {
+        token: { type: "string" },
+        name: { type: "string" },
+        email: { type: "string" },
+        since: { type: "string" },
+        last_seen: { type: "string" },
+      },
+      required: ["token", "since", "last_seen"],
+    },
+    build: (v) => {
+      const body: Record<string, unknown> = {};
+      if (v.name?.trim()) body.name = v.name.trim();
+      if (v.email?.trim()) body.email = v.email.trim();
+      return { method: "POST", path: "/parent/auth", auth: "bearer", body };
+    },
+  },
+  {
     id: "sessions",
     group: "Sessions & Agents",
     title: "List sessions",
@@ -802,6 +833,37 @@ export const CATALOG: EndpointSpec[] = [
     auth: "admin",
     fields: [{ key: "name", label: "token name", kind: "text", required: true, placeholder: "demo" }],
     build: (v) => ({ method: "DELETE", path: `/admin/tokens/${enc(need(v, "name"))}`, auth: "admin" }),
+  },
+  {
+    id: "admin-kick",
+    group: "Admin",
+    title: "Kick user",
+    summary: "Full eviction of a token's user: revoke the token (immediate + persisted), terminate their live WS sockets, type /logout into matching agent panes, clear presence.",
+    docs: "kinds defaults to [\"copilot\"]; logout_agents:false skips the agent logout. Logout is 'sent' semantics — pane.read confirms.",
+    method: "POST",
+    pathTemplate: "/admin/kick/{name}",
+    auth: "admin",
+    fields: [
+      { key: "name", label: "token name", kind: "text", required: true, placeholder: "demo" },
+      { key: "kinds", label: "agent kinds to log out (JSON array)", kind: "json", placeholder: '["copilot"]' },
+      { key: "skip_logout", label: "skip agent logout", kind: "toggle" },
+    ],
+    response: {
+      type: "object",
+      properties: {
+        kicked: { type: "string" },
+        token_revoked: { type: "boolean" },
+        sockets_closed: { type: "number" },
+        logged_out_panes: { type: "array", items: { type: "string" } },
+      },
+      required: ["kicked", "token_revoked", "sockets_closed", "logged_out_panes"],
+    },
+    build: (v) => {
+      const body: Record<string, unknown> = {};
+      if (v.kinds?.trim()) body.kinds = parseJson(v.kinds, "kinds");
+      if (v.skip_logout === "1") body.logout_agents = false;
+      return { method: "POST", path: `/admin/kick/${enc(need(v, "name"))}`, auth: "admin", body };
+    },
   },
   {
     id: "admin-reload",

@@ -28,7 +28,12 @@ function useHashRoute(): string {
 function Gated({ children }: { children: React.ReactNode }) {
   const s = useSettings();
   return (
-    <AuthGate broker={s.broker} token={s.bearer} onTokenChange={(t) => s.set("bearer", t)}>
+    <AuthGate
+      broker={s.broker}
+      token={s.bearer}
+      onTokenChange={(t) => s.set("bearer", t)}
+      onIdentify={(id) => s.broker.identify(id)}
+    >
       {children}
     </AuthGate>
   );

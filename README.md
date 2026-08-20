@@ -69,6 +69,8 @@ the local machine; anything else is an enrolled child.
 | `POST /parent/{instance}/env` | store an env var for agent spawns: `{name, value, kind?, session?}` — write-only |
 | `GET /parent/{instance}/env` | stored names + scopes + source (`manual`/`hook`) — never values |
 | `DELETE /parent/{instance}/env/{name}` | remove an entry (`?kind=&session=` select the scope) |
+| `POST /parent/auth` | opt-in identity: `{name?, email?}` — shows in `/parent`'s `in_use_by` so others see the instance is occupied (10min TTL, refreshed by activity) |
+| `POST /admin/kick/{token}` | full eviction: revoke the token, terminate their WS sockets, `/logout` matching agent panes (`{kinds?, logout_agents?}`), clear presence |
 | `DELETE /admin/tokens/{name}` | revoke a client token: immediate for new requests/WS upgrades, persisted to config.toml (admin-gated) |
 | `WS /parent/ws` | duplex rpc + unsolicited status events |
 
