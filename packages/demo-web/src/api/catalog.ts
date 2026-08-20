@@ -65,6 +65,7 @@ export const GROUPS = [
   "Context",
   "Ask",
   "Slash",
+  "Pane",
   "Spec Bundles",
   "RPC",
   "Env Registry",
@@ -572,6 +573,51 @@ export const CATALOG: EndpointSpec[] = [
       auth: "bearer",
       body: v.args?.trim() ? { args: v.args.trim() } : {},
     }),
+  },
+  {
+    id: "pane-screen",
+    group: "Pane",
+    title: "Pane screen (live view)",
+    summary: "The pane's terminal text with a content-version hash — pass version + wait_ms to long-poll for the next change. The Pane page renders this live.",
+    docs:
+      "source=visible is the live screen; source=recent is scrollback, tail-truncated at 256K chars (the recent " +
+      "end is the part a viewer needs). With version + wait_ms the reply arrives the moment the screen changes, " +
+      "or {unchanged: true} at the deadline (max 30s) — one waiting request per idle pane, not a poll storm. " +
+      "Write back through rpc pane.send_input / pane.send_keys; the SDK's watchScreen() manages the loop.",
+    method: "GET",
+    pathTemplate: "/parent/{instance}/sessions/{session}/panes/{pane_id}/screen",
+    auth: "bearer",
+    fields: [
+      { key: "pane_id", label: "pane_id", kind: "text", required: true, placeholder: "w1:p1" },
+      { key: "source", label: "source", kind: "select", options: ["visible", "recent"] },
+      { key: "version", label: "version (long-poll)", kind: "text", placeholder: "hash from the last reply" },
+      { key: "wait_ms", label: "wait_ms", kind: "number", placeholder: "25000" },
+    ],
+    response: {
+      type: "object",
+      properties: {
+        pane_id: { type: "string" },
+        source: { type: "string", enum: ["visible", "recent"] },
+        text: { type: "string" },
+        version: { type: "string" },
+        as_of: { type: "string" },
+        truncated: { type: "boolean" },
+        unchanged: { type: "boolean", description: "present (true) when version matched for the full wait — no text field then" },
+      },
+      required: ["pane_id", "source", "version"],
+    },
+    build: (v, ctx) => {
+      const query: Record<string, string> = {};
+      if (v.source?.trim()) query.source = v.source.trim();
+      if (v.version?.trim()) query.version = v.version.trim();
+      if (v.wait_ms?.trim()) query.wait_ms = v.wait_ms.trim();
+      return {
+        method: "GET",
+        path: `${sess(ctx)}/panes/${enc(need(v, "pane_id"))}/screen`,
+        auth: "bearer",
+        ...(Object.keys(query).length ? { query } : {}),
+      };
+    },
   },
   {
     id: "spec-drive",

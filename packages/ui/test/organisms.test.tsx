@@ -2,8 +2,9 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { afterEach, describe, expect, test, vi } from "vitest";
 
 afterEach(cleanup);
-import type { BrokerClient } from "@jefelabs/herdr-broker-client";
+import type { BrokerClient, Screen as PaneScreen } from "@jefelabs/herdr-broker-client";
 import { AuthGate } from "../src/organisms/AuthGate.js";
+import { PaneViewer } from "../src/organisms/PaneViewer.js";
 import { WorkspaceBrowser } from "../src/organisms/WorkspaceBrowser.js";
 
 describe("AuthGate", () => {
@@ -33,6 +34,53 @@ describe("AuthGate", () => {
     );
     await waitFor(() => expect(screen.getByText("missing or invalid bearer token")).toBeTruthy());
     expect(screen.queryByText("secret content")).toBeNull();
+  });
+});
+
+describe("PaneViewer", () => {
+  function paneMocks() {
+    const stop = vi.fn();
+    const agent = {
+      watchScreen: vi.fn((cb: (s: PaneScreen) => void) => {
+        cb({ pane_id: "w1:p1", source: "visible", text: "❯ npm test ▌", version: "v1", as_of: "now" });
+        return stop;
+      }),
+      type: vi.fn(async () => undefined),
+      keys: vi.fn(async () => undefined),
+    };
+    const broker = {
+      instance: () => ({ session: () => ({ agent: () => agent }) }),
+    } as unknown as BrokerClient;
+    return { broker, agent, stop };
+  }
+
+  test("streams frames live on mount and stops the watch on unmount", async () => {
+    const { broker, agent, stop } = paneMocks();
+    const view = render(<PaneViewer broker={broker} instance="runtime" session="default" paneId="w1:p1" />);
+    await waitFor(() => expect(screen.getByText(/npm test/)).toBeTruthy());
+    expect(agent.watchScreen).toHaveBeenCalledOnce();
+    view.unmount();
+    expect(stop).toHaveBeenCalled();
+  });
+
+  test("the recent toggle restarts the watch with source=recent", async () => {
+    const { broker, agent } = paneMocks();
+    render(<PaneViewer broker={broker} instance="runtime" session="default" paneId="w1:p1" />);
+    fireEvent.click(screen.getByText("recent"));
+    await waitFor(() => expect(agent.watchScreen).toHaveBeenCalledTimes(2));
+    expect(agent.watchScreen.mock.calls[1][1]).toMatchObject({ source: "recent" });
+  });
+
+  test("the input bar types into the pane and Esc sends the interrupt key", async () => {
+    const { broker, agent } = paneMocks();
+    render(<PaneViewer broker={broker} instance="runtime" session="default" paneId="w1:p1" />);
+    const input = screen.getByPlaceholderText(/type into the pane/i) as HTMLInputElement;
+    fireEvent.change(input, { target: { value: "1" } });
+    fireEvent.click(screen.getByText("send"));
+    await waitFor(() => expect(agent.type).toHaveBeenCalledWith("1"));
+    expect(input.value).toBe("");
+    fireEvent.click(screen.getByText("Esc"));
+    await waitFor(() => expect(agent.keys).toHaveBeenCalledWith(["Escape"]));
   });
 });
 

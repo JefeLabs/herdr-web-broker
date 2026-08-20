@@ -98,7 +98,8 @@ fake.handlers.set("pane.send_text", () => ({ type: "ok" }));
 fake.handlers.set("pane.send_keys", () => ({ type: "ok" }));
 fake.handlers.set("pane.read", () => ({
   type: "pane_read",
-  read: { text: "user@sim:~/work % _" },
+  // ticks every ~3s so the live pane viewer's long-poll has changes to show
+  read: { text: `user@sim:~/work % _\n[sim] heartbeat ${Math.floor(Date.now() / 3000)}` },
 }));
 
 const setStatus = (name, status) => {

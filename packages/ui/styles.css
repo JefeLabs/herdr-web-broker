@@ -425,3 +425,23 @@ footer.site {
   border-top: 1px solid var(--line); margin-top: 4rem; padding: 1.2rem;
   text-align: center; color: var(--ink-faint); font-size: 0.72rem;
 }
+
+/* ── pane viewer — the live terminal ──────────────────────────────── */
+.pane-viewer .btn.active { border-color: var(--amber); color: var(--amber); }
+.term-screen {
+  background: #0b0e08; border: 1px solid var(--line); padding: 0.8rem;
+  min-height: 16rem; max-height: 60vh; overflow: auto;
+  font-size: 0.78rem; line-height: 1.35; white-space: pre-wrap; word-break: break-word;
+  color: #b7e29a; text-shadow: 0 0 6px rgba(148, 220, 106, 0.25);
+}
+.term-screen[data-source="recent"] { max-height: 70vh; }
+.term-status {
+  display: flex; gap: 1rem; align-items: center; margin: 0.4rem 0;
+  color: var(--ink-faint); font-size: 0.7rem; font-family: var(--mono);
+}
+.term-error { color: var(--red, #e2635a); }
+.term-bar { display: flex; gap: 0.5rem; }
+.term-bar input {
+  flex: 1; background: var(--bg-raise); border: 1px solid var(--line);
+  color: var(--ink); padding: 0.5rem 0.7rem; font-family: var(--mono); font-size: 0.8rem;
+}

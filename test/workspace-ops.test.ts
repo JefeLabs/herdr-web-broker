@@ -727,6 +727,109 @@ test("spec bundle plan: prompts the agent to write plan.md from the bundle; unkn
   }
 });
 
+test("pane screen: returns text with a version hash; matching version long-polls to unchanged", async () => {
+  const t = await setup();
+  try {
+    t.fake.handlers.set("pane.read", () => ({ type: "pane_read", read: { text: "❯ npm test\nall green ▌" } }));
+    const first = (await runBrokerMethod(t.deps, "default", "broker.pane.screen", { pane_id: "w1:p1" })) as {
+      pane_id: string;
+      source: string;
+      text: string;
+      version: string;
+      as_of: string;
+    };
+    assert.equal(first.pane_id, "w1:p1");
+    assert.equal(first.source, "visible");
+    assert.equal(first.text, "❯ npm test\nall green ▌");
+    assert.match(first.version, /^[a-f0-9]{16}$/);
+    assert.ok(first.as_of);
+
+    // same screen + known version + no wait → immediate unchanged, no text payload
+    const again = (await runBrokerMethod(t.deps, "default", "broker.pane.screen", {
+      pane_id: "w1:p1",
+      version: first.version,
+    })) as { unchanged?: boolean; version: string; text?: string };
+    assert.equal(again.unchanged, true);
+    assert.equal(again.version, first.version);
+    assert.equal(again.text, undefined);
+  } finally {
+    await t.teardown();
+  }
+});
+
+test("pane screen: long-poll returns the moment the screen changes, not at the deadline", async () => {
+  const t = await setup();
+  t.deps.screenPollMs = 25;
+  try {
+    let screenText = "frame one";
+    t.fake.handlers.set("pane.read", () => ({ type: "pane_read", read: { text: screenText } }));
+    const v1 = ((await runBrokerMethod(t.deps, "default", "broker.pane.screen", { pane_id: "w1:p1" })) as {
+      version: string;
+    }).version;
+
+    setTimeout(() => (screenText = "frame two"), 100);
+    const started = Date.now();
+    const changed = (await runBrokerMethod(t.deps, "default", "broker.pane.screen", {
+      pane_id: "w1:p1",
+      version: v1,
+      wait_ms: 5000,
+    })) as { text: string; version: string; unchanged?: boolean };
+    assert.equal(changed.text, "frame two");
+    assert.notEqual(changed.version, v1);
+    assert.equal(changed.unchanged, undefined);
+    // returned on the change (~100ms), not the 5s deadline
+    assert.ok(Date.now() - started < 3000);
+  } finally {
+    await t.teardown();
+  }
+});
+
+test("pane screen: 'recent' passes through to herdr; other sources are rejected; herdr errors surface", async () => {
+  const t = await setup();
+  try {
+    t.fake.handlers.set("pane.read", () => ({ type: "pane_read", read: { text: "scrollback…" } }));
+    const r = (await runBrokerMethod(t.deps, "default", "broker.pane.screen", {
+      pane_id: "w1:p1",
+      source: "recent",
+    })) as { source: string; text: string };
+    assert.equal(r.source, "recent");
+    const sent = t.fake.received.find((f) => f.method === "pane.read")?.params as { source: string };
+    assert.equal(sent.source, "recent");
+
+    await assert.rejects(
+      runBrokerMethod(t.deps, "default", "broker.pane.screen", { pane_id: "w1:p1", source: "history" }),
+      (e: BrokerError) => e.code === "bad_request",
+    );
+
+    t.fake.handlers.set("pane.read", () => {
+      throw new FakeHerdrError("pane_not_found", "no pane w9:p9");
+    });
+    await assert.rejects(
+      runBrokerMethod(t.deps, "default", "broker.pane.screen", { pane_id: "w9:p9" }),
+      (e: BrokerError) => e.code === "pane_not_found",
+    );
+  } finally {
+    await t.teardown();
+  }
+});
+
+test("pane screen: oversized scrollback keeps the TAIL — the recent end is the part that matters", async () => {
+  const t = await setup();
+  try {
+    const big = "x".repeat(300_000) + "THE END";
+    t.fake.handlers.set("pane.read", () => ({ type: "pane_read", read: { text: big } }));
+    const r = (await runBrokerMethod(t.deps, "default", "broker.pane.screen", {
+      pane_id: "w1:p1",
+      source: "recent",
+    })) as { text: string; truncated?: boolean };
+    assert.equal(r.truncated, true);
+    assert.ok(r.text.endsWith("THE END"));
+    assert.ok(r.text.length <= 262_144);
+  } finally {
+    await t.teardown();
+  }
+});
+
 test("ask: a second concurrent ask on the same pane answers 409 pane_busy; steering stays allowed", async () => {
   const t = await setup();
   try {

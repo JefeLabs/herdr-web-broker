@@ -462,6 +462,21 @@ export function createHttpHandler(deps: HttpDeps) {
       return;
     }
 
+    // Live pane viewer — the terminal screen as data.
+    // GET .../panes/{pane}/screen?source=&version=&wait_ms=  pull/long-poll
+    if (parts.length === 7 && parts[4] === "panes" && parts[6] === "screen" && req.method === "GET") {
+      const params: Record<string, unknown> = { pane_id: decodeURIComponent(parts[5]) };
+      const source = url.searchParams.get("source");
+      if (source !== null) params.source = source;
+      const version = url.searchParams.get("version");
+      if (version !== null) params.version = version;
+      const waitRaw = url.searchParams.get("wait_ms");
+      const waitMs = waitRaw === null ? 0 : Math.min(Math.max(Number(waitRaw) || 0, 0), 30_000);
+      if (waitMs > 0) params.wait_ms = waitMs;
+      json(res, 200, await callInstance(instance, session, "broker.pane.screen", params, waitMs + 15_000));
+      return;
+    }
+
     // POST /parent/{i}/sessions/{s}/rpc
     if (parts[4] === "rpc" && req.method === "POST") {
       const body = await readBody(req);

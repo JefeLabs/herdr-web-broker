@@ -4,6 +4,7 @@ import { send } from "./api/client";
 import { ApiSpec } from "./pages/ApiSpec";
 import { Console } from "./pages/Console";
 import { Intro } from "./pages/Intro";
+import { PanePage } from "./pages/Pane";
 import { WorkspacePage } from "./pages/Workspace";
 import { SettingsProvider, useSettings } from "./settings";
 
@@ -11,6 +12,7 @@ const ROUTES = [
   { hash: "#/", label: "Intro" },
   { hash: "#/console", label: "Console" },
   { hash: "#/workspace", label: "Workspace" },
+  { hash: "#/pane", label: "Pane" },
   { hash: "#/api", label: "API Spec" },
 ] as const;
 
@@ -86,6 +88,10 @@ export function App() {
       ) : route === "#/workspace" ? (
         <Gated>
           <WorkspacePage />
+        </Gated>
+      ) : route === "#/pane" ? (
+        <Gated>
+          <PanePage />
         </Gated>
       ) : route === "#/api" ? (
         <ApiSpec />

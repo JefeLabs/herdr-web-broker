@@ -49,9 +49,9 @@ verify the methods exist before building on them:
 16. **Security tier for shared instances:** hash client tokens at rest
     (mint-once-show-once, like child secrets), rate-limit auth attempts,
     and an audit trail for admin actions (kick/mint/revoke/env writes).
-17. **Live pane viewer.** A terminal-view organism (pane.read polling,
-    long-poll discipline) — watch the agent type from the browser; zero
-    new herdr surface needed.
+17. ~~**Live pane viewer.**~~ Done: `GET .../panes/{pane}/screen` long-polls
+    by content version; SDK `watchScreen()`/`type()`/`keys()`; PaneViewer
+    organism + demo Pane page (interactive — trust dialogs answered live).
 18. **Codify manual verification into CI:** a Playwright e2e suite for the
     demo flows (gate → spawn → steer → kick), and a scheduled docker run
     against real herdr to catch upstream drift.

@@ -111,6 +111,24 @@ export interface AskResult {
   full_bytes?: number;
 }
 
+export type ScreenSource = "visible" | "recent";
+
+export interface Screen {
+  pane_id: string;
+  source: ScreenSource;
+  text: string;
+  version: string;
+  as_of: string;
+  truncated?: boolean;
+}
+
+export interface ScreenUnchanged {
+  pane_id: string;
+  source: ScreenSource;
+  version: string;
+  unchanged: true;
+}
+
 export interface PromptReceipt {
   status: "prompted";
   pane_id: string;

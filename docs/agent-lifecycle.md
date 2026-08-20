@@ -145,8 +145,15 @@ send `Escape` first.
   bearer, <token>` (browser-friendly, preferred), or `?token=` (fallback —
   scrub the param from proxy logs). The server pings every 30s so
   intermediaries don't cull idle sockets.
-- **`pane.read`** over rpc — the actual terminal screen, when status isn't
-  enough.
+- **`GET .../panes/{pane}/screen?source=&version=&wait_ms=`** — the live
+  pane viewer: the terminal text plus a content-version hash. Pass the
+  last `version` with `wait_ms` (max 30s) to long-poll — the reply
+  arrives the moment the screen changes, or `{unchanged: true}` at the
+  deadline, so an idle pane costs one waiting request. `source=recent`
+  reads scrollback (tail-truncated at 256K chars). The SDK's
+  `watchScreen()` manages the loop; the demo's Pane page renders it.
+- **`pane.read`** over rpc — the same screen as a one-shot, when you
+  don't need the long-poll discipline.
 
 ## 6. Death — and its current honesty gaps
 
@@ -183,4 +190,5 @@ Known limitations, documented rather than papered over:
 | Model switch | `POST .../agents/{pane}/model` `{model}` |
 | Design docs loop | `POST .../agents/{pane}/spec-bundles` + long-poll GET |
 | Status | `GET .../agents?fresh=1` (`status` + `raw_status`) |
+| Watch the terminal | `GET .../panes/{pane}/screen?version=&wait_ms=` (long-poll) |
 | Live events | `WS /parent/ws` |

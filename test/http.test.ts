@@ -412,6 +412,35 @@ test("slash route: POST .../slash/{command} types the command; args ride the bod
   }
 });
 
+test("pane screen route: GET serves the terminal text; version+wait_ms long-polls; source passes through", async () => {
+  const t = await setup();
+  try {
+    t.fake.handlers.set("pane.read", () => ({ type: "pane_read", read: { text: "❯ building…" } }));
+
+    const res = await t.authed("/parent/runtime/sessions/default/panes/w1%3Ap1/screen");
+    assert.equal(res.status, 200);
+    const body = (await res.json()) as { pane_id: string; source: string; text: string; version: string };
+    assert.equal(body.pane_id, "w1:p1");
+    assert.equal(body.source, "visible");
+    assert.equal(body.text, "❯ building…");
+
+    const idle = await t.authed(
+      `/parent/runtime/sessions/default/panes/w1%3Ap1/screen?version=${body.version}&wait_ms=100`,
+    );
+    assert.equal(((await idle.json()) as { unchanged?: boolean }).unchanged, true);
+
+    const recent = await t.authed("/parent/runtime/sessions/default/panes/w1%3Ap1/screen?source=recent");
+    assert.equal(((await recent.json()) as { source: string }).source, "recent");
+    const sent = t.fake.received.find((r) => r.method === "pane.read" && (r.params as { source: string }).source === "recent");
+    assert.ok(sent, "recent source reached herdr");
+
+    const bad = await t.authed("/parent/runtime/sessions/default/panes/w1%3Ap1/screen?source=history");
+    assert.equal(bad.status, 400);
+  } finally {
+    await teardown(t);
+  }
+});
+
 test("spec-bundle routes: drive creates and prompts; get/list/plan wire through", async () => {
   const t = await setup();
   try {

@@ -66,7 +66,7 @@ describe("buildOpenApi", () => {
   test("every catalog entry appears exactly once as an operation", () => {
     const ids = Object.values(paths).flatMap((ops) => Object.values(ops).map((op) => op.operationId));
     expect(new Set(ids).size).toBe(ids.length);
-    expect(ids).toHaveLength(38);
+    expect(ids).toHaveLength(39);
   });
 
   test("EVERY operation declares a success response schema — codegen-complete", () => {

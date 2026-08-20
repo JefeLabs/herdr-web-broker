@@ -47,6 +47,8 @@ export interface OpsDeps {
   filePollMs?: number;
   /** in-flight ask locks, keyed `${session}:${pane}` — lazily initialized */
   askLocks?: Set<string>;
+  /** test override for pane-screen long-poll pacing */
+  screenPollMs?: number;
 }
 
 export function isBrokerMethod(method: string): boolean {
@@ -187,6 +189,8 @@ export async function runBrokerMethod(
     }
     case "broker.agent.spawn":
       return spawn(deps, session, p);
+    case "broker.pane.screen":
+      return screen(deps, session, p);
     case "broker.agent.ask":
       return ask(deps, session, p);
     case "broker.agent.model":
@@ -443,6 +447,45 @@ async function steer(deps: OpsDeps, session: string, p: Record<string, unknown>)
   const full = preamble ? `${preamble}\n\n${text}` : text;
   await deps.local.request(session, "agent.prompt", { target, text: full }, 30_000);
   return { status: "prompted", pane_id: pane, kind, agent: target };
+}
+
+/** Live pane viewer: the terminal screen as data, long-polled by content
+ * version exactly like spec-bundle GET. Rides the verified pane.read — no
+ * new herdr surface. `visible` is the live screen; `recent` is scrollback,
+ * tail-truncated because the recent end is the part a viewer needs. */
+const SCREEN_CAP_CHARS = 262_144;
+
+async function screen(deps: OpsDeps, session: string, p: Record<string, unknown>): Promise<unknown> {
+  const pane = str(p.pane_id, "pane_id");
+  const source = p.source ?? "visible";
+  if (source !== "visible" && source !== "recent") {
+    throw new BrokerError("bad_request", "'source' must be 'visible' or 'recent'");
+  }
+  const known = typeof p.version === "string" ? p.version : undefined;
+  const waitMs = Math.min(Math.max(typeof p.wait_ms === "number" ? p.wait_ms : 0, 0), 30_000);
+  const pollMs = deps.screenPollMs ?? 500;
+  const deadline = Date.now() + waitMs;
+  for (;;) {
+    const r = (await deps.local.request(session, "pane.read", { pane_id: pane, source }, 10_000)) as {
+      read?: { text?: string };
+    };
+    let text = r?.read?.text ?? "";
+    const truncated = text.length > SCREEN_CAP_CHARS;
+    if (truncated) text = text.slice(-SCREEN_CAP_CHARS);
+    const version = createHash("sha256").update(text).digest("hex").slice(0, 16);
+    if (!known || version !== known) {
+      return {
+        pane_id: pane,
+        source,
+        text,
+        version,
+        as_of: new Date().toISOString(),
+        ...(truncated ? { truncated: true } : {}),
+      };
+    }
+    if (Date.now() >= deadline) return { pane_id: pane, source, version, unchanged: true };
+    await new Promise((resolve) => setTimeout(resolve, pollMs));
+  }
 }
 
 /** Generic slash driver: types the CLI's own /command into the pane. The
