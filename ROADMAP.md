@@ -78,7 +78,11 @@ map!), `pane.close`, `agent.wait`, and `agent.prompt`'s
     anything is published (plugin ids bake into users' herdr config paths).
     Decide before item 12.
 12. **Publication.** Marketplace listing for the plugin; npm publishing +
-    versioning for `@jefelabs/herdr-broker-client` and `-ui`.
+    versioning for `@jefelabs/herdr-broker-client` and `-ui`. Packaging
+    plan: events + models already live in `-client` — expose them as
+    subpath exports (`/events`, `/types`) rather than a third `-sdk`
+    package; revisit the split only if a consumer needs the wire types
+    without the client (e.g. a server-side schema sharer).
 13. **Federation validation.** Every feature routes through `callInstance`
     so children should work at matching plugin versions, but no end-to-end
     parent↔child pairing test exists yet.
@@ -87,6 +91,9 @@ map!), `pane.close`, `agent.wait`, and `agent.prompt`'s
 
 ## Suggested order
 
-Name (11) → the herdr probe (1–3) whenever a live 0.8.x
-is available, since it unblocks the biggest structural items → publication
-(12) once the name is settled.
+Remaining build work first — federation validation (13) as the only
+untested structural claim, agent ownership (5) as the strongest feature
+candidate, then the rest of the deferred features (4, 7, 8) and the hooks
+layer (14) as demand dictates. The **name (11) comes second to last** and
+**publication (12) last** — renaming is cheap until something is
+published, so the decision waits until the code is done moving.
