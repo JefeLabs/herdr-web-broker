@@ -220,6 +220,36 @@ export const CATALOG: EndpointSpec[] = [
     }),
   },
   {
+    id: "agent-stop",
+    group: "Sessions & Agents",
+    title: "Stop agent",
+    summary: "End an agent for good: closes its pane (the process dies with the PTY). The workspace and the rest of the team survive.",
+    docs:
+      "Rides herdr's pane.close (wire-verified). Requires an agent in the pane — a typo'd pane id answers " +
+      "400 'no agent in pane' instead of silently closing someone's shell. For a mid-run cancel that keeps " +
+      "the agent alive, send Escape via rpc pane.send_keys instead; to end a whole working set, use " +
+      "DELETE .../workspaces/{w}.",
+    method: "DELETE",
+    pathTemplate: "/parent/{instance}/sessions/{session}/agents/{pane_id}",
+    auth: "bearer",
+    fields: [{ key: "pane_id", label: "pane_id", kind: "text", required: true, placeholder: "w1:p1" }],
+    response: {
+      type: "object",
+      properties: {
+        stopped: { type: "boolean" },
+        pane_id: { type: "string" },
+        agent: { type: "string" },
+        kind: { type: "string" },
+      },
+      required: ["stopped", "pane_id", "agent", "kind"],
+    },
+    build: (v, ctx) => ({
+      method: "DELETE",
+      path: `${sess(ctx)}/agents/${enc(need(v, "pane_id"))}`,
+      auth: "bearer",
+    }),
+  },
+  {
     id: "spawn",
     group: "Spawn",
     title: "Spawn agent",

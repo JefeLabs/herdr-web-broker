@@ -83,6 +83,11 @@ fake.handlers.set("pane.split", (p) => ({
   pane: { pane_id: `${p?.workspace_id ?? "w1"}:p${nextPane++}` },
 }));
 
+fake.handlers.set("pane.close", (p) => {
+  fake.agents = fake.agents.filter((a) => a.pane_id !== String(p?.pane_id ?? ""));
+  return { type: "ok" };
+});
+
 fake.handlers.set("workspace.close", (p) => {
   const id = String(p?.workspace_id ?? "");
   workspaces.delete(id);

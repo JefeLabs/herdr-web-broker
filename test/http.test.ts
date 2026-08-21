@@ -516,6 +516,20 @@ test("slash route: POST .../slash/{command} types the command; args ride the bod
   }
 });
 
+test("agent stop route: DELETE .../agents/{pane} closes the agent's pane", async () => {
+  const t = await setup();
+  try {
+    t.fake.handlers.set("pane.close", () => ({ type: "ok" }));
+    const res = await t.authed("/parent/runtime/sessions/default/agents/w1%3Ap1", { method: "DELETE" });
+    assert.equal(res.status, 200);
+    const body = (await res.json()) as { stopped: boolean; agent: string };
+    assert.equal(body.stopped, true);
+    assert.equal(body.agent, "claude");
+  } finally {
+    await teardown(t);
+  }
+});
+
 test("workspace close route: DELETE .../workspaces/{w} reaps it", async () => {
   const t = await setup();
   try {

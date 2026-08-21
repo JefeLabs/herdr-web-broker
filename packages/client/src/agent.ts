@@ -64,6 +64,13 @@ export class AgentHandle {
     return request(this.session.cfg, "POST", `${this.#base()}/model`, { body: { model } });
   }
 
+  /** Stop the agent for good: closes its pane (the process dies with the
+   * PTY); the workspace and the rest of the team survive. For a mid-run
+   * cancel that keeps the agent alive, use interrupt() instead. */
+  stop(): Promise<{ stopped: boolean; pane_id: string; agent: string; kind: string }> {
+    return request(this.session.cfg, "DELETE", this.#base());
+  }
+
   /** The portable hard interrupt: Escape into the pane, then re-prompt. */
   async interrupt(): Promise<void> {
     await this.session.rpc("pane.send_keys", { pane_id: this.paneId, keys: ["Escape"] });

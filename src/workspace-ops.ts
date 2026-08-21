@@ -199,6 +199,8 @@ export async function runBrokerMethod(
       return spawn(deps, session, p);
     case "broker.pane.screen":
       return screen(deps, session, p);
+    case "broker.agent.stop":
+      return stopAgent(deps, session, p);
     case "broker.agent.ask":
       return ask(deps, session, p);
     case "broker.agent.model":
@@ -473,6 +475,18 @@ async function contextPreambleFor(deps: OpsDeps, session: string, pane: string):
   } catch {
     return undefined;
   }
+}
+
+/** Agent stop: closes the pane the agent lives in (herdr pane.close,
+ * wire-verified) — the agent process dies with its PTY; the workspace and
+ * the rest of the team survive. Requires an agent in the pane so a typo'd
+ * pane id cannot silently close someone's plain shell. */
+async function stopAgent(deps: OpsDeps, session: string, p: Record<string, unknown>): Promise<unknown> {
+  const pane = str(p.pane_id, "pane_id");
+  const { kind, entry } = await agentInPane(deps, session, pane);
+  const agent = typeof entry.name === "string" && entry.name ? entry.name : String(entry.agent ?? kind);
+  await deps.local.request(session, "pane.close", { pane_id: pane }, 15_000);
+  return { stopped: true, pane_id: pane, agent, kind };
 }
 
 /** Fire-and-forget steering: a free-form prompt to the pane's agent with no

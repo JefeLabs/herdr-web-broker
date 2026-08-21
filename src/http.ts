@@ -339,6 +339,13 @@ export function createHttpHandler(deps: HttpDeps) {
       return;
     }
 
+    // DELETE .../agents/{pane} — stop the agent by closing its pane
+    if (parts.length === 6 && parts[4] === "agents" && req.method === "DELETE") {
+      const params = { pane_id: decodeURIComponent(parts[5]) };
+      json(res, 200, await callInstance(instance, session, "broker.agent.stop", params));
+      return;
+    }
+
     // GET /parent/{i}/sessions/{s}/workspaces — working sets (spec §2.2)
     if (parts.length === 5 && parts[4] === "workspaces" && req.method === "GET") {
       json(res, 200, await callInstance(instance, session, "broker.workspace.list", {}));

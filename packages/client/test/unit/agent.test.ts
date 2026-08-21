@@ -104,6 +104,14 @@ describe("AgentHandle", () => {
     expect(urls.length).toBe(4);
   });
 
+  test("stop() ends the agent via DELETE on its pane", async () => {
+    const { calls, fetchFn } = fake([{ status: 200, body: '{"stopped":true,"pane_id":"w1:p1","agent":"copilot","kind":"copilot"}' }]);
+    const out = await agentOf(fetchFn).stop();
+    expect(out.stopped).toBe(true);
+    expect(calls[0].url).toBe("/parent/runtime/sessions/default/agents/w1%3Ap1");
+    expect(calls[0].init.method).toBe("DELETE");
+  });
+
   test("type and keys ride the rpc passthrough", async () => {
     const { calls, fetchFn } = fake([{ status: 200, body: '{"result":{"type":"ok"}}' }]);
     const agent = agentOf(fetchFn);

@@ -173,9 +173,10 @@ Cleanup and remaining limitations:
   and every pane in it (herdr `workspace.close`, wire-verified) — agents
   inside die with their panes. Mode-B spawns no longer create extra
   workspaces at all, so there is far less to reap.
-- **No dedicated agent restart/stop endpoint yet.** `pane.close` is
-  wire-verified and an agent-stop endpoint is unblocked — until it ships,
-  close the pane over rpc or close the whole workspace.
+- **Agent stop**: `DELETE .../agents/{pane}` closes the agent's pane
+  (herdr `pane.close`, wire-verified) — the process dies with its PTY,
+  the workspace and the rest of the team survive. Restart = stop + spawn
+  into the same workspace (mode B).
 
 ## Quick reference
 
@@ -193,4 +194,5 @@ Cleanup and remaining limitations:
 | Status | `GET .../agents?fresh=1` (`status` + `raw_status`) |
 | Watch the terminal | `GET .../panes/{pane}/screen?version=&wait_ms=` (long-poll) |
 | Live events | `WS /parent/ws` |
+| Stop one agent | `DELETE .../agents/{pane}` (its pane closes; the team survives) |
 | Reap a working set | `DELETE .../workspaces/{w}` (panes + agents die with it) |

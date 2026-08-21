@@ -14,12 +14,18 @@ map!), `pane.close`, `agent.wait`, and `agent.prompt`'s
    workspace (herdr `workspace.close`); mode-B spawns now `pane.split` INTO
    the existing workspace with herdr-native env injection — the leak is
    gone at the source.
-2. **Agent stop/restart endpoint.** Unblocked: `pane.close` is
-   wire-verified — a `DELETE .../agents/{pane}` endpoint is now buildable.
-3. **`ask()` via `agent.wait`.** Unblocked: replace the status-poll loop
-   with one blocking rpc (`wait` waits for a transition INTO a target
-   status; the file-drop answer contract stays — the reply carries status,
-   not output). `pane.wait_for_output {match}` is also available.
+2. ~~**Agent stop/restart endpoint.**~~ Done: `DELETE .../agents/{pane}`
+   closes the agent's pane (herdr `pane.close`); requires an agent in the
+   pane so a typo cannot close someone's shell. Restart = stop + mode-B
+   spawn into the same workspace.
+3. ~~**`ask()` via `agent.wait`.**~~ Closed as already-achieved: inspection
+   showed ask() samples in-memory registry state (fed by the WS status
+   subscription — push, not poll) plus a local-disk file check — zero herdr
+   round-trips per iteration. Wiring `agent.wait` would ADD a held-open
+   connection per ask to replace a free memory read, and cannot speed up
+   the answer file itself. The probe's semantics (`wait` = transition INTO
+   a target status; `pane.wait_for_output {match}`) are recorded for
+   future use.
 
 ## Product features, deferred deliberately
 

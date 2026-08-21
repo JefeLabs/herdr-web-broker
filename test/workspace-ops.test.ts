@@ -241,6 +241,27 @@ test("spawn: agent_name_taken on the DEFAULT name retries with a pane-unique nam
   }
 });
 
+test("broker.agent.stop: closes the agent's pane; empty panes answer 'no agent in pane'", async () => {
+  const t = await setup();
+  try {
+    t.fake.handlers.set("pane.close", () => ({ type: "ok" }));
+    const out = (await runBrokerMethod(t.deps, "default", "broker.agent.stop", {
+      pane_id: "w1:p1",
+    })) as { stopped: boolean; pane_id: string; agent: string; kind: string };
+    assert.deepEqual(out, { stopped: true, pane_id: "w1:p1", agent: "copilot", kind: "copilot" });
+    const closed = t.fake.received.find((r) => r.method === "pane.close");
+    assert.deepEqual(closed?.params, { pane_id: "w1:p1" });
+
+    // a pane with no agent is not "stopped" silently — same contract as prompt/slash
+    await assert.rejects(
+      runBrokerMethod(t.deps, "default", "broker.agent.stop", { pane_id: "w9:p9" }),
+      (e: BrokerError) => e.code === "bad_request" && /no agent in pane/.test(e.message),
+    );
+  } finally {
+    await t.teardown();
+  }
+});
+
 test("broker.workspace.close: closes at herdr and drops the index entry", async () => {
   const t = await setup();
   try {
