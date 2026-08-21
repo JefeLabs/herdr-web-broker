@@ -31,6 +31,9 @@ On the child: run **Broker: pair with parent**
 (`pair --address ws://parent-host:7591 --secret <secret> --name laptop`).
 
 The child dials out and holds the tunnel; the parent can now reach it.
+The whole pairing flow is exercised end to end by
+`scripts/federation-test.sh` — two real containers, the child driven
+entirely through the parent's API (runs weekly in CI).
 
 ## API
 

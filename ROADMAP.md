@@ -83,9 +83,13 @@ map!), `pane.close`, `agent.wait`, and `agent.prompt`'s
     subpath exports (`/events`, `/types`) rather than a third `-sdk`
     package; revisit the split only if a consumer needs the wire types
     without the client (e.g. a server-side schema sharer).
-13. **Federation validation.** Every feature routes through `callInstance`
-    so children should work at matching plugin versions, but no end-to-end
-    parent↔child pairing test exists yet.
+13. ~~**Federation validation.**~~ Done: `scripts/federation-test.sh` boots
+    two real containers (parent + child dialing out over a docker network)
+    and drives the child entirely through the parent — enrollment, herdr
+    passthrough, spawn/mode-B/screen-long-poll/env/stop/close over the
+    tunnel, the remote deny-list, and offline detection (13 checks). Runs
+    weekly in herdr-drift.yml and on demand locally. Wire truth captured:
+    herdr reaps a workspace when its last pane closes.
 14. **React hooks entry point** for the SDK/ui packages — organisms take
     props today; a hooks layer was explicitly deferred.
 

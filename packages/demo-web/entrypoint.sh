@@ -38,6 +38,22 @@ token = "${BROKER_TOKEN}"
 EOF
 log "broker config written (listen 0.0.0.0:7591, bearer ${BROKER_TOKEN})"
 
+# ------------------------------------------------------- child mode (pairing)
+# docker run -e BROKER_PARENT_ADDRESS=ws://parent-host:7591 \
+#            -e BROKER_PARENT_SECRET=... -e BROKER_PARENT_NAME=laptop
+# turns this container into an enrolled CHILD: the daemon dials the parent
+# on boot and holds the tunnel. This is what the federation e2e exercises.
+if [ -n "${BROKER_PARENT_ADDRESS:-}" ]; then
+  cat >> "$PLUGIN_CONF_DIR/config.toml" <<EOF
+
+[parent]
+address = "${BROKER_PARENT_ADDRESS}"
+secret = "${BROKER_PARENT_SECRET:?BROKER_PARENT_SECRET required with BROKER_PARENT_ADDRESS}"
+name = "${BROKER_PARENT_NAME:-child}"
+EOF
+  log "child mode: pairing with ${BROKER_PARENT_ADDRESS} as '${BROKER_PARENT_NAME:-child}'"
+fi
+
 log "starting broker daemon via the plugin's start action"
 herdr plugin action invoke jefelabs.web-broker.start >/dev/null
 

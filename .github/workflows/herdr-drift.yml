@@ -41,6 +41,9 @@ jobs:
       - name: run the wire probe
         run: node scripts/drift-probe.mjs | tee probe.log
 
+      - name: federation e2e — parent↔child containers
+        run: FED_SKIP_BUILD=1 scripts/federation-test.sh | tee -a probe.log
+
       - name: container logs on failure
         if: failure()
         run: docker logs herdr-web-demo > container.log 2>&1 || true
