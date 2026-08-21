@@ -84,7 +84,7 @@ the local machine; anything else is an enrolled child.
 | `POST /admin/tokens` | mint a bearer token by name — dev-only, off unless `[token_mint] enabled = true`; minted tokens persist and revoke like any other |
 | `POST /admin/kick/{token}` | full eviction: revoke the token, terminate their WS sockets, `/logout` matching agent panes (`{kinds?, logout_agents?}`), clear presence |
 | `DELETE /admin/tokens/{name}` | revoke a client token: immediate for new requests/WS upgrades, persisted to config.toml (admin-gated) |
-| `WS /events` | duplex rpc + unsolicited status events |
+| `WS /events` | duplex rpc + unsolicited status events; `broker.events.subscribe {subscriptions}` streams a herdr instance's own events (`pane.created`, `pane.output_matched{pane_id, match}`, …) as pushed `herdr_event` frames — federated, so a child's events cross the tunnel; `broker.events.unsubscribe {sub_id}` or socket close stops them (8 groups/socket, 32 types/group) |
 
 How these fit together across an agent's life — spawn, first-run dialogs,
 conversation, mid-run steering, observation, death — is walked through in

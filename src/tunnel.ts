@@ -2,7 +2,7 @@ import type WebSocket from "ws";
 import { BrokerError } from "./errors.js";
 import type { AgentInfo, InstanceSnapshot, Registry, SessionSnapshot } from "./registry.js";
 
-export const PROTO_VERSION = 1;
+export const PROTO_VERSION = 2;
 export const DEFAULT_TIMEOUT_MS = 30_000;
 export const HEARTBEAT_MS = 15_000;
 
@@ -10,7 +10,10 @@ export type TunnelEvent =
   | { kind: "agent_status"; session: string; agent: AgentInfo }
   | { kind: "session_added"; session: SessionSnapshot }
   | { kind: "session_removed"; session: string }
-  | { kind: "snapshot"; snapshot: InstanceSnapshot };
+  | { kind: "snapshot"; snapshot: InstanceSnapshot }
+  // event passthrough (spec 2026-08-21): child streams tapped herdr events
+  | { kind: "herdr_event"; sub_id: string; session: string; name: string; data?: unknown }
+  | { kind: "sub_closed"; sub_id: string; reason: string };
 
 export type TunnelFrame =
   | {
@@ -30,7 +33,11 @@ export type TunnelFrame =
       result?: unknown;
       error?: { code: string; message: string; details?: Record<string, unknown> };
     }
-  | { type: "event"; event: TunnelEvent };
+  | { type: "event"; event: TunnelEvent }
+  // event passthrough: parent asks the child to tap; the child answers with
+  // a normal res frame, so the existing pending machinery carries the ack
+  | { type: "sub"; id: string; sub_id: string; session: string; subscriptions: object[] }
+  | { type: "unsub"; sub_id: string };
 
 interface Pending {
   resolve: (v: unknown) => void;
@@ -41,6 +48,7 @@ interface Pending {
 /** Parent-side wrapper around one enrolled child's WebSocket. */
 export class ChildConnection {
   #pending = new Map<string, Pending>();
+  #subs = new Map<string, { onEvent: (name: string, data: unknown) => void; onClose: (reason: string) => void }>();
   #seq = 0;
   #missedPongs = 0;
   #heartbeat: NodeJS.Timeout;
@@ -83,6 +91,8 @@ export class ChildConnection {
       p.reject(new BrokerError("instance_offline", `tunnel to '${this.name}' closed`));
     }
     this.#pending.clear();
+    for (const h of this.#subs.values()) h.onClose("child disconnected");
+    this.#subs.clear();
     this.onGone();
   }
 
@@ -100,7 +110,43 @@ export class ChildConnection {
       else if (e.kind === "session_added") this.registry.applySessionAdded(this.name, e.session);
       else if (e.kind === "session_removed") this.registry.applySessionRemoved(this.name, e.session);
       else if (e.kind === "snapshot") this.registry.replaceSnapshot(this.name, e.snapshot);
+      else if (e.kind === "herdr_event") this.#subs.get(e.sub_id)?.onEvent(e.name, e.data);
+      else if (e.kind === "sub_closed") {
+        const h = this.#subs.get(e.sub_id);
+        this.#subs.delete(e.sub_id);
+        h?.onClose(e.reason);
+      }
     }
+  }
+
+  /** Event passthrough (spec 2026-08-21): ask the child to tap its herdr
+   * and stream matching events up the tunnel. Resolves with a close fn
+   * once the child acks; child disconnect closes every live sub. */
+  subscribe(
+    session: string,
+    subscriptions: object[],
+    handlers: { onEvent: (name: string, data: unknown) => void; onClose: (reason: string) => void },
+  ): Promise<() => void> {
+    const id = `${this.name}:${++this.#seq}`;
+    const subId = `${this.name}-sub-${this.#seq}`;
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.#pending.delete(id);
+        reject(new BrokerError("upstream_timeout", `'${this.name}' gave no subscribe ack in 15000ms`));
+      }, 15_000);
+      this.#pending.set(id, {
+        resolve: () => {
+          this.#subs.set(subId, handlers);
+          resolve(() => {
+            if (!this.#subs.delete(subId)) return;
+            this.ws.send(JSON.stringify({ type: "unsub", sub_id: subId } satisfies TunnelFrame));
+          });
+        },
+        reject,
+        timer,
+      });
+      this.ws.send(JSON.stringify({ type: "sub", id, sub_id: subId, session, subscriptions } satisfies TunnelFrame));
+    });
   }
 
   request(session: string, method: string, params: unknown, timeoutMs = DEFAULT_TIMEOUT_MS): Promise<unknown> {

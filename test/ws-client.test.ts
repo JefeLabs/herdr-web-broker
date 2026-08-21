@@ -193,3 +193,81 @@ test("handle.close() does not hang on a lingering client WebSocket", async () =>
   await handle.close();
   await fake.close();
 });
+
+test("broker.events.subscribe streams herdr events; unsubscribe stops them", async () => {
+  const { fake, handle } = await boot();
+  const ws = new WebSocket(`ws://127.0.0.1:${handle.port}/events?token=tok`);
+  try {
+  await new Promise((r) => ws.once("open", r));
+  const frames: Record<string, unknown>[] = [];
+  ws.on("message", (d) => frames.push(JSON.parse(String(d))));
+
+  ws.send(JSON.stringify({
+    id: "s1", instance: "runtime", session: "default",
+    method: "broker.events.subscribe",
+    params: { subscriptions: [{ type: "workspace.created" }] },
+  }));
+  await waitFor(() => frames.some((f) => f.id === "s1"));
+  const sub = frames.find((f) => f.id === "s1") as { result?: { sub_id?: string } };
+  const subId = sub.result?.sub_id;
+  assert.ok(subId, `subscribe acked with a sub_id, got ${JSON.stringify(sub)}`);
+
+  fake.emitEvent("workspace_created", { workspace: { workspace_id: "w7" } });
+  await waitFor(() => frames.some((f) => (f.event as { type?: string })?.type === "herdr_event"));
+  const evt = frames.find((f) => (f.event as { type?: string })?.type === "herdr_event")!.event as Record<string, unknown>;
+  assert.equal(evt.sub_id, subId);
+  assert.equal(evt.instance, "runtime");
+  assert.equal(evt.name, "workspace_created");
+  assert.deepEqual(evt.data, { workspace: { workspace_id: "w7" } });
+
+  ws.send(JSON.stringify({ id: "u1", method: "broker.events.unsubscribe", params: { sub_id: subId } }));
+  await waitFor(() => frames.some((f) => f.id === "u1"));
+  const before = frames.length;
+  fake.emitEvent("workspace_created", { workspace: { workspace_id: "w8" } });
+  await new Promise((r) => setTimeout(r, 150));
+  assert.equal(frames.length, before, "no events after unsubscribe");
+
+  } finally {
+    ws.close();
+    await handle.close();
+    await fake.close();
+  }
+});
+
+test("subscribe validation: unknown types refused; per-socket group cap enforced; teardown on socket close", async () => {
+  const { fake, handle } = await boot();
+  const ws = new WebSocket(`ws://127.0.0.1:${handle.port}/events?token=tok`);
+  try {
+  await new Promise((r) => ws.once("open", r));
+  const frames: Record<string, unknown>[] = [];
+  ws.on("message", (d) => frames.push(JSON.parse(String(d))));
+
+  ws.send(JSON.stringify({
+    id: "bad", instance: "runtime", session: "default",
+    method: "broker.events.subscribe",
+    params: { subscriptions: [{ type: "server.secrets" }] },
+  }));
+  await waitFor(() => frames.some((f) => f.id === "bad"));
+  assert.equal((frames.find((f) => f.id === "bad") as { error?: { code: string } }).error?.code, "bad_request");
+
+  for (let i = 0; i < 9; i++) {
+    ws.send(JSON.stringify({
+      id: `g${i}`, instance: "runtime", session: "default",
+      method: "broker.events.subscribe",
+      params: { subscriptions: [{ type: "pane.created" }] },
+    }));
+  }
+  await waitFor(() => frames.filter((f) => String(f.id ?? "").startsWith("g")).length === 9);
+  const errs = frames.filter((f) => String(f.id ?? "").startsWith("g") && (f as { error?: unknown }).error);
+  assert.equal(errs.length, 1, "the 9th group hits the cap");
+
+  // 8 live taps + the roster channel; closing the socket reaps the taps
+  await waitFor(() => fake.eventConnections === 9);
+  ws.close();
+  await waitFor(() => fake.eventConnections === 1);
+  } finally {
+    ws.close();
+    await handle.close();
+    await fake.close();
+  }
+});

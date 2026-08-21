@@ -77,6 +77,44 @@ if (PHASE === "offline") {
   check("agents passthrough answers", r.status === 200 && Array.isArray(r.body?.agents), JSON.stringify(r));
 }
 
+// 3b. event passthrough: subscribe to the CHILD's lifecycle events over the
+//     parent's WS — check 4's spawn must then arrive as a pushed herdr_event
+//     that crossed child herdr → tunnel → parent → client socket
+let wsEvents;
+{
+  const ws = new WebSocket(`${BASE.replace(/^http/, "ws")}/events?token=${TOKEN}`);
+  const frames = [];
+  ws.addEventListener("message", (ev) => {
+    try {
+      frames.push(JSON.parse(String(ev.data)));
+    } catch {
+      /* a malformed frame only matters if the checks below miss theirs */
+    }
+  });
+  await new Promise((resolve, reject) => {
+    ws.addEventListener("open", resolve);
+    ws.addEventListener("error", () => reject(new Error("events socket refused")));
+  });
+  ws.send(
+    JSON.stringify({
+      id: "sub1",
+      instance: CHILD,
+      session: "default",
+      method: "broker.events.subscribe",
+      params: { subscriptions: [{ type: "workspace.created" }, { type: "pane.created" }] },
+    }),
+  );
+  let ack;
+  const deadline = Date.now() + 15_000;
+  while (Date.now() < deadline && !(ack = frames.find((f) => f.id === "sub1"))) await sleep(200);
+  check(
+    "broker.events.subscribe on the child acks with a sub_id",
+    typeof ack?.result?.sub_id === "string",
+    JSON.stringify(ack ?? "no ack in 15s"),
+  );
+  wsEvents = { ws, frames };
+}
+
 // 4. broker.* over the tunnel: spawn a real agent ON the child
 let pane, workspace;
 {
@@ -93,6 +131,28 @@ let pane, workspace;
   );
   pane = b.pane_id;
   workspace = b.workspace_id;
+}
+
+// 4b. the spawn's lifecycle event streamed back as push, not poll
+{
+  let evt;
+  const deadline = Date.now() + 30_000;
+  while (Date.now() < deadline) {
+    evt = wsEvents.frames.find(
+      (f) =>
+        f.event?.type === "herdr_event" &&
+        f.event.instance === CHILD &&
+        /^(workspace_created|pane_created)$/.test(f.event.name),
+    );
+    if (evt) break;
+    await sleep(1_000);
+  }
+  check(
+    "child lifecycle event pushed through the tunnel to the parent's WS",
+    Boolean(evt),
+    `no herdr_event in 30s; saw ${JSON.stringify(wsEvents.frames.slice(-3)).slice(0, 300)}`,
+  );
+  wsEvents.ws.close();
 }
 
 // 5. the child's real TUI, screen-read through the parent

@@ -151,6 +151,23 @@ send `Escape` first.
   bearer, <token>` (browser-friendly, preferred), or `?token=` (fallback —
   scrub the param from proxy logs). The server pings every 30s so
   intermediaries don't cull idle sockets.
+- **Event passthrough on the same socket** — send
+  `{id, instance, session, method: "broker.events.subscribe", params:
+  {subscriptions: [{type: "pane.created"}, {type: "pane.output_matched",
+  pane_id, match}, …]}}` and the broker taps that instance's herdr with a
+  dedicated event channel; matching events push back as
+  `{event: {type: "herdr_event", sub_id, instance, session, name, data}}`
+  frames — including from enrolled children, whose events ride the
+  federation tunnel. All 27 herdr subscription types work (workspace/
+  worktree/tab/pane lifecycle, `layout.updated`, parameterized
+  `pane.output_matched` / `pane.agent_status_changed` /
+  `pane.scroll_changed`). The stream is live-only (no replay);
+  `broker.events.unsubscribe {sub_id}` stops one group, socket close stops
+  all, and a dead tap or disconnected child pushes
+  `{event: {type: "sub_closed", sub_id, reason}}` instead of going silent.
+  Caps: 8 groups per socket, 32 types per group. The SDK's
+  `events.subscribe(target, onEvent, onClose)` wraps this and
+  re-subscribes itself after a reconnect.
 - **`GET .../panes/{pane}/screen?source=&version=&wait_ms=`** — the live
   pane viewer: the terminal text plus a content-version hash. Pass the
   last `version` with `wait_ms` (max 30s) to long-poll — the reply

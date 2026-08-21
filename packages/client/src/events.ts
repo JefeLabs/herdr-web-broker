@@ -12,6 +12,25 @@ export type EventType =
    * the token and call connect() again */
   | "auth_failed";
 
+export interface SubscriptionSpec {
+  /** herdr subscription type, e.g. "pane.created" */
+  type: string;
+  [k: string]: unknown;
+}
+
+export interface SubscribeTarget {
+  instance: string;
+  session: string;
+  subscriptions: SubscriptionSpec[];
+}
+
+interface SubGroup {
+  target: SubscribeTarget;
+  onEvent: (name: string, data: unknown) => void;
+  onClose?: (reason: string) => void;
+  subId?: string;
+}
+
 export interface EventChannelOpts {
   origin: string;
   /** read at (re)connect time so setToken() applies to reconnects */
@@ -33,6 +52,8 @@ export class EventChannel {
   #reconnect?: ReturnType<typeof setTimeout>;
   #subs = new Map<EventType, Set<(data: unknown) => void>>();
   #pending = new Map<string, { resolve: (v: unknown) => void; reject: (e: unknown) => void }>();
+  #groups = new Set<SubGroup>();
+  #bySubId = new Map<string, SubGroup>();
 
   constructor(opts: EventChannelOpts) {
     this.#opts = opts;
@@ -70,6 +91,57 @@ export class EventChannel {
     });
   }
 
+  /** Event passthrough: stream a herdr instance's own events (pane.created,
+   * agent status, output matches, …) through the broker. Resolves with an
+   * unsubscribe fn once the broker acks. The group survives reconnects —
+   * the channel re-subscribes on its own under a fresh sub_id; a
+   * server-side closure (tap died, child offline) reaches onClose and
+   * retires the group. */
+  async subscribe(
+    target: SubscribeTarget,
+    onEvent: (name: string, data: unknown) => void,
+    onClose?: (reason: string) => void,
+  ): Promise<() => void> {
+    const group: SubGroup = { target, onEvent, onClose };
+    await this.#sendSubscribe(group);
+    this.#groups.add(group);
+    this.#bySubId.set(group.subId!, group);
+    return () => {
+      if (!this.#groups.delete(group)) return;
+      if (group.subId) this.#bySubId.delete(group.subId);
+      if (this.#ws?.readyState === 1 && group.subId) {
+        void this.rpc(target.instance, target.session, "broker.events.unsubscribe", { sub_id: group.subId }).catch(
+          () => undefined,
+        );
+      }
+    };
+  }
+
+  async #sendSubscribe(group: SubGroup): Promise<void> {
+    const { instance, session, subscriptions } = group.target;
+    const result = (await this.rpc(instance, session, "broker.events.subscribe", { subscriptions })) as {
+      sub_id: string;
+    };
+    group.subId = result.sub_id;
+  }
+
+  #resubscribeAll(): void {
+    for (const group of this.#groups) {
+      if (group.subId) this.#bySubId.delete(group.subId);
+      group.subId = undefined;
+      void this.#sendSubscribe(group)
+        .then(() => {
+          if (this.#groups.has(group)) this.#bySubId.set(group.subId!, group);
+        })
+        .catch((e: unknown) => {
+          // the broker refused the re-subscribe (caps, revoked session) —
+          // retire the group honestly instead of retrying forever
+          this.#groups.delete(group);
+          group.onClose?.(e instanceof Error ? e.message : "resubscribe failed");
+        });
+    }
+  }
+
   #emit(type: EventType, data: unknown): void {
     for (const cb of this.#subs.get(type) ?? []) cb(data);
   }
@@ -82,6 +154,7 @@ export class EventChannel {
     ws.onopen = () => {
       this.#attempts = 0;
       this.#emit("open", undefined);
+      this.#resubscribeAll();
     };
     ws.onmessage = (ev) => this.#onFrame(String((ev as MessageEvent).data));
     ws.onclose = (ev) => {
@@ -129,6 +202,21 @@ export class EventChannel {
       return; // a malformed frame must never break the channel
     }
     if (frame.event) {
+      if (frame.event.type === "herdr_event") {
+        const e = frame.event as { sub_id?: string; name?: string; data?: unknown };
+        this.#bySubId.get(String(e.sub_id))?.onEvent(String(e.name), e.data);
+        return;
+      }
+      if (frame.event.type === "sub_closed") {
+        const e = frame.event as { sub_id?: string; reason?: string };
+        const group = this.#bySubId.get(String(e.sub_id));
+        if (group) {
+          this.#bySubId.delete(String(e.sub_id));
+          this.#groups.delete(group);
+          group.onClose?.(String(e.reason ?? "subscription closed"));
+        }
+        return;
+      }
       const type = String(frame.event.type ?? "").replace(".", "_");
       if (type === "agent_status" || type === "instance_online" || type === "instance_offline") {
         this.#emit(type, frame.event);

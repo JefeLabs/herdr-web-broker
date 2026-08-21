@@ -217,6 +217,13 @@ interface TrackedSession {
   events: SessionEvents | null;
 }
 
+export interface TapHandlers {
+  onEvent: (name: string, data: unknown) => void;
+  /** fires only when the channel dies underneath the tap — a deliberate
+   * close() never reports */
+  onClose: (reason: string) => void;
+}
+
 export class LocalHerdr {
   #sessions = new Map<string, TrackedSession>();
   #connecting = new Set<string>();
@@ -322,6 +329,67 @@ export class LocalHerdr {
 
   sessions(): string[] {
     return [...this.#sessions.keys()];
+  }
+
+  /** Event passthrough (spec 2026-08-21): a DEDICATED events.subscribe
+   * connection per subscription group — herdr accepts exactly one
+   * subscribe per connection, so isolation is free and teardown is
+   * closing a socket. Resolves with a close fn once herdr acks the
+   * subscription; rejects on refusal. */
+  tap(session: string, subscriptions: object[], handlers: TapHandlers): Promise<() => void> {
+    const tracked = this.#sessions.get(session);
+    if (!tracked) {
+      return Promise.reject(new BrokerError("unknown_session", `no local session '${session}'`));
+    }
+    return new Promise((resolve, reject) => {
+      const sock = connect(tracked.socketPath);
+      const dec = new NdjsonDecoder(LOCAL_MAX_BUF_BYTES);
+      let acked = false;
+      let deliberate = false;
+      const close = () => {
+        deliberate = true;
+        sock.destroy();
+      };
+      sock.once("connect", () =>
+        sock.write(encodeFrame({ id: "tap", method: "events.subscribe", params: { subscriptions } })),
+      );
+      sock.on("data", (chunk) => {
+        let frames: unknown[];
+        try {
+          frames = dec.push(chunk);
+        } catch {
+          sock.destroy();
+          return;
+        }
+        for (const f of frames) {
+          const frame = f as { result?: unknown; error?: { code: string; message: string }; event?: string; data?: unknown };
+          if (!acked) {
+            if (frame.error) {
+              acked = true;
+              deliberate = true;
+              sock.destroy();
+              reject(new BrokerError(frame.error.code, frame.error.message));
+              return;
+            }
+            if (frame.result !== undefined) {
+              acked = true;
+              resolve(close);
+            }
+            continue;
+          }
+          if (typeof frame.event === "string") handlers.onEvent(frame.event, frame.data);
+        }
+      });
+      sock.on("error", () => sock.destroy());
+      sock.on("close", () => {
+        if (!acked) {
+          acked = true;
+          reject(new BrokerError("instance_offline", "event channel closed before subscribing"));
+          return;
+        }
+        if (!deliberate) handlers.onClose("event channel closed");
+      });
+    });
   }
 
   request(session: string, method: string, params: unknown, timeoutMs?: number): Promise<unknown> {

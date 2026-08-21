@@ -149,6 +149,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<DaemonHandle | u
       callInstance: makeCallInstance({ registry, local, hub, remoteDeny: config.policy.remote_deny, ops }),
       pingIntervalMs: opts.wsPingMs,
       limiter,
+      local,
     });
     await new Promise<void>((resolve, reject) => {
       server.once("error", reject);

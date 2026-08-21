@@ -60,3 +60,32 @@ test.describe("console flows", () => {
     await expect(slash.locator(".codeview")).toContainText("sent");
   });
 });
+
+test.describe("event passthrough", () => {
+  test("subscribe streams the spawn's lifecycle events as pushed ⚡ lines", async ({ page }) => {
+    await authenticate(page, "console");
+    const ws = page.locator("article#ws");
+    await ws.scrollIntoViewIfNeeded();
+    await ws.getByRole("button", { name: "connect" }).click();
+    await expect(ws.locator(".status-pill").first()).toContainText("live");
+
+    await ws.getByLabel(/herdr subscriptions/i).fill("workspace.created, pane.created");
+    await ws.getByRole("button", { name: "subscribe", exact: true }).click();
+    await expect(ws.getByText("⚡ streaming herdr events")).toBeVisible();
+
+    // a spawn elsewhere on the page triggers real lifecycle events in the
+    // devstack's herdr sim — they must arrive pushed, not polled
+    const spawn = page.locator("article#spawn");
+    await spawn.scrollIntoViewIfNeeded();
+    await spawn.getByLabel("kind", { exact: false }).first().fill("copilot");
+    await spawn.getByLabel("cwd (mode A)").first().fill("/tmp");
+    await spawn.getByRole("button", { name: "send" }).click();
+    await expect(spawn.locator(".status-pill")).toContainText("201");
+
+    await expect(ws.locator(".evt-log")).toContainText("⚡ workspace_created");
+    await expect(ws.locator(".evt-log")).toContainText("⚡ pane_created");
+
+    await ws.getByRole("button", { name: "unsubscribe" }).click();
+    await expect(ws.getByText("no herdr subscription")).toBeVisible();
+  });
+});

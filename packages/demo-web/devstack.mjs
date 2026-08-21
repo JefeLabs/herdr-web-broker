@@ -73,15 +73,20 @@ fake.handlers.set("workspace.list", () => ({
 fake.handlers.set("workspace.create", (p) => {
   const id = `w${nextWs++}`;
   workspaces.set(id, { cwd: p?.cwd ?? work, ...(p?.label ? { label: p.label } : {}) });
+  // real herdr streams lifecycle events; the sim does too so the events
+  // panel's subscription picker has something to show
+  fake.emitEvent("workspace_created", { workspace: { workspace_id: id } });
+  fake.emitEvent("pane_created", { pane: { pane_id: `${id}:p1`, workspace_id: id } });
   return { type: "workspace_created", workspace_id: id, root_pane: { pane_id: `${id}:p1` } };
 });
 
 // mode-B spawns split a pane INTO the existing workspace (real herdr 0.8.x)
 let nextPane = 10;
-fake.handlers.set("pane.split", (p) => ({
-  type: "pane_info",
-  pane: { pane_id: `${p?.workspace_id ?? "w1"}:p${nextPane++}` },
-}));
+fake.handlers.set("pane.split", (p) => {
+  const pane_id = `${p?.workspace_id ?? "w1"}:p${nextPane++}`;
+  fake.emitEvent("pane_created", { pane: { pane_id, workspace_id: p?.workspace_id ?? "w1" } });
+  return { type: "pane_info", pane: { pane_id } };
+});
 
 // mode-C spawns: worktree checkouts materialize as workspaces
 const simWorktrees = new Map(); // workspace_id -> {branch, path}

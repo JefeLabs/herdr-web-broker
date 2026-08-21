@@ -5,6 +5,7 @@ import { checkBearer, matchToken, verifySecret } from "./auth.js";
 import type { AuthLimiter } from "./auth-limit.js";
 import type { BrokerConfig } from "./config.js";
 import { BrokerError } from "./errors.js";
+import type { LocalHerdr } from "./local-attach.js";
 import type { Registry } from "./registry.js";
 import type { ChildrenStore } from "./state.js";
 import { PROTO_VERSION, TunnelHub, type TunnelFrame } from "./tunnel.js";
@@ -29,6 +30,36 @@ export interface WsDeps {
   pingIntervalMs?: number;
   /** failed-auth limiter shared with the HTTP surface */
   limiter?: AuthLimiter;
+  /** event passthrough: taps for runtime subscriptions (spec 2026-08-21) */
+  local?: LocalHerdr;
+}
+
+/** The 27 wire-verified herdr subscription types (schema, protocol 19). */
+const SUB_TYPES = new Set([
+  "workspace.created", "workspace.updated", "workspace.metadata_updated", "workspace.renamed",
+  "workspace.moved", "workspace.reordered", "workspace.closed", "workspace.focused",
+  "worktree.created", "worktree.opened", "worktree.removed",
+  "tab.created", "tab.closed", "tab.focused", "tab.renamed", "tab.moved",
+  "pane.created", "pane.closed", "pane.updated", "pane.focused", "pane.moved", "pane.exited",
+  "pane.agent_detected", "pane.output_matched", "pane.agent_status_changed", "pane.scroll_changed",
+  "layout.updated",
+]);
+const SUB_KEYS = new Set(["type", "pane_id", "match", "source", "lines", "strip_ansi", "agent_status"]);
+const MAX_SUB_GROUPS = 8;
+const MAX_SUB_TYPES = 32;
+
+function sanitizeSubscriptions(raw: unknown): object[] {
+  if (!Array.isArray(raw) || raw.length === 0 || raw.length > MAX_SUB_TYPES) {
+    throw new BrokerError("bad_request", `'subscriptions' must be a non-empty array of at most ${MAX_SUB_TYPES}`);
+  }
+  return raw.map((s) => {
+    const sub = s as Record<string, unknown>;
+    if (!sub || typeof sub.type !== "string" || !SUB_TYPES.has(sub.type)) {
+      throw new BrokerError("bad_request", `unknown subscription type '${String(sub?.type)}'`);
+    }
+    // pass through only the schema's parameter keys — nothing smuggles
+    return Object.fromEntries(Object.entries(sub).filter(([k]) => SUB_KEYS.has(k)));
+  });
 }
 
 export interface UpgradeHandle {
@@ -195,11 +226,59 @@ function acceptClient(deps: WsDeps, ws: WebSocket): void {
   deps.registry.on("agent_status", onStatus);
   deps.registry.on("online", onOnline);
   deps.registry.on("offline", onOffline);
+  // event passthrough: live taps for this socket, torn down with it
+  const taps = new Map<string, () => void>();
+  let subSeq = 0;
   ws.on("close", () => {
     deps.registry.off("agent_status", onStatus);
     deps.registry.off("online", onOnline);
     deps.registry.off("offline", onOffline);
+    for (const close of taps.values()) close();
+    taps.clear();
   });
+
+  async function subscribeFrame(frame: { instance?: string; session?: string; params?: unknown }): Promise<unknown> {
+    const instance = String(frame.instance ?? "");
+    const session = String(frame.session ?? "");
+    if (!instance || !session) throw new BrokerError("bad_request", "subscribe needs 'instance' and 'session'");
+    const subscriptions = sanitizeSubscriptions((frame.params as { subscriptions?: unknown })?.subscriptions);
+    if (taps.size >= MAX_SUB_GROUPS) {
+      throw new BrokerError("bad_request", `at most ${MAX_SUB_GROUPS} live subscription groups per socket`);
+    }
+    const subId = `sub-${++subSeq}`;
+    const handlers = {
+      onEvent: (name: string, data: unknown) =>
+        push({ type: "herdr_event", sub_id: subId, instance, session, name, data }),
+      onClose: (reason: string) => {
+        taps.delete(subId);
+        push({ type: "sub_closed", sub_id: subId, reason });
+      },
+    };
+    // reserve the slot BEFORE awaiting — concurrent subscribes must not
+    // all pass the cap check while none has landed yet
+    taps.set(subId, () => undefined);
+    try {
+      let close: () => void;
+      if (instance === "runtime") {
+        if (!deps.local) throw new BrokerError("bad_request", "event passthrough unavailable");
+        close = await deps.local.tap(session, subscriptions, handlers);
+      } else {
+        const child = deps.hub.get(instance);
+        if (!child) throw new BrokerError("instance_offline", `'${instance}' is not connected`);
+        close = await child.subscribe(session, subscriptions, handlers);
+      }
+      if (!taps.has(subId)) {
+        // torn down while the ack was in flight (socket closed)
+        close();
+      } else {
+        taps.set(subId, close);
+      }
+    } catch (e) {
+      taps.delete(subId);
+      throw e;
+    }
+    return { sub_id: subId };
+  }
 
   ws.on("message", (data) => {
     void (async () => {
@@ -219,6 +298,19 @@ function acceptClient(deps: WsDeps, ws: WebSocket): void {
         }
         if (frame.method === "events.subscribe") {
           ws.send(JSON.stringify({ id, result: { subscribed: true } }));
+          return;
+        }
+        if (frame.method === "broker.events.subscribe") {
+          ws.send(JSON.stringify({ id, result: await subscribeFrame(frame) }));
+          return;
+        }
+        if (frame.method === "broker.events.unsubscribe") {
+          const subId = String((frame.params as { sub_id?: unknown })?.sub_id ?? "");
+          const close = taps.get(subId);
+          if (!close) throw new BrokerError("bad_request", `no live subscription '${subId}'`);
+          taps.delete(subId);
+          close();
+          ws.send(JSON.stringify({ id, result: { unsubscribed: true } }));
           return;
         }
         if (!deps.callInstance) throw new BrokerError("bad_request", "rpc unavailable");

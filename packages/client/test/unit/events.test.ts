@@ -123,6 +123,91 @@ describe("EventChannel", () => {
     expect(FakeSocket.instances.length).toBe(2);
   });
 
+  test("subscribe routes herdr_event frames to its handler; unsubscribe stops them", async () => {
+    const ch = channel();
+    ch.connect();
+    const sock = FakeSocket.instances[0];
+    sock.emitOpen();
+
+    const got: { name: string; data: unknown }[] = [];
+    const pending = ch.subscribe(
+      { instance: "runtime", session: "default", subscriptions: [{ type: "pane.created" }] },
+      (name, data) => got.push({ name, data }),
+    );
+    const sent = JSON.parse(sock.sent[0]) as { id: string; method: string; params: unknown };
+    expect(sent.method).toBe("broker.events.subscribe");
+    expect(sent.params).toEqual({ subscriptions: [{ type: "pane.created" }] });
+    sock.emitMessage({ id: sent.id, result: { sub_id: "sub-1" } });
+    const unsub = await pending;
+
+    sock.emitMessage({
+      event: { type: "herdr_event", sub_id: "sub-1", instance: "runtime", session: "default", name: "pane_created", data: { pane: { pane_id: "w1:p2" } } },
+    });
+    // a frame for someone ELSE's sub never leaks in
+    sock.emitMessage({
+      event: { type: "herdr_event", sub_id: "sub-9", instance: "runtime", session: "default", name: "pane_created", data: {} },
+    });
+    expect(got).toEqual([{ name: "pane_created", data: { pane: { pane_id: "w1:p2" } } }]);
+
+    unsub();
+    const last = JSON.parse(sock.sent.at(-1)!) as { method: string; params: { sub_id: string } };
+    expect(last.method).toBe("broker.events.unsubscribe");
+    expect(last.params.sub_id).toBe("sub-1");
+    sock.emitMessage({
+      event: { type: "herdr_event", sub_id: "sub-1", instance: "runtime", session: "default", name: "pane_created", data: {} },
+    });
+    expect(got.length).toBe(1);
+    ch.close();
+  });
+
+  test("reconnect re-subscribes under the new sub_id; a server sub_closed reaches onClose and stops resubscribing", async () => {
+    vi.useFakeTimers();
+    const ch = channel();
+    ch.connect();
+    const sock = FakeSocket.instances[0];
+    sock.emitOpen();
+
+    const got: string[] = [];
+    let closedReason: string | undefined;
+    const pending = ch.subscribe(
+      { instance: "laptop", session: "default", subscriptions: [{ type: "workspace.created" }] },
+      (name) => got.push(name),
+      (reason) => (closedReason = reason),
+    );
+    sock.emitMessage({ id: (JSON.parse(sock.sent[0]) as { id: string }).id, result: { sub_id: "sub-1" } });
+    await pending;
+
+    // socket drops; the SDK reconnects and re-subscribes on its own
+    sock.emitDrop();
+    await vi.advanceTimersByTimeAsync(1500);
+    const sock2 = FakeSocket.instances[1];
+    sock2.emitOpen();
+    const resub = JSON.parse(sock2.sent[0]) as { id: string; method: string; instance: string; params: unknown };
+    expect(resub.method).toBe("broker.events.subscribe");
+    expect(resub.instance).toBe("laptop");
+    expect(resub.params).toEqual({ subscriptions: [{ type: "workspace.created" }] });
+    sock2.emitMessage({ id: resub.id, result: { sub_id: "sub-7" } });
+    await vi.advanceTimersByTimeAsync(0);
+
+    sock2.emitMessage({
+      event: { type: "herdr_event", sub_id: "sub-7", instance: "laptop", session: "default", name: "workspace_created", data: {} },
+    });
+    expect(got).toEqual(["workspace_created"]);
+
+    // the server closing the sub (tap died, child gone) reaches onClose...
+    sock2.emitMessage({ event: { type: "sub_closed", sub_id: "sub-7", reason: "child disconnected" } });
+    expect(closedReason).toBe("child disconnected");
+
+    // ...and a later reconnect does NOT resurrect the dead group
+    sock2.emitDrop();
+    await vi.advanceTimersByTimeAsync(5000);
+    const sock3 = FakeSocket.instances[2];
+    sock3.emitOpen();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(sock3.sent.length).toBe(0);
+    ch.close();
+  });
+
   test("a revoked token stops the reconnect loop with auth_failed instead of retrying forever", async () => {
     vi.useFakeTimers();
     const ch = channel(401);

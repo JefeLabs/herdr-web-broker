@@ -64,6 +64,54 @@ test("start subscribes, snapshots runtime into the registry, and rpc round-trips
   await fake.close();
 });
 
+test("tap opens a dedicated event channel, forwards frames, and closes cleanly", async () => {
+  const t = await setup();
+  try {
+    const events: { name: string; data: unknown }[] = [];
+    let closedReason: string | undefined;
+    const close = await t.local.tap("default", [{ type: "workspace.created" }], {
+      onEvent: (name, data) => events.push({ name, data }),
+      onClose: (reason) => (closedReason = reason),
+    });
+    // the tap's OWN channel — separate from the roster subscription
+    const sub = t.fake.received.filter((r) => r.method === "events.subscribe").at(-1);
+    assert.deepEqual(sub?.params, { subscriptions: [{ type: "workspace.created" }] });
+
+    t.fake.emitEvent("workspace_created", { workspace: { workspace_id: "w9" } });
+    await waitFor(() => events.length === 1);
+    assert.equal(events[0].name, "workspace_created");
+    assert.deepEqual(events[0].data, { workspace: { workspace_id: "w9" } });
+
+    close();
+    assert.equal(closedReason, undefined, "a deliberate close is not an error close");
+
+    // unknown session refuses up front
+    await assert.rejects(
+      t.local.tap("ghost", [{ type: "pane.created" }], { onEvent: () => undefined, onClose: () => undefined }),
+      (e: BrokerError) => e.code === "unknown_session",
+    );
+  } finally {
+    t.local.stop();
+    await t.fake.close();
+  }
+});
+
+test("tap reports onClose when the channel dies underneath it", async () => {
+  const t = await setup();
+  try {
+    let closedReason: string | undefined;
+    await t.local.tap("default", [{ type: "pane.created" }], {
+      onEvent: () => undefined,
+      onClose: (reason) => (closedReason = reason),
+    });
+    await t.fake.close(); // herdr goes away
+    await waitFor(() => closedReason !== undefined);
+    assert.ok(closedReason);
+  } finally {
+    t.local.stop();
+  }
+});
+
 test("herdr errors and unknown sessions become BrokerErrors", async () => {
   const { fake, local } = await setup();
   await assert.rejects(

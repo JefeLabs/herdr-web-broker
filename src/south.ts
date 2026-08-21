@@ -13,6 +13,7 @@ const BACKOFF_CAP_MS = 60_000;
 /** Child side of the tunnel: dial out, enroll, answer, push, reconnect forever. */
 export class ParentLink {
   #ws?: WebSocket;
+  #taps = new Map<string, () => void>();
   #attempt = 0;
   #stopped = false;
   #redial?: NodeJS.Timeout;
@@ -107,6 +108,9 @@ export class ParentLink {
     });
     ws.on("close", () => {
       if (this.#heartbeat) clearInterval(this.#heartbeat);
+      // the parent is gone — local taps must not leak herdr connections
+      for (const close of this.#taps.values()) close();
+      this.#taps.clear();
       this.#scheduleRedial();
     });
     ws.on("error", () => ws.close());
@@ -115,6 +119,32 @@ export class ParentLink {
   async #route(frame: TunnelFrame): Promise<void> {
     if (frame.type === "welcome") {
       this.#attempt = 0;
+      return;
+    }
+    // Event passthrough (spec 2026-08-21): the parent asks for a local tap;
+    // events stream up as herdr_event tunnel events, the ack is a plain res.
+    if (frame.type === "sub") {
+      try {
+        const close = await this.opts.local.tap(frame.session, frame.subscriptions, {
+          onEvent: (name, data) =>
+            this.#send({ type: "event", event: { kind: "herdr_event", sub_id: frame.sub_id, session: frame.session, name, data } }),
+          onClose: (reason) => {
+            this.#taps.delete(frame.sub_id);
+            this.#send({ type: "event", event: { kind: "sub_closed", sub_id: frame.sub_id, reason } });
+          },
+        });
+        this.#taps.set(frame.sub_id, close);
+        this.#send({ type: "res", id: frame.id, result: { sub_id: frame.sub_id } });
+      } catch (e) {
+        const err = e instanceof BrokerError ? e : new BrokerError("upstream_error", String(e));
+        this.#send({ type: "res", id: frame.id, error: { code: err.code, message: err.message } });
+      }
+      return;
+    }
+    if (frame.type === "unsub") {
+      const close = this.#taps.get(frame.sub_id);
+      this.#taps.delete(frame.sub_id);
+      close?.();
       return;
     }
     if (frame.type !== "req") return;
@@ -151,6 +181,8 @@ export class ParentLink {
 
   stop(): void {
     this.#stopped = true;
+    for (const close of this.#taps.values()) close();
+    this.#taps.clear();
     if (this.#redial) clearTimeout(this.#redial);
     if (this.#heartbeat) clearInterval(this.#heartbeat);
     for (const off of this.#listeners) off();

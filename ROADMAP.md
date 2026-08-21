@@ -23,12 +23,15 @@ missing endpoints/SDK/UI, not missing reachability):
     ./agents/{pane}/explain` + console card — rules, evidence counts,
     region preview. Fixed a latent route bug on the way: the agents-list
     matcher lacked a length check and swallowed agents GET sub-routes.
-23. **Event passthrough** (scopes item 8): the broker WS emits only
-    `agent_status` + instance online/offline; herdr's richer events
-    (`pane.output_matched`, `pane.created/exited`, `workspace_*`,
-    `layout.updated`) cannot be streamed to broker clients at all — rpc is
-    request/response and subscriptions don't ride the tunnel. True fix is
-    item 8's push plumbing with a subscription vocabulary.
+23. ~~**Event passthrough**~~ Done with item 8: `broker.events.subscribe`
+    on `WS /events` streams any of herdr's 27 subscription types
+    (parameterized `pane.output_matched` included) as pushed `herdr_event`
+    frames — from the runtime AND from enrolled children over new `sub`/
+    `unsub` tunnel frames (proto 2). Dead taps and disconnected children
+    push `sub_closed` instead of going silent; caps 8 groups/socket, 32
+    types/group; SDK `events.subscribe()` auto-re-subscribes after
+    reconnect. Proven end to end by the federation probe: a child's
+    `workspace_created` crossed child herdr → tunnel → parent → client WS.
 
 ## Blocked on herdr (needs a live schema probe)
 
@@ -70,11 +73,11 @@ map!), `pane.close`, `agent.wait`, and `agent.prompt`'s
    files fall back to the path listing with honest annotations, never
    truncated. PDF text extraction deliberately deferred (needs a parser
    dependency in the zero-dep broker).
-8. **Push-based streaming.** Bundles/files long-poll by design (rides the
-   parent↔child tunnel unchanged); true SSE/WS push needs new tunnel
-   plumbing. Item 23 scopes the demand side: a subscription vocabulary so
-   broker clients can stream herdr's richer event types, not just
-   agent_status.
+8. ~~**Push-based streaming.**~~ Done with item 23 (see its entry for the
+   full shape): subscription vocabulary over `WS /events`, dedicated
+   herdr tap per group, and `sub`/`unsub` tunnel frames so children's
+   events push through the parent. Bundles/files still long-poll by
+   design — push is for events, polls stay for content.
 
 ## Known rough edges (small fixes)
 

@@ -4,6 +4,7 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 afterEach(cleanup);
 import type { BrokerClient, Screen as PaneScreen } from "@jefelabs/herdr-broker-client";
 import { AuthGate } from "../src/organisms/AuthGate.js";
+import { EventsPanel } from "../src/organisms/EventsPanel.js";
 import { PaneViewer } from "../src/organisms/PaneViewer.js";
 import { SessionBar } from "../src/organisms/SessionBar.js";
 import { WorkspaceBrowser } from "../src/organisms/WorkspaceBrowser.js";
@@ -219,5 +220,62 @@ describe("WorkspaceBrowser", () => {
     expect(screen.getAllByText("app").length).toBeGreaterThan(0);
     expect(screen.getByText("● DIRTY")).toBeTruthy();
     expect(session.workspaces).toHaveBeenCalledOnce();
+  });
+});
+
+describe("EventsPanel subscriptions", () => {
+  function eventsMocks() {
+    const handlers = new Map<string, Set<(data: unknown) => void>>();
+    const unsub = vi.fn();
+    let captured: {
+      onEvent?: (name: string, data: unknown) => void;
+      onClose?: (reason: string) => void;
+    } = {};
+    const events = {
+      on: vi.fn((type: string, cb: (data: unknown) => void) => {
+        let set = handlers.get(type);
+        if (!set) handlers.set(type, (set = new Set()));
+        set.add(cb);
+        return () => set.delete(cb);
+      }),
+      connect: vi.fn(() => handlers.get("open")?.forEach((cb) => cb(undefined))),
+      close: vi.fn(),
+      rpc: vi.fn(async () => ({})),
+      subscribe: vi.fn(async (_t: unknown, onEvent: (n: string, d: unknown) => void, onClose?: (r: string) => void) => {
+        captured = { onEvent, onClose };
+        return unsub;
+      }),
+    };
+    const broker = { events } as unknown as BrokerClient;
+    return { broker, events, unsub, fire: () => captured };
+  }
+
+  test("subscribe sends the parsed type list, streams herdr events into the log, unsubscribe stops", async () => {
+    const { broker, events, unsub, fire } = eventsMocks();
+    render(<EventsPanel broker={broker} instance="runtime" session="default" />);
+    fireEvent.click(screen.getByText("connect"));
+
+    fireEvent.change(screen.getByLabelText(/herdr subscriptions/i), {
+      target: { value: "workspace.created, pane.created" },
+    });
+    fireEvent.click(screen.getByText("subscribe"));
+    await waitFor(() => expect(events.subscribe).toHaveBeenCalled());
+    expect(events.subscribe.mock.calls[0][0]).toEqual({
+      instance: "runtime",
+      session: "default",
+      subscriptions: [{ type: "workspace.created" }, { type: "pane.created" }],
+    });
+
+    fire().onEvent!("pane_created", { pane: { pane_id: "w1:p2" } });
+    await screen.findByText(/pane_created/);
+
+    fireEvent.click(screen.getByText("unsubscribe"));
+    expect(unsub).toHaveBeenCalled();
+
+    // a server-side closure reaches the log as a system line
+    fireEvent.click(screen.getByText("subscribe"));
+    await waitFor(() => expect(events.subscribe).toHaveBeenCalledTimes(2));
+    fire().onClose!("child disconnected");
+    await screen.findByText(/child disconnected/);
   });
 });

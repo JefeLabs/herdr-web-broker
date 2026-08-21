@@ -265,3 +265,41 @@ test("broker.repo.* in remote_deny fast-fails at the parent", async () => {
     await teardown(parts);
   }
 });
+
+test("event passthrough crosses the tunnel: subscribe to the CHILD, its herdr events arrive; child death closes the sub", async () => {
+  const parts = await bootPair();
+  const { parent, child, fakeChild } = parts;
+  const WebSocket = (await import("ws")).default;
+  const ws = new WebSocket(`ws://127.0.0.1:${parent.port}/events?token=tok`);
+  try {
+    await new Promise((r) => ws.once("open", r));
+    const frames: Record<string, unknown>[] = [];
+    ws.on("message", (d) => frames.push(JSON.parse(String(d))));
+
+    ws.send(JSON.stringify({
+      id: "fs", instance: "laptop", session: "default",
+      method: "broker.events.subscribe",
+      params: { subscriptions: [{ type: "pane.created" }] },
+    }));
+    await waitFor(() => frames.some((f) => f.id === "fs"));
+    const ack = frames.find((f) => f.id === "fs") as { result?: { sub_id?: string } };
+    assert.ok(ack.result?.sub_id, `child subscribe acked, got ${JSON.stringify(ack)}`);
+
+    fakeChild.emitEvent("pane_created", { pane: { pane_id: "c:p2" } });
+    await waitFor(() => frames.some((f) => (f.event as { type?: string })?.type === "herdr_event"));
+    const evt = frames.find((f) => (f.event as { type?: string })?.type === "herdr_event")!.event as Record<string, unknown>;
+    assert.equal(evt.instance, "laptop");
+    assert.equal(evt.name, "pane_created");
+    assert.deepEqual(evt.data, { pane: { pane_id: "c:p2" } });
+
+    // the child dying closes the subscription honestly
+    await child.close();
+    await waitFor(() => frames.some((f) => (f.event as { type?: string })?.type === "sub_closed"), 5000);
+    const closed = frames.find((f) => (f.event as { type?: string })?.type === "sub_closed")!.event as Record<string, unknown>;
+    assert.equal(closed.sub_id, ack.result!.sub_id);
+    assert.ok(String(closed.reason).length > 0);
+  } finally {
+    ws.close();
+    await teardown(parts);
+  }
+});

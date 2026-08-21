@@ -26,6 +26,9 @@ export function EventsPanel({ broker, instance, session }: EventsPanelProps) {
   const [frame, setFrame] = useState(
     JSON.stringify({ instance, session, method: "agent.list", params: {} }, null, 2),
   );
+  const [subTypes, setSubTypes] = useState("workspace.created, pane.created, pane.agent_status_changed");
+  const [subscribed, setSubscribed] = useState(false);
+  const unsubRef = useRef<(() => void) | null>(null);
 
   const push = (dir: LogLine["dir"], text: string) => setLog((old) => [...old.slice(-400), { dir, text, ts: now() }]);
 
@@ -51,6 +54,45 @@ export function EventsPanel({ broker, instance, session }: EventsPanelProps) {
     ];
     return () => offs.forEach((off) => off());
   }, [broker]);
+
+  // the group survives socket reconnects (the SDK re-subscribes itself);
+  // unmount and the unsubscribe button retire it
+  useEffect(() => () => unsubRef.current?.(), []);
+
+  async function subscribeHerdr() {
+    const subscriptions = subTypes
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean)
+      .map((type) => ({ type }));
+    if (subscriptions.length === 0) {
+      push("sys", "give at least one subscription type, e.g. pane.created");
+      return;
+    }
+    try {
+      const unsub = await broker.events.subscribe(
+        { instance, session, subscriptions },
+        (name, data) => push("in", `⚡ ${name} ${JSON.stringify(data).slice(0, 400)}`),
+        (reason) => {
+          unsubRef.current = null;
+          setSubscribed(false);
+          push("sys", `subscription closed: ${reason}`);
+        },
+      );
+      unsubRef.current = unsub;
+      setSubscribed(true);
+      push("sys", `subscribed to ${subscriptions.map((s) => s.type).join(", ")} on ${instance}/${session}`);
+    } catch (e) {
+      push("sys", e instanceof BrokerApiError ? `${e.code}: ${e.message}` : String(e));
+    }
+  }
+
+  function unsubscribeHerdr() {
+    unsubRef.current?.();
+    unsubRef.current = null;
+    setSubscribed(false);
+    push("sys", "unsubscribed");
+  }
 
   async function sendFrame() {
     let parsed: { instance?: string; session?: string; method?: string; params?: unknown };
@@ -108,6 +150,29 @@ export function EventsPanel({ broker, instance, session }: EventsPanelProps) {
           <button className="btn ghost" disabled={!connected} onClick={() => void sendFrame()}>
             send frame
           </button>
+        </div>
+        <label className="field">
+          <span>herdr subscriptions (comma-separated types — pushed as ⚡ lines below)</span>
+          <input
+            value={subTypes}
+            onChange={(e) => setSubTypes(e.target.value)}
+            spellCheck={false}
+            disabled={subscribed}
+          />
+        </label>
+        <div className="card-actions">
+          {!subscribed ? (
+            <button className="btn ghost" disabled={!connected} onClick={() => void subscribeHerdr()}>
+              subscribe
+            </button>
+          ) : (
+            <button className="btn danger" onClick={unsubscribeHerdr}>
+              unsubscribe
+            </button>
+          )}
+          <span className={`status-pill ${subscribed ? "ok" : ""}`}>
+            {subscribed ? "⚡ streaming herdr events" : "no herdr subscription"}
+          </span>
         </div>
         <div className="evt-log" ref={logRef}>
           {log.length === 0 && <span className="sys">— no traffic yet —</span>}
