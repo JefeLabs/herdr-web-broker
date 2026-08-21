@@ -18,6 +18,7 @@ import type {
   PushResult,
   SessionSummary,
   SpawnOpts,
+  WorktreeInfo,
   SpawnResult,
   TreeNode,
   Workspace,
@@ -173,6 +174,28 @@ export class SessionHandle {
    * cleanup for abandoned working sets. Agents inside die with their panes. */
   closeWorkspace(workspaceId: string): Promise<{ workspace_id: string; closed: boolean }> {
     return request(this.cfg, "DELETE", `${this.base()}/workspaces/${encodeURIComponent(workspaceId)}`);
+  }
+
+  /** The worktree inventory of the repo behind a workspace: the source
+   * checkout plus every linked worktree (branch, path, open workspace). */
+  async worktrees(workspaceId: string): Promise<WorktreeInfo[]> {
+    const r = await request<{ worktrees: WorktreeInfo[] }>(
+      this.cfg,
+      "GET",
+      `${this.base()}/workspaces/${encodeURIComponent(workspaceId)}/worktrees`,
+    );
+    return r.worktrees;
+  }
+
+  /** Remove a worktree AND its workspace: the checkout directory is
+   * deleted, the BRANCH survives for merging. force removes dirty trees. */
+  removeWorktree(
+    workspaceId: string,
+    opts: { force?: boolean } = {},
+  ): Promise<{ workspace_id: string; removed: boolean; path: string | null }> {
+    return request(this.cfg, "DELETE", `${this.base()}/worktrees/${encodeURIComponent(workspaceId)}`, {
+      ...(opts.force ? { query: { force: "1" } } : {}),
+    });
   }
 
   async spawn(opts: SpawnOpts): Promise<AgentHandle> {

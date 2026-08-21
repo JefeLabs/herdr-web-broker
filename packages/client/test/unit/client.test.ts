@@ -35,6 +35,27 @@ describe("BrokerClient", () => {
     expect((calls[0].init.headers as Record<string, string>).authorization).toBe("Bearer mine");
   });
 
+  test("worktree spawn opts + worktrees()/removeWorktree() hit the documented paths", async () => {
+    const { calls, fetchFn } = fake(
+      200,
+      '{"workspace_id":"w6","pane_id":"w6:p1","agent":"copilot","status":"idle","worktree":{"branch":"feat-x","path":"/wt/feat-x"}}',
+    );
+    const session = new BrokerClient({ origin: "", token: "t", fetchFn }).instance("runtime").session("default");
+    const agent = await session.spawn({ kind: "copilot", cwd: "/repo", worktree: { branch: "feat-x", base: "main" } });
+    expect(agent.spawned?.worktree).toEqual({ branch: "feat-x", path: "/wt/feat-x" });
+    expect(JSON.parse(String(calls[0].init.body))).toEqual({
+      kind: "copilot",
+      cwd: "/repo",
+      worktree: { branch: "feat-x", base: "main" },
+    });
+
+    await session.worktrees("w1");
+    expect(calls[1].url).toBe("/instances/runtime/sessions/default/workspaces/w1/worktrees");
+    await session.removeWorktree("w6", { force: true });
+    expect(calls[2].url).toBe("/instances/runtime/sessions/default/worktrees/w6?force=1");
+    expect(calls[2].init.method).toBe("DELETE");
+  });
+
   test("closeWorkspace() reaps via DELETE on the workspace", async () => {
     const { calls, fetchFn } = fake(200, '{"workspace_id":"w2","closed":true}');
     const session = new BrokerClient({ origin: "", token: "t", fetchFn }).instance("runtime").session("default");

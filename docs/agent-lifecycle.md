@@ -28,6 +28,11 @@ POST .../agents
 - Exactly one of `cwd` (mode A: a new working set) or `workspace_id`
   (mode B: grow the team — the broker splits a new pane **into** that
   workspace via herdr's `pane.split`, wire-verified).
+- **Mode C — parallel agents on branches**: add `worktree: {branch,
+  base?}` with `cwd` and the broker branches the repo into an isolated
+  worktree checkout (herdr `worktree.create`) and runs the agent there.
+  Spawn N branches, let the agents race, merge the winner; clean up with
+  `DELETE .../worktrees/{w}` — the checkout dies, the branch survives.
 - Credentials stored in the env registry (`POST /instances/{i}/env`, scoped by
   `kind`) reach the pane shell before the CLI starts: natively via
   `pane.split`'s env map on mode B, via a seconds-lived 0600 drop file on

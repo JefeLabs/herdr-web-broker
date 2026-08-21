@@ -241,6 +241,97 @@ test("spawn: agent_name_taken on the DEFAULT name retries with a pane-unique nam
   }
 });
 
+test("spawn mode C: worktree {branch, base} creates an isolated checkout and starts the agent there", async () => {
+  const t = await setup();
+  try {
+    const cwd = scratchRepo();
+    t.fake.handlers.set("worktree.create", () => ({
+      type: "worktree_created",
+      workspace: { workspace_id: "w6" },
+      root_pane: { pane_id: "w6:p1" },
+      worktree: { branch: "feat-x", path: "/tmp/wt/feat-x", is_linked_worktree: true },
+    }));
+    t.fake.handlers.set("agent.start", () => ({ type: "agent_started" }));
+    const out = (await runBrokerMethod(t.deps, "default", "broker.agent.spawn", {
+      kind: "copilot",
+      cwd,
+      worktree: { branch: "feat-x", base: "main" },
+    })) as { workspace_id: string; pane_id: string; worktree?: { branch: string; path: string } };
+    assert.equal(out.workspace_id, "w6");
+    assert.equal(out.pane_id, "w6:p1");
+    assert.deepEqual(out.worktree, { branch: "feat-x", path: "/tmp/wt/feat-x" });
+    const created = t.fake.received.find((r) => r.method === "worktree.create");
+    assert.deepEqual(created?.params, { cwd, branch: "feat-x", base: "main" });
+    // the index records the CHECKOUT as the workspace cwd, so repo/git/context
+    // endpoints operate inside the worktree
+    assert.equal(t.deps.index.get("default", "w6")?.cwd, "/tmp/wt/feat-x");
+
+    // worktree needs mode A (cwd = the repo); branch is required
+    await assert.rejects(
+      runBrokerMethod(t.deps, "default", "broker.agent.spawn", {
+        kind: "copilot",
+        workspace_id: "w1",
+        worktree: { branch: "x" },
+      }),
+      (e: BrokerError) => e.code === "bad_request",
+    );
+    await assert.rejects(
+      runBrokerMethod(t.deps, "default", "broker.agent.spawn", { kind: "copilot", cwd, worktree: {} }),
+      (e: BrokerError) => e.code === "bad_request",
+    );
+  } finally {
+    await t.teardown();
+  }
+});
+
+test("broker.worktree.list: inventories the repo's worktrees via the workspace's cwd", async () => {
+  const t = await setup();
+  try {
+    const cwd = scratchRepo();
+    t.deps.index.set("default", "w1", { cwd });
+    t.fake.handlers.set("worktree.list", () => ({
+      type: "worktree_list",
+      source: { repo_root: cwd, source_workspace_id: "w1" },
+      worktrees: [
+        { path: cwd, branch: "main", is_linked_worktree: false, open_workspace_id: "w1" },
+        { path: "/tmp/wt/feat-x", branch: "feat-x", is_linked_worktree: true, open_workspace_id: "w6" },
+      ],
+    }));
+    const out = (await runBrokerMethod(t.deps, "default", "broker.worktree.list", { workspace_id: "w1" })) as {
+      workspace_id: string;
+      worktrees: { branch: string }[];
+    };
+    assert.equal(out.workspace_id, "w1");
+    assert.deepEqual(out.worktrees.map((w) => w.branch), ["main", "feat-x"]);
+    const sent = t.fake.received.find((r) => r.method === "worktree.list");
+    assert.deepEqual(sent?.params, { cwd });
+  } finally {
+    await t.teardown();
+  }
+});
+
+test("broker.worktree.remove: deletes the checkout, keeps the branch, forgets the index entry", async () => {
+  const t = await setup();
+  try {
+    t.deps.index.set("default", "w6", { cwd: "/tmp/wt/feat-x" });
+    t.fake.handlers.set("worktree.remove", () => ({
+      type: "worktree_removed",
+      workspace_id: "w6",
+      path: "/tmp/wt/feat-x",
+      forced: false,
+    }));
+    const out = (await runBrokerMethod(t.deps, "default", "broker.worktree.remove", {
+      workspace_id: "w6",
+    })) as { workspace_id: string; removed: boolean; path: string };
+    assert.deepEqual(out, { workspace_id: "w6", removed: true, path: "/tmp/wt/feat-x" });
+    const sent = t.fake.received.find((r) => r.method === "worktree.remove");
+    assert.deepEqual(sent?.params, { workspace_id: "w6" });
+    assert.equal(t.deps.index.get("default", "w6"), undefined);
+  } finally {
+    await t.teardown();
+  }
+});
+
 test("broker.agent.stop: closes the agent's pane; empty panes answer 'no agent in pane'", async () => {
   const t = await setup();
   try {

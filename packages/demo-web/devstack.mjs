@@ -83,6 +83,42 @@ fake.handlers.set("pane.split", (p) => ({
   pane: { pane_id: `${p?.workspace_id ?? "w1"}:p${nextPane++}` },
 }));
 
+// mode-C spawns: worktree checkouts materialize as workspaces
+const simWorktrees = new Map(); // workspace_id -> {branch, path}
+fake.handlers.set("worktree.create", (p) => {
+  const id = `w${nextWs++}`;
+  const path = `/tmp/sim-worktrees/${p?.branch ?? "branch"}`;
+  workspaces.set(id, { cwd: path, label: String(p?.branch ?? id) });
+  simWorktrees.set(id, { branch: p?.branch, path });
+  return {
+    type: "worktree_created",
+    workspace: { workspace_id: id },
+    root_pane: { pane_id: `${id}:p1` },
+    worktree: { branch: p?.branch, path, is_linked_worktree: true },
+  };
+});
+fake.handlers.set("worktree.list", () => ({
+  type: "worktree_list",
+  source: { repo_root: work },
+  worktrees: [
+    { path: work, branch: "main", is_linked_worktree: false, open_workspace_id: "w1" },
+    ...[...simWorktrees.entries()].map(([id, w]) => ({
+      path: w.path,
+      branch: w.branch,
+      is_linked_worktree: true,
+      open_workspace_id: id,
+    })),
+  ],
+}));
+fake.handlers.set("worktree.remove", (p) => {
+  const id = String(p?.workspace_id ?? "");
+  const w = simWorktrees.get(id);
+  simWorktrees.delete(id);
+  workspaces.delete(id);
+  fake.agents = fake.agents.filter((a) => a.workspace_id !== id);
+  return { type: "worktree_removed", workspace_id: id, path: w?.path ?? null, forced: p?.force === true };
+});
+
 fake.handlers.set("pane.close", (p) => {
   fake.agents = fake.agents.filter((a) => a.pane_id !== String(p?.pane_id ?? ""));
   return { type: "ok" };

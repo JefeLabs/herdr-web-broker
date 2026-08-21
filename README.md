@@ -50,6 +50,8 @@ the local machine; anything else is an enrolled child.
 | `POST /instances/{instance}/sessions/{s}/agents` | spawn a team agent: `{kind, cwd|workspace_id, label?, name?, args?}` — `workspace_id` splits a new pane INTO that workspace (native pane.split, env injected by herdr); `cwd` starts a fresh working set |
 | `DELETE .../workspaces/{w}` | close a workspace and every pane in it — the reaper for abandoned working sets (agents die with their panes) |
 | `DELETE .../agents/{pane}` | stop one agent: closes its pane; the workspace and the rest of the team survive |
+| `GET .../workspaces/{w}/worktrees` | the repo's worktree inventory: source checkout + every linked worktree (branch, path, open workspace) |
+| `DELETE .../worktrees/{w}?force=` | remove a worktree: checkout deleted, workspace closed, the BRANCH survives for merging |
 | `GET /instances/{instance}/sessions/{s}/workspaces` | working sets: team roster + discovered repos per workspace |
 | `GET .../workspaces/{w}/repos/{r}/tree` | repo file tree (`{r}` = repo path; `-` = workspace root) |
 | `GET .../workspaces/{w}/repos/{r}/git/diff?base=REF` | branch, status, unified diff |

@@ -258,9 +258,10 @@ export const CATALOG: EndpointSpec[] = [
       "Exactly one of cwd / workspace_id is required. workspace_id truly joins the team: the broker splits a " +
       "new pane INTO that workspace (herdr pane.split, wire-verified) with env-registry values injected " +
       "natively by herdr. cwd starts a fresh working set; there the env rides a drop file sourced before " +
-      "agent.start. On agent_pane_busy (a cold pane whose shell is still booting) the broker retries the same " +
-      "pane internally. Clean up abandoned working sets with DELETE .../workspaces/{w}. Response: agent is a " +
-      "STRING (the agent's name); status is top-level.",
+      "agent.start. Mode C: add worktree {branch, base?} with cwd to branch the repo into an ISOLATED " +
+      "worktree checkout and run the agent there — the parallel-agents primitive (spawn N branches, merge " +
+      "the winner). On agent_pane_busy the broker retries the same pane internally. Clean up with " +
+      "DELETE .../workspaces/{w} or DELETE .../worktrees/{w}. Response: agent is a STRING; status is top-level.",
     response: {
       type: "object",
       properties: {
@@ -279,6 +280,8 @@ export const CATALOG: EndpointSpec[] = [
       { key: "target_mode", label: "target", kind: "select", options: ["cwd", "workspace_id"], uiOnly: true },
       { key: "cwd", label: "cwd (mode A)", kind: "text", placeholder: "/work" },
       { key: "workspace_id", label: "workspace_id (mode B)", kind: "text", placeholder: "w1" },
+      { key: "worktree_branch", label: "worktree branch (mode C, with cwd)", kind: "text", placeholder: "feat-x" },
+      { key: "worktree_base", label: "worktree base", kind: "text", placeholder: "main" },
       { key: "label", label: "label", kind: "text", placeholder: "backend team" },
       { key: "name", label: "name", kind: "text", placeholder: "defaults to kind" },
       { key: "args", label: "args (JSON array)", kind: "json", placeholder: '["--model","gpt-5"]' },
@@ -289,6 +292,12 @@ export const CATALOG: EndpointSpec[] = [
       const body: Record<string, unknown> = { kind };
       if ((v.target_mode ?? "cwd") === "cwd") body.cwd = need(v, "cwd");
       else body.workspace_id = need(v, "workspace_id");
+      if (v.worktree_branch?.trim()) {
+        body.worktree = {
+          branch: v.worktree_branch.trim(),
+          ...(v.worktree_base?.trim() ? { base: v.worktree_base.trim() } : {}),
+        };
+      }
       if (v.label?.trim()) body.label = v.label.trim();
       if (v.name?.trim()) body.name = v.name.trim();
       if (v.args?.trim()) body.args = parseJson(v.args, "args");
@@ -332,6 +341,79 @@ export const CATALOG: EndpointSpec[] = [
       method: "DELETE",
       path: `${sess(ctx)}/workspaces/${enc(need(v, "workspace_id"))}`,
       auth: "bearer",
+    }),
+  },
+  {
+    id: "worktree-list",
+    group: "Workspaces & Repos",
+    title: "List worktrees",
+    summary: "The worktree inventory of the repo behind a workspace: the source checkout plus every linked worktree with branch, path, and open workspace id.",
+    docs:
+      "Rides herdr's worktree.list (wire-verified). Together with mode-C spawns this is the parallel-agents " +
+      "view: which branches have live checkouts and which workspace each one is open as.",
+    method: "GET",
+    pathTemplate: "/instances/{instance}/sessions/{session}/workspaces/{workspace_id}/worktrees",
+    auth: "bearer",
+    fields: [{ key: "workspace_id", label: "workspace_id", kind: "text", required: true, placeholder: "w1" }],
+    response: {
+      type: "object",
+      properties: {
+        workspace_id: { type: "string" },
+        source: { type: "object" },
+        worktrees: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              path: { type: "string" },
+              branch: { type: "string" },
+              is_linked_worktree: { type: "boolean" },
+              is_prunable: { type: "boolean" },
+              open_workspace_id: { type: "string" },
+            },
+            required: ["path"],
+          },
+        },
+      },
+      required: ["workspace_id", "worktrees"],
+    },
+    build: (v, ctx) => ({
+      method: "GET",
+      path: `${sess(ctx)}/workspaces/${enc(need(v, "workspace_id"))}/worktrees`,
+      auth: "bearer",
+    }),
+  },
+  {
+    id: "worktree-remove",
+    group: "Workspaces & Repos",
+    title: "Remove worktree",
+    summary: "Delete a worktree's checkout AND close its workspace — the BRANCH survives, so the work stays mergeable via the git endpoints.",
+    docs:
+      "Rides herdr's worktree.remove (wire-verified). This is the mode-C cleanup: unlike plain workspace " +
+      "close, the checkout directory is deleted from disk. force=1 removes dirty checkouts. Merge the " +
+      "surviving branch with your own tooling or the git endpoints — an in-broker merge verb is deliberately " +
+      "out of scope (roadmap item 4).",
+    method: "DELETE",
+    pathTemplate: "/instances/{instance}/sessions/{session}/worktrees/{workspace_id}",
+    auth: "bearer",
+    fields: [
+      { key: "workspace_id", label: "workspace_id", kind: "text", required: true, placeholder: "w6" },
+      { key: "force", label: "force — remove dirty checkout", kind: "toggle" },
+    ],
+    response: {
+      type: "object",
+      properties: {
+        workspace_id: { type: "string" },
+        removed: { type: "boolean" },
+        path: { type: "string" },
+      },
+      required: ["workspace_id", "removed"],
+    },
+    build: (v, ctx) => ({
+      method: "DELETE",
+      path: `${sess(ctx)}/worktrees/${enc(need(v, "workspace_id"))}`,
+      auth: "bearer",
+      ...(v.force === "1" ? { query: { force: "1" } } : {}),
     }),
   },
   {

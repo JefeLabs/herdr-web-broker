@@ -530,6 +530,34 @@ test("agent stop route: DELETE .../agents/{pane} closes the agent's pane", async
   }
 });
 
+test("worktree routes: GET lists via the workspace; DELETE removes checkout + workspace", async () => {
+  const t = await setup();
+  try {
+    t.ops.index.set("default", "w1", { cwd: scratchRepo() });
+    t.fake.handlers.set("worktree.list", () => ({
+      type: "worktree_list",
+      source: {},
+      worktrees: [{ branch: "main" }, { branch: "feat-x" }],
+    }));
+    const list = await t.authed("/instances/runtime/sessions/default/workspaces/w1/worktrees");
+    assert.equal(list.status, 200);
+    assert.deepEqual(
+      ((await list.json()) as { worktrees: { branch: string }[] }).worktrees.map((w) => w.branch),
+      ["main", "feat-x"],
+    );
+
+    t.ops.index.set("default", "w6", { cwd: "/tmp/wt/feat-x" });
+    t.fake.handlers.set("worktree.remove", () => ({ type: "worktree_removed", path: "/tmp/wt/feat-x" }));
+    const rm = await t.authed("/instances/runtime/sessions/default/worktrees/w6?force=1", { method: "DELETE" });
+    assert.equal(rm.status, 200);
+    assert.deepEqual(await rm.json(), { workspace_id: "w6", removed: true, path: "/tmp/wt/feat-x" });
+    const sent = t.fake.received.find((r) => r.method === "worktree.remove");
+    assert.deepEqual(sent?.params, { workspace_id: "w6", force: true });
+  } finally {
+    await teardown(t);
+  }
+});
+
 test("workspace close route: DELETE .../workspaces/{w} reaps it", async () => {
   const t = await setup();
   try {

@@ -360,6 +360,22 @@ export function createHttpHandler(deps: HttpDeps) {
       return;
     }
 
+    // GET .../workspaces/{w}/worktrees — the repo's worktree inventory
+    if (parts.length === 7 && parts[4] === "workspaces" && parts[6] === "worktrees" && req.method === "GET") {
+      const params = { workspace_id: decodeURIComponent(parts[5]) };
+      json(res, 200, await callInstance(instance, session, "broker.worktree.list", params));
+      return;
+    }
+
+    // DELETE .../worktrees/{w} — remove worktree AND workspace (checkout
+    // deleted, branch survives); ?force=1 for dirty checkouts
+    if (parts.length === 6 && parts[4] === "worktrees" && req.method === "DELETE") {
+      const params: Record<string, unknown> = { workspace_id: decodeURIComponent(parts[5]) };
+      if (url.searchParams.get("force") === "1") params.force = true;
+      json(res, 200, await callInstance(instance, session, "broker.worktree.remove", params));
+      return;
+    }
+
     // GET .../workspaces/{w}/repos/{r}/tree (spec §2.3)
     if (parts.length === 9 && parts[4] === "workspaces" && parts[6] === "repos" && parts[8] === "tree" && req.method === "GET") {
       const params = { workspace_id: decodeURIComponent(parts[5]), repo: decodeURIComponent(parts[7]) };

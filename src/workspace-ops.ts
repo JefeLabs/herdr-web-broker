@@ -109,6 +109,28 @@ export async function runBrokerMethod(
     }
     case "broker.workspace.list":
       return listWorkspaces(deps, session);
+    case "broker.worktree.list": {
+      const workspaceId = str(p.workspace_id, "workspace_id");
+      const cwd = await resolveCwd(deps, session, workspaceId);
+      const r = (await deps.local.request(session, "worktree.list", { cwd }, 15_000)) as {
+        source?: unknown;
+        worktrees?: unknown[];
+      };
+      return { workspace_id: workspaceId, source: r?.source ?? null, worktrees: r?.worktrees ?? [] };
+    }
+    case "broker.worktree.remove": {
+      const workspaceId = str(p.workspace_id, "workspace_id");
+      // Unlike workspace.close, this DELETES the checkout directory too;
+      // the BRANCH survives (wire-verified) — the work stays mergeable.
+      const r = (await deps.local.request(
+        session,
+        "worktree.remove",
+        { workspace_id: workspaceId, ...(p.force === true ? { force: true } : {}) },
+        15_000,
+      )) as { path?: unknown };
+      deps.index.remove(session, workspaceId);
+      return { workspace_id: workspaceId, removed: true, path: typeof r?.path === "string" ? r.path : null };
+    }
     case "broker.repo.tree": {
       const workspaceId = str(p.workspace_id, "workspace_id");
       const repo = str(p.repo, "repo");
@@ -316,6 +338,20 @@ async function spawn(deps: OpsDeps, session: string, p: Record<string, unknown>)
     }
     args = p.args as string[];
   }
+  // Mode C — worktree spawns: branch off the repo at `cwd` into an
+  // isolated checkout (herdr worktree.create, wire-verified) and run the
+  // agent there. Requires mode A's cwd; the branch is the whole point.
+  let worktreeReq: { branch: string; base?: string } | undefined;
+  if (p.worktree !== undefined) {
+    if (hasWs) throw new BrokerError("bad_request", "'worktree' spawns need 'cwd' (the repo root), not 'workspace_id'");
+    const wt = p.worktree as Record<string, unknown> | null;
+    const branch = wt?.branch;
+    if (typeof branch !== "string" || !branch || branch.length > 200 || /[\p{Cc}\s]/u.test(branch)) {
+      throw new BrokerError("bad_request", "'worktree.branch' is required (a git branch name, no spaces)");
+    }
+    worktreeReq = { branch, ...(typeof wt?.base === "string" && wt.base ? { base: wt.base } : {}) };
+  }
+
   let cwd: string;
   const label = typeof p.label === "string" ? p.label : undefined;
   if (!hasWs) {
@@ -338,6 +374,7 @@ async function spawn(deps: OpsDeps, session: string, p: Record<string, unknown>)
 
   let paneId: string;
   let workspaceId: string;
+  let worktreeMade: { branch: string; path: string } | undefined;
   if (hasWs) {
     // Mode B — join the EXISTING workspace via pane.split (wire-verified,
     // schema probe 2026-08-21). herdr injects the env map natively into
@@ -359,6 +396,24 @@ async function spawn(deps: OpsDeps, session: string, p: Record<string, unknown>)
       throw new BrokerError("upstream_error", "pane.split returned no pane");
     }
     paneId = splitPane;
+  } else if (worktreeReq) {
+    const made = (await deps.local.request(
+      session,
+      "worktree.create",
+      { cwd, branch: worktreeReq.branch, ...(worktreeReq.base ? { base: worktreeReq.base } : {}) },
+      30_000,
+    )) as { root_pane?: { pane_id?: unknown }; worktree?: { path?: unknown } };
+    const wtPane = typeof made?.root_pane?.pane_id === "string" ? made.root_pane.pane_id : undefined;
+    if (!wtPane || !wtPane.includes(":")) {
+      throw new BrokerError("upstream_error", "worktree.create returned no root pane");
+    }
+    paneId = wtPane;
+    workspaceId = paneId.split(":")[0];
+    const checkout = typeof made?.worktree?.path === "string" ? made.worktree.path : cwd;
+    // the CHECKOUT is this workspace's cwd — repo/git/context endpoints
+    // operate inside the worktree
+    deps.index.set(session, workspaceId, { cwd: checkout, ...(label ? { label } : {}) });
+    worktreeMade = { branch: worktreeReq.branch, path: checkout };
   } else {
     const created = (await deps.local.request(
       session,
@@ -438,7 +493,13 @@ async function spawn(deps: OpsDeps, session: string, p: Record<string, unknown>)
     agents?: Array<Record<string, unknown>>;
   };
   const entry = raw.agents?.find((a) => a.pane_id === paneId);
-  return { workspace_id: workspaceId, pane_id: paneId, agent: name, status: foldStatus(entry?.agent_status) };
+  return {
+    workspace_id: workspaceId,
+    pane_id: paneId,
+    agent: name,
+    status: foldStatus(entry?.agent_status),
+    ...(worktreeMade ? { worktree: worktreeMade } : {}),
+  };
 }
 
 /** Resolves the agent occupying a pane (or throws) — shared by the

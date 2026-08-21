@@ -89,10 +89,22 @@ export interface SpawnOpts {
   kind: string;
   cwd?: string;
   workspace_id?: string;
+  /** mode C: branch off the repo at `cwd` into an isolated worktree
+   * checkout and run the agent there — the parallel-agents primitive */
+  worktree?: { branch: string; base?: string };
   label?: string;
   name?: string;
   args?: string[];
   timeout_ms?: number;
+}
+
+export interface WorktreeInfo {
+  path: string;
+  branch?: string;
+  is_linked_worktree?: boolean;
+  is_prunable?: boolean;
+  open_workspace_id?: string;
+  label?: string;
 }
 
 /** `agent` is a STRING (the agent's name); `status` is top-level. */
@@ -101,6 +113,8 @@ export interface SpawnResult {
   pane_id: string;
   agent: string;
   status: "working" | "blocked" | "idle";
+  /** present on worktree (mode C) spawns */
+  worktree?: { branch: string; path: string };
 }
 
 export interface AskResult {

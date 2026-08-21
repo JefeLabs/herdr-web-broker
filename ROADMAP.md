@@ -9,11 +9,12 @@ Comparing herdr's full 149-method surface against what the broker
 first-classes (everything IS reachable via the /rpc passthrough; these are
 missing endpoints/SDK/UI, not missing reachability):
 
-20. **Worktrees.** herdr's `worktree.create/list/open/remove` are unused —
-    parallel agents on isolated git worktrees (spawn N agents, each on its
-    own branch, merge the winner) is the natural extension of the
-    vibe-coding story. Needs wire verification of the worktree methods,
-    then spawn integration (`worktree` option on spawn?) + endpoints.
+20. ~~**Worktrees.**~~ Done: spawn mode C (`worktree: {branch, base?}` with
+    cwd) runs the agent in an isolated checkout; GET
+    ./workspaces/{w}/worktrees inventories; DELETE ./worktrees/{w} removes
+    the checkout while the BRANCH survives for merging. Wire-verified and
+    proven live: two agents on two branches of one repo, one removed, the
+    other untouched.
 21. **Consumer wait endpoint.** `agent.wait` and `pane.wait_for_output
     {match: substring|regex}` are wire-verified but unexposed. A
     `POST .../agents/{pane}/wait {until?, match?, timeout_ms}` lets
