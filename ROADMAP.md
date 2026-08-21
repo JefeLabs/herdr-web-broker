@@ -5,18 +5,21 @@ documented in the README and [docs/agent-lifecycle.md](docs/agent-lifecycle.md).
 
 ## Blocked on herdr (needs a live schema probe)
 
-All three wait on a `herdr api schema --json` dump from a live 0.8.x to
-verify the methods exist before building on them:
+The 2026-08-21 schema probe against live herdr (protocol 19, via the demo
+container) wire-verified `workspace.close`, `pane.split` (with a native env
+map!), `pane.close`, `agent.wait`, and `agent.prompt`'s
+`wait:{until,timeout_ms}` — all three items are unblocked:
 
-1. **Workspace reaping.** Mode-B spawns leak workspaces (documented in the
-   spawn docs); an idle-workspace TTL reaper needs a verified
-   workspace-close method. The same probe should check for a **native
-   pane-create**, which would make `workspace_id` spawns truly "join the
-   team" instead of new-workspace-same-cwd.
-2. **Agent stop/restart endpoint.** The lifecycle doc's admitted gap — no
-   verified agent-stop method on herdr's surface.
-3. **`agent.prompt` wait semantics.** If `wait: true` blocks until the
-   agent finishes, `ask()` could block on the rpc instead of file-polling.
+1. ~~**Workspace reaping.**~~ Done: `DELETE .../workspaces/{w}` closes the
+   workspace (herdr `workspace.close`); mode-B spawns now `pane.split` INTO
+   the existing workspace with herdr-native env injection — the leak is
+   gone at the source.
+2. **Agent stop/restart endpoint.** Unblocked: `pane.close` is
+   wire-verified — a `DELETE .../agents/{pane}` endpoint is now buildable.
+3. **`ask()` via `agent.wait`.** Unblocked: replace the status-poll loop
+   with one blocking rpc (`wait` waits for a transition INTO a target
+   status; the file-drop answer contract stays — the reply carries status,
+   not output). `pane.wait_for_output {match}` is also available.
 
 ## Product features, deferred deliberately
 

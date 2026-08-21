@@ -26,11 +26,12 @@ POST .../agents
 - **`pane_id` is the conversation handle.** Save it; the agent's full
   context lives in that pane for as long as the pane does.
 - Exactly one of `cwd` (mode A: a new working set) or `workspace_id`
-  (mode B: grow the team — note this creates a **new** workspace sharing
-  the source's cwd; herdr 0.8.0 has no verified pane-create, and unused
-  workspaces are not auto-reaped).
+  (mode B: grow the team — the broker splits a new pane **into** that
+  workspace via herdr's `pane.split`, wire-verified).
 - Credentials stored in the env registry (`POST /parent/{i}/env`, scoped by
-  `kind`) are exported into the pane shell before the CLI starts.
+  `kind`) reach the pane shell before the CLI starts: natively via
+  `pane.split`'s env map on mode B, via a seconds-lived 0600 drop file on
+  mode A.
 - On a cold pane whose login shell is still booting, the broker retries
   `agent.start` internally (`agent_pane_busy`) — spawn is reliable without
   client retries.
@@ -166,15 +167,15 @@ The broker's protections:
 - `prompt`/`ask`/`slash`/`model` all 400 with `no agent in pane` when
   herdr no longer lists an agent there.
 
-Known limitations, documented rather than papered over:
+Cleanup and remaining limitations:
 
-- **No workspace reaping.** Abandoned workspaces accumulate (mode-B spawns
-  are the main driver). A TTL reaper is blocked on a verified herdr
-  workspace-close method — recorded as an open question in the protocol
-  notes.
-- **No agent restart/stop endpoint.** Ending an agent means acting on the
-  pane/workspace through herdr itself; the broker's verified surface has
-  no agent-stop method.
+- **Workspace reaping**: `DELETE .../workspaces/{w}` closes a workspace
+  and every pane in it (herdr `workspace.close`, wire-verified) — agents
+  inside die with their panes. Mode-B spawns no longer create extra
+  workspaces at all, so there is far less to reap.
+- **No dedicated agent restart/stop endpoint yet.** `pane.close` is
+  wire-verified and an agent-stop endpoint is unblocked — until it ships,
+  close the pane over rpc or close the whole workspace.
 
 ## Quick reference
 
@@ -192,3 +193,4 @@ Known limitations, documented rather than papered over:
 | Status | `GET .../agents?fresh=1` (`status` + `raw_status`) |
 | Watch the terminal | `GET .../panes/{pane}/screen?version=&wait_ms=` (long-poll) |
 | Live events | `WS /parent/ws` |
+| Reap a working set | `DELETE .../workspaces/{w}` (panes + agents die with it) |

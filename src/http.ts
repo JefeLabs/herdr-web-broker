@@ -345,6 +345,13 @@ export function createHttpHandler(deps: HttpDeps) {
       return;
     }
 
+    // DELETE .../workspaces/{w} — close the workspace and every pane in it
+    if (parts.length === 6 && parts[4] === "workspaces" && req.method === "DELETE") {
+      const params = { workspace_id: decodeURIComponent(parts[5]) };
+      json(res, 200, await callInstance(instance, session, "broker.workspace.close", params));
+      return;
+    }
+
     // GET .../workspaces/{w}/repos/{r}/tree (spec §2.3)
     if (parts.length === 9 && parts[4] === "workspaces" && parts[6] === "repos" && parts[8] === "tree" && req.method === "GET") {
       const params = { workspace_id: decodeURIComponent(parts[5]), repo: decodeURIComponent(parts[7]) };

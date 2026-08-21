@@ -76,6 +76,20 @@ fake.handlers.set("workspace.create", (p) => {
   return { type: "workspace_created", workspace_id: id, root_pane: { pane_id: `${id}:p1` } };
 });
 
+// mode-B spawns split a pane INTO the existing workspace (real herdr 0.8.x)
+let nextPane = 10;
+fake.handlers.set("pane.split", (p) => ({
+  type: "pane_info",
+  pane: { pane_id: `${p?.workspace_id ?? "w1"}:p${nextPane++}` },
+}));
+
+fake.handlers.set("workspace.close", (p) => {
+  const id = String(p?.workspace_id ?? "");
+  workspaces.delete(id);
+  fake.agents = fake.agents.filter((a) => a.workspace_id !== id);
+  return { type: "ok" };
+});
+
 fake.handlers.set("agent.start", (p) => {
   fake.agents.push({
     pane_id: p.pane_id,

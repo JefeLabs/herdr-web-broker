@@ -35,6 +35,15 @@ describe("BrokerClient", () => {
     expect((calls[0].init.headers as Record<string, string>).authorization).toBe("Bearer mine");
   });
 
+  test("closeWorkspace() reaps via DELETE on the workspace", async () => {
+    const { calls, fetchFn } = fake(200, '{"workspace_id":"w2","closed":true}');
+    const session = new BrokerClient({ origin: "", token: "t", fetchFn }).instance("runtime").session("default");
+    const out = await session.closeWorkspace("w2");
+    expect(out.closed).toBe(true);
+    expect(calls[0].url).toBe("/parent/runtime/sessions/default/workspaces/w2");
+    expect(calls[0].init.method).toBe("DELETE");
+  });
+
   test("verify() reports auth failure without throwing", async () => {
     const { fetchFn } = fake(401, '{"code":"unauthorized","message":"nope"}');
     const out = await new BrokerClient({ origin: "", token: "bad", fetchFn }).verify();

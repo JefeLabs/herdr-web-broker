@@ -44,7 +44,8 @@ the local machine; anything else is an enrolled child.
 | `GET /parent/{instance}/sessions` | herdr sessions on that machine |
 | `GET /parent/{instance}/sessions/{s}/agents` | agents + status (`?fresh=1` re-queries) |
 | `POST /parent/{instance}/sessions/{s}/rpc` | any herdr socket method: `{"method", "params"}` |
-| `POST /parent/{instance}/sessions/{s}/agents` | spawn a team agent: `{kind, cwd|workspace_id, label?, name?, args?}` — `workspace_id` creates a NEW workspace sharing that cwd (herdr 0.8.0 has no verified pane-create); unused workspaces are not auto-reaped yet |
+| `POST /parent/{instance}/sessions/{s}/agents` | spawn a team agent: `{kind, cwd|workspace_id, label?, name?, args?}` — `workspace_id` splits a new pane INTO that workspace (native pane.split, env injected by herdr); `cwd` starts a fresh working set |
+| `DELETE .../workspaces/{w}` | close a workspace and every pane in it — the reaper for abandoned working sets (agents die with their panes) |
 | `GET /parent/{instance}/sessions/{s}/workspaces` | working sets: team roster + discovered repos per workspace |
 | `GET .../workspaces/{w}/repos/{r}/tree` | repo file tree (`{r}` = repo path; `-` = workspace root) |
 | `GET .../workspaces/{w}/repos/{r}/git/diff?base=REF` | branch, status, unified diff |

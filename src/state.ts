@@ -87,6 +87,14 @@ export class WorkspaceIndex {
   all(session: string): Record<string, WorkspaceMeta> {
     return this.#read()[session] ?? {};
   }
+
+  remove(session: string, workspaceId: string): void {
+    const data = this.#read();
+    if (data[session]?.[workspaceId] !== undefined) {
+      delete data[session][workspaceId];
+      this.#write(data);
+    }
+  }
 }
 
 export function ensureAdminToken(stateDir: string): string {

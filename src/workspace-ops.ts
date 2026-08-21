@@ -99,6 +99,14 @@ export async function runBrokerMethod(
   }
   const p = (params ?? {}) as Record<string, unknown>;
   switch (method) {
+    case "broker.workspace.close": {
+      const workspaceId = str(p.workspace_id, "workspace_id");
+      // Wire-verified herdr surface (schema probe 2026-08-21): closes the
+      // workspace and every pane in it — the mode-B leak's cleanup path.
+      await deps.local.request(session, "workspace.close", { workspace_id: workspaceId }, 15_000);
+      deps.index.remove(session, workspaceId);
+      return { workspace_id: workspaceId, closed: true };
+    }
     case "broker.workspace.list":
       return listWorkspaces(deps, session);
     case "broker.repo.tree": {
@@ -307,12 +315,8 @@ async function spawn(deps: OpsDeps, session: string, p: Record<string, unknown>)
     args = p.args as string[];
   }
   let cwd: string;
-  let label = typeof p.label === "string" ? p.label : undefined;
-  if (hasWs) {
-    const sourceId = p.workspace_id as string;
-    cwd = await resolveCwd(deps, session, sourceId);
-    label ??= deps.index.get(session, sourceId)?.label;
-  } else {
+  const label = typeof p.label === "string" ? p.label : undefined;
+  if (!hasWs) {
     cwd = p.cwd as string;
     if (!isAbsolute(cwd)) throw new BrokerError("bad_request", "'cwd' must be an absolute path");
     let stat;
@@ -322,23 +326,54 @@ async function spawn(deps: OpsDeps, session: string, p: Record<string, unknown>)
       throw new BrokerError("bad_request", `'cwd' does not exist: ${cwd}`);
     }
     if (!stat.isDirectory()) throw new BrokerError("bad_request", `'cwd' is not a directory: ${cwd}`);
+  } else {
+    cwd = await resolveCwd(deps, session, p.workspace_id as string);
   }
 
   // Env spec §5: resolve first — a failing hook must not leave an orphan
-  // workspace behind.
+  // workspace or pane behind.
   const injected = await deps.env.resolveForSpawn(session, kind);
 
-  const created = (await deps.local.request(session, "workspace.create", { cwd, ...(label ? { label } : {}) }, 15_000)) as {
-    root_pane?: { pane_id?: unknown };
-  };
-  const paneId = typeof created?.root_pane?.pane_id === "string" ? created.root_pane.pane_id : undefined;
-  if (!paneId || !paneId.includes(":")) {
-    throw new BrokerError("upstream_error", "workspace.create returned no root pane");
+  let paneId: string;
+  let workspaceId: string;
+  if (hasWs) {
+    // Mode B — join the EXISTING workspace via pane.split (wire-verified,
+    // schema probe 2026-08-21). herdr injects the env map natively into
+    // the new pane's shell, so no drop file is needed on this path.
+    workspaceId = p.workspace_id as string;
+    const split = (await deps.local.request(
+      session,
+      "pane.split",
+      {
+        workspace_id: workspaceId,
+        direction: "right",
+        cwd,
+        ...(Object.keys(injected).length > 0 ? { env: injected } : {}),
+      },
+      15_000,
+    )) as { pane?: { pane_id?: unknown } };
+    const splitPane = typeof split?.pane?.pane_id === "string" ? split.pane.pane_id : undefined;
+    if (!splitPane || !splitPane.includes(":")) {
+      throw new BrokerError("upstream_error", "pane.split returned no pane");
+    }
+    paneId = splitPane;
+  } else {
+    const created = (await deps.local.request(
+      session,
+      "workspace.create",
+      { cwd, ...(label ? { label } : {}) },
+      15_000,
+    )) as { root_pane?: { pane_id?: unknown } };
+    const rootPane = typeof created?.root_pane?.pane_id === "string" ? created.root_pane.pane_id : undefined;
+    if (!rootPane || !rootPane.includes(":")) {
+      throw new BrokerError("upstream_error", "workspace.create returned no root pane");
+    }
+    paneId = rootPane;
+    workspaceId = paneId.split(":")[0];
+    deps.index.set(session, workspaceId, { cwd, ...(label ? { label } : {}) });
   }
-  const workspaceId = paneId.split(":")[0];
-  deps.index.set(session, workspaceId, { cwd, ...(label ? { label } : {}) });
 
-  if (Object.keys(injected).length > 0) {
+  if (!hasWs && Object.keys(injected).length > 0) {
     const drop = deps.env.writeDropFile(injected);
     try {
       await deps.local.request(
@@ -360,7 +395,8 @@ async function spawn(deps: OpsDeps, session: string, p: Record<string, unknown>)
     }
   }
 
-  const name = typeof p.name === "string" ? p.name : kind;
+  const explicitName = typeof p.name === "string";
+  let name = explicitName ? (p.name as string) : kind;
   const timeoutMs = typeof p.timeout_ms === "number" ? p.timeout_ms : undefined;
   // agent_pane_busy on a fresh pane means the shell hasn't reached its
   // prompt yet (slow login zsh) — herdr's refusal is the only verified
@@ -381,6 +417,13 @@ async function spawn(deps: OpsDeps, session: string, p: Record<string, unknown>)
       const err = e instanceof BrokerError ? e : new BrokerError("upstream_error", String(e));
       if (err.code === "agent_pane_busy" && attempt < busyRetries) {
         await new Promise((r) => setTimeout(r, busyDelayMs));
+        continue;
+      }
+      // Agent names are session-unique (wire truth, live 0.8.x). A collision
+      // on the DEFAULT name (= kind) retries once with a pane-unique one; an
+      // explicit name is the caller's choice, so their collision fails through.
+      if (err.code === "agent_name_taken" && !explicitName && name === kind) {
+        name = `${kind}-${paneId.split(":").join("")}`;
         continue;
       }
       // The workspace exists — hand its id back so the client can retry into

@@ -169,6 +169,12 @@ export class SessionHandle {
     return r.workspaces;
   }
 
+  /** Close a workspace and every pane in it (herdr workspace.close) — the
+   * cleanup for abandoned working sets. Agents inside die with their panes. */
+  closeWorkspace(workspaceId: string): Promise<{ workspace_id: string; closed: boolean }> {
+    return request(this.cfg, "DELETE", `${this.base()}/workspaces/${encodeURIComponent(workspaceId)}`);
+  }
+
   async spawn(opts: SpawnOpts): Promise<AgentHandle> {
     const spawned = await request<SpawnResult>(this.cfg, "POST", `${this.base()}/agents`, { body: opts });
     return new AgentHandle(this, spawned.pane_id, spawned);

@@ -516,6 +516,20 @@ test("slash route: POST .../slash/{command} types the command; args ride the bod
   }
 });
 
+test("workspace close route: DELETE .../workspaces/{w} reaps it", async () => {
+  const t = await setup();
+  try {
+    t.ops.index.set("default", "w1", { cwd: scratchRepo() });
+    t.fake.handlers.set("workspace.close", () => ({ type: "ok" }));
+    const res = await t.authed("/parent/runtime/sessions/default/workspaces/w1", { method: "DELETE" });
+    assert.equal(res.status, 200);
+    assert.deepEqual(await res.json(), { workspace_id: "w1", closed: true });
+    assert.equal(t.ops.index.get("default", "w1"), undefined);
+  } finally {
+    await teardown(t);
+  }
+});
+
 test("pane screen route: GET serves the terminal text; version+wait_ms long-polls; source passes through", async () => {
   const t = await setup();
   try {

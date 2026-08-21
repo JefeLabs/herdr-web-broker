@@ -170,21 +170,99 @@ test("spawn validation: kind required; exactly one of cwd/workspace_id; cwd must
   }
 });
 
-test("spawn mode B: joins an existing workspace's team — same cwd, inherited label (spec §8.2 fallback)", async () => {
+test("spawn mode B: pane.split joins the EXISTING workspace — no new workspace, no leak", async () => {
   const t = await setup();
   try {
     const cwd = scratchRepo();
     t.deps.index.set("default", "w1", { cwd, label: "team-x" });
-    t.fake.handlers.set("workspace.create", () => ({ root_pane: { pane_id: "w3:p1" } }));
+    t.fake.handlers.set("pane.split", () => ({ type: "pane_info", pane: { pane_id: "w1:p2" } }));
     t.fake.handlers.set("agent.start", () => ({ type: "agent_started" }));
     const out = (await runBrokerMethod(t.deps, "default", "broker.agent.spawn", {
       kind: "copilot",
       workspace_id: "w1",
-    })) as { workspace_id: string };
-    assert.equal(out.workspace_id, "w3");
-    assert.deepEqual(t.deps.index.get("default", "w3"), { cwd, label: "team-x" });
-    const created = t.fake.received.find((r) => r.method === "workspace.create");
-    assert.deepEqual(created?.params, { cwd, label: "team-x" });
+    })) as { workspace_id: string; pane_id: string };
+    assert.equal(out.workspace_id, "w1", "the agent joined the SAME workspace");
+    assert.equal(out.pane_id, "w1:p2");
+    const split = t.fake.received.find((r) => r.method === "pane.split");
+    assert.deepEqual(split?.params, { workspace_id: "w1", direction: "right", cwd });
+    assert.equal(t.fake.received.some((r) => r.method === "workspace.create"), false, "no new workspace created");
+    const started = t.fake.received.find((r) => r.method === "agent.start");
+    assert.equal((started?.params as { pane_id: string }).pane_id, "w1:p2");
+  } finally {
+    await t.teardown();
+  }
+});
+
+test("spawn mode B: env-registry values ride pane.split's native env map — no drop file", async () => {
+  const t = await setup();
+  try {
+    const cwd = scratchRepo();
+    t.deps.index.set("default", "w1", { cwd });
+    t.deps.env.set("COPILOT_GITHUB_TOKEN", "sekret", { kind: "copilot" });
+    t.fake.handlers.set("pane.split", () => ({ type: "pane_info", pane: { pane_id: "w1:p2" } }));
+    t.fake.handlers.set("agent.start", () => ({ type: "agent_started" }));
+    await runBrokerMethod(t.deps, "default", "broker.agent.spawn", { kind: "copilot", workspace_id: "w1" });
+    const split = t.fake.received.find((r) => r.method === "pane.split");
+    assert.deepEqual((split?.params as { env: Record<string, string> }).env, { COPILOT_GITHUB_TOKEN: "sekret" });
+    // native injection — nothing typed into the pane, no file to source
+    assert.equal(t.fake.received.some((r) => r.method === "pane.send_input"), false);
+  } finally {
+    await t.teardown();
+  }
+});
+
+test("spawn: agent_name_taken on the DEFAULT name retries with a pane-unique name; explicit names fail through", async () => {
+  const t = await setup();
+  try {
+    const cwd = scratchRepo();
+    t.deps.index.set("default", "w1", { cwd });
+    t.fake.handlers.set("pane.split", () => ({ type: "pane_info", pane: { pane_id: "w1:p2" } }));
+    const startNames: string[] = [];
+    t.fake.handlers.set("agent.start", (p) => {
+      const name = String((p as { name: string }).name);
+      startNames.push(name);
+      if (name === "copilot") throw new FakeHerdrError("agent_name_taken", "agent name copilot is already used");
+      return { type: "agent_started" };
+    });
+    const out = (await runBrokerMethod(t.deps, "default", "broker.agent.spawn", {
+      kind: "copilot",
+      workspace_id: "w1",
+    })) as { agent: string; pane_id: string };
+    assert.deepEqual(startNames, ["copilot", "copilot-w1p2"], "one retry with a pane-unique default");
+    assert.equal(out.agent, "copilot-w1p2", "the response carries the name actually used");
+
+    // an EXPLICIT name is the caller's choice — collision is their error
+    await assert.rejects(
+      runBrokerMethod(t.deps, "default", "broker.agent.spawn", { kind: "copilot", workspace_id: "w1", name: "copilot" }),
+      (e: BrokerError) => e.code === "agent_name_taken",
+    );
+  } finally {
+    await t.teardown();
+  }
+});
+
+test("broker.workspace.close: closes at herdr and drops the index entry", async () => {
+  const t = await setup();
+  try {
+    const cwd = scratchRepo();
+    t.deps.index.set("default", "w7", { cwd, label: "old team" });
+    t.fake.handlers.set("workspace.close", () => ({ type: "ok" }));
+    const out = (await runBrokerMethod(t.deps, "default", "broker.workspace.close", {
+      workspace_id: "w7",
+    })) as { workspace_id: string; closed: boolean };
+    assert.deepEqual(out, { workspace_id: "w7", closed: true });
+    const closed = t.fake.received.find((r) => r.method === "workspace.close");
+    assert.deepEqual(closed?.params, { workspace_id: "w7" });
+    assert.equal(t.deps.index.get("default", "w7"), undefined, "index entry removed");
+
+    // herdr refusing an unknown workspace surfaces as its own error
+    t.fake.handlers.set("workspace.close", () => {
+      throw new FakeHerdrError("workspace_not_found", "no workspace w9");
+    });
+    await assert.rejects(
+      runBrokerMethod(t.deps, "default", "broker.workspace.close", { workspace_id: "w9" }),
+      (e: BrokerError) => e.code === "workspace_not_found",
+    );
   } finally {
     await t.teardown();
   }

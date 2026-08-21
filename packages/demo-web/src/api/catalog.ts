@@ -225,12 +225,12 @@ export const CATALOG: EndpointSpec[] = [
     title: "Spawn agent",
     summary: "Create a workspace pane and start a coding agent in it. Mode A: a new working set from cwd. Mode B: grow an existing workspace's team.",
     docs:
-      "Exactly one of cwd / workspace_id is required. NOTE: workspace_id grows the team by creating a NEW " +
-      "workspace sharing that cwd (herdr 0.8.0 has no verified pane-create) — it does not add a pane to the " +
-      "existing workspace, and unused workspaces are not auto-reaped yet. Env-registry values scoped to the " +
-      "agent kind are exported into the pane shell before agent.start, so the CLI starts authenticated. On " +
-      "agent_pane_busy (a cold pane whose shell is still booting) the broker retries the same pane internally. " +
-      "Response: agent is a STRING (the agent's name); status is top-level.",
+      "Exactly one of cwd / workspace_id is required. workspace_id truly joins the team: the broker splits a " +
+      "new pane INTO that workspace (herdr pane.split, wire-verified) with env-registry values injected " +
+      "natively by herdr. cwd starts a fresh working set; there the env rides a drop file sourced before " +
+      "agent.start. On agent_pane_busy (a cold pane whose shell is still booting) the broker retries the same " +
+      "pane internally. Clean up abandoned working sets with DELETE .../workspaces/{w}. Response: agent is a " +
+      "STRING (the agent's name); status is top-level.",
     response: {
       type: "object",
       properties: {
@@ -276,6 +276,33 @@ export const CATALOG: EndpointSpec[] = [
     auth: "bearer",
     fields: [],
     build: (_v, ctx) => ({ method: "GET", path: `${sess(ctx)}/workspaces`, auth: "bearer" }),
+  },
+  {
+    id: "workspace-close",
+    group: "Workspaces & Repos",
+    title: "Close workspace (reap)",
+    summary: "Close a workspace and every pane in it — the cleanup for abandoned working sets. Agents inside die with their panes.",
+    docs:
+      "Rides herdr's workspace.close (wire-verified against live 0.8.x). Destructive and immediate: running " +
+      "agents in the workspace are terminated with their panes, and the broker forgets the workspace's " +
+      "recorded cwd. There is no undo — spawn again to rebuild.",
+    method: "DELETE",
+    pathTemplate: "/parent/{instance}/sessions/{session}/workspaces/{workspace_id}",
+    auth: "bearer",
+    fields: [{ key: "workspace_id", label: "workspace_id", kind: "text", required: true, placeholder: "w2" }],
+    response: {
+      type: "object",
+      properties: {
+        workspace_id: { type: "string" },
+        closed: { type: "boolean" },
+      },
+      required: ["workspace_id", "closed"],
+    },
+    build: (v, ctx) => ({
+      method: "DELETE",
+      path: `${sess(ctx)}/workspaces/${enc(need(v, "workspace_id"))}`,
+      auth: "bearer",
+    }),
   },
   {
     id: "tree",
