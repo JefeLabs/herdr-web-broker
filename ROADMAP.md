@@ -3,6 +3,33 @@
 What's deliberately not built yet, and why. Items reference the honest gaps
 documented in the README and [docs/agent-lifecycle.md](docs/agent-lifecycle.md).
 
+## Herdr-surface gaps (2026-08-21 schema review) — current priorities
+
+Comparing herdr's full 149-method surface against what the broker
+first-classes (everything IS reachable via the /rpc passthrough; these are
+missing endpoints/SDK/UI, not missing reachability):
+
+20. **Worktrees.** herdr's `worktree.create/list/open/remove` are unused —
+    parallel agents on isolated git worktrees (spawn N agents, each on its
+    own branch, merge the winner) is the natural extension of the
+    vibe-coding story. Needs wire verification of the worktree methods,
+    then spawn integration (`worktree` option on spawn?) + endpoints.
+21. **Consumer wait endpoint.** `agent.wait` and `pane.wait_for_output
+    {match: substring|regex}` are wire-verified but unexposed. A
+    `POST .../agents/{pane}/wait {until?, match?, timeout_ms}` lets
+    pipelines block on "agent went idle" or "output matched" without
+    polling. Small, high leverage.
+22. **`agent.explain` debug surface.** herdr's agent-detection diagnostics
+    as an endpoint + console card — answers "why does this pane show no
+    kind / wrong status" (the exact class of field bug hit on day one).
+    Tiny.
+23. **Event passthrough** (scopes item 8): the broker WS emits only
+    `agent_status` + instance online/offline; herdr's richer events
+    (`pane.output_matched`, `pane.created/exited`, `workspace_*`,
+    `layout.updated`) cannot be streamed to broker clients at all — rpc is
+    request/response and subscriptions don't ride the tunnel. True fix is
+    item 8's push plumbing with a subscription vocabulary.
+
 ## Blocked on herdr (needs a live schema probe)
 
 The 2026-08-21 schema probe against live herdr (protocol 19, via the demo
@@ -41,7 +68,9 @@ map!), `pane.close`, `agent.wait`, and `agent.prompt`'s
    option to inline small text files (or extract PDF text) is parked.
 8. **Push-based streaming.** Bundles/files long-poll by design (rides the
    parent↔child tunnel unchanged); true SSE/WS push needs new tunnel
-   plumbing.
+   plumbing. Item 23 scopes the demand side: a subscription vocabulary so
+   broker clients can stream herdr's richer event types, not just
+   agent_status.
 
 ## Known rough edges (small fixes)
 
@@ -95,9 +124,11 @@ map!), `pane.close`, `agent.wait`, and `agent.prompt`'s
 
 ## Suggested order
 
-Remaining build work first — federation validation (13) as the only
-untested structural claim, agent ownership (5) as the strongest feature
-candidate, then the rest of the deferred features (4, 7, 8) and the hooks
-layer (14) as demand dictates. The **name (11) comes second to last** and
-**publication (12) last** — renaming is cheap until something is
-published, so the decision waits until the code is done moving.
+The herdr-surface gaps lead: **worktrees (20)** as the headline feature,
+then the quick wins **wait endpoint (21)** and **agent.explain (22)**;
+**event passthrough (23)** rides whenever item 8's push plumbing happens.
+After that: agent ownership (5), the remaining deferred features (4, 7, 8)
+and the hooks layer (14) as demand dictates. The **name (11) comes second
+to last** and **publication (12) last** — renaming is cheap until
+something is published, so the decision waits until the code is done
+moving.
