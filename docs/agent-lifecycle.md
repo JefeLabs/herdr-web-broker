@@ -40,6 +40,15 @@ POST .../agents
 - On a cold pane whose login shell is still booting, the broker retries
   `agent.start` internally (`agent_pane_busy`) — spawn is reliable without
   client retries.
+- **Fresh `cwd` with no repo yet?** Include *git init* in the first
+  prompt — scaffolding is the agent's job, and the git surface (diff,
+  commit, push, worktrees) activates on its own the moment a repo
+  exists (`unborn` branches are handled). There is deliberately no init
+  endpoint: the API's git verbs are the *human's* oversight loop —
+  things you must be able to do without trusting the agent — while
+  provisioning belongs to the agent you already have in the pane. Same
+  for remotes: `git remote add` (and its credentials) is the
+  agent-side deployment's business; the broker only pushes.
 - The response's `agent` is a **string** (the agent's name, used as the
   prompt target); `status` is top-level.
 

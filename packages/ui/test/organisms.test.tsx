@@ -221,6 +221,25 @@ describe("WorkspaceBrowser", () => {
     expect(screen.getByText("● DIRTY")).toBeTruthy();
     expect(session.workspaces).toHaveBeenCalledOnce();
   });
+
+  test("a repo-less workspace hints at agent-driven git init instead of a bare empty list", async () => {
+    const session = {
+      workspaces: vi.fn(async () => [
+        {
+          workspace_id: "w2",
+          cwd: "/fresh",
+          agents: [{ agent: "copilot", pane_id: "w2:p1", status: "idle" }],
+          repos: [],
+        },
+      ]),
+      repo: vi.fn(),
+    };
+    const broker = { instance: () => ({ session: () => session }) } as unknown as BrokerClient;
+    render(<WorkspaceBrowser broker={broker} instance="runtime" session="default" />);
+    fireEvent.click(screen.getByText("load workspaces"));
+    await waitFor(() => expect(screen.getByText("w2")).toBeTruthy());
+    expect(screen.getByText(/ask your agent to git init/i)).toBeTruthy();
+  });
 });
 
 describe("EventsPanel subscriptions", () => {

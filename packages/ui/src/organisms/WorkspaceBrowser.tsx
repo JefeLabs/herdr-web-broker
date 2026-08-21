@@ -94,7 +94,11 @@ export function WorkspaceBrowser({ broker, instance, session: sessionName }: Wor
               ))}
             </div>
           )}
-          {ws.repos.length === 0 && <div className="repo-row note">no git repos discovered in this workspace</div>}
+          {ws.repos.length === 0 && (
+            <div className="repo-row note">
+              no repo yet — ask your agent to git init; diff, commit, and push activate on the next load
+            </div>
+          )}
           {ws.repos.map((r) => (
             <div className="repo-row" key={r.path}>
               <span className="name">{r.name}</span>
