@@ -216,6 +216,9 @@ export interface ContextEntry {
   /** active attachments are listed in every prompt/ask/spec sent to agents */
   active: boolean;
   uploaded_at: string;
+  /** opt-in: small TEXT files embed their content into the prompt preamble
+   * (whole file or path-fallback, never truncated) */
+  inline?: boolean;
 }
 
 export interface BundleMember {

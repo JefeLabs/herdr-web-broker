@@ -245,12 +245,15 @@ export class ContextScope {
   upload(
     name: string,
     content: Uint8Array,
-    opts: { contentType?: string; active?: boolean } = {},
+    opts: { contentType?: string; active?: boolean; inline?: boolean } = {},
   ): Promise<ContextEntry> {
+    const query: Record<string, string> = {};
+    if (opts.active === false) query.active = "0";
+    if (opts.inline) query.inline = "1";
     return requestRaw(this.session.cfg, "PUT", `${this.#base()}/${enc(name)}`, {
       body: content,
       contentType: opts.contentType,
-      ...(opts.active === false ? { query: { active: "0" } } : {}),
+      ...(Object.keys(query).length ? { query } : {}),
     }).then(() => this.list().then((all) => all.find((e) => e.name === name)!));
   }
 
@@ -265,6 +268,12 @@ export class ContextScope {
 
   setActive(name: string, active: boolean): Promise<ContextEntry> {
     return request(this.session.cfg, "POST", `${this.#base()}/${enc(name)}`, { body: { active } });
+  }
+
+  /** Toggle prompt attributes: active (listed at all) and/or inline
+   * (content embedded — small text files only; others path-fallback). */
+  set(name: string, patch: { active?: boolean; inline?: boolean }): Promise<ContextEntry> {
+    return request(this.session.cfg, "POST", `${this.#base()}/${enc(name)}`, { body: patch });
   }
 
   async delete(name: string): Promise<void> {

@@ -60,9 +60,9 @@ the local machine; anything else is an enrolled child.
 | `GET .../repos/{r}/git/log?limit=` | recent commits: `{sha, subject, author, when}` |
 | `POST .../repos/{r}/git/push` | push (default origin/current branch); failures carry git stderr |
 | `POST .../repos/{r}/git/checkout` | switch or create a branch: `{ref, create?}` |
-| `PUT .../workspaces/{w}/context/{name}` | upload a context attachment (raw body, 8MB cap) — stored in `.herdr/context/`, never part of the repos; active files are auto-listed in every prompt/ask/spec text |
+| `PUT .../workspaces/{w}/context/{name}?inline=` | upload a context attachment (raw body, 8MB cap) — stored in `.herdr/context/`, never part of the repos; active files auto-list in every prompt/ask/spec text, and `inline=1` embeds small TEXT files whole (12KB/file, 20KB total; binary/oversized fall back to path, never truncated) |
 | `GET .../workspaces/{w}/context[/{name}]` | list attachments / download one |
-| `POST .../workspaces/{w}/context/{name}` | toggle `{active}` — drop a file from prompts without deleting it |
+| `POST .../workspaces/{w}/context/{name}` | toggle `{active, inline}` — drop a file from prompts, or embed its content instead of its path |
 | `DELETE .../workspaces/{w}/context/{name}` | remove an attachment |
 | `DELETE /auth` | self-eviction: the presented token revokes itself — sockets closed, presence cleared, dead everywhere |
 | `POST .../agents/{pane}/ask` | structured JSON answer from a TUI agent (file-drop) |

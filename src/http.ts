@@ -445,6 +445,7 @@ export function createHttpHandler(deps: HttpDeps) {
           content_type: req.headers["content-type"] ?? "application/octet-stream",
         };
         if (url.searchParams.get("active") === "0") params.active = false;
+        if (url.searchParams.get("inline") === "1") params.inline = true;
         json(res, 201, await callInstance(instance, session, "broker.context.put", params, 60_000));
         return;
       }
@@ -460,7 +461,7 @@ export function createHttpHandler(deps: HttpDeps) {
       }
       if (req.method === "POST") {
         const body = await readBody(req);
-        json(res, 200, await callInstance(instance, session, "broker.context.set", { ...base, active: body.active }));
+        json(res, 200, await callInstance(instance, session, "broker.context.set", { ...base, active: body.active, inline: body.inline }));
         return;
       }
       if (req.method === "DELETE") {

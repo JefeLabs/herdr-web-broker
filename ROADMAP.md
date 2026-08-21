@@ -64,8 +64,12 @@ map!), `pane.close`, `agent.wait`, and `agent.prompt`'s
    isolation needs that ownership model.
 6. ~~**Token minting endpoint**~~ Done: `POST /admin/tokens`, dev-gated via
    `[token_mint] enabled = true` (off by default; the demo stack enables it).
-7. **Context: inject file contents.** Prompts list attachment PATHS; an
-   option to inline small text files (or extract PDF text) is parked.
+7. ~~**Context: inject file contents.**~~ Done: per-attachment `inline`
+   flag (upload `?inline=1` or POST `{inline}`) embeds small TEXT files
+   whole into prompt preambles — 12KB/file, 20KB total; binary/oversized
+   files fall back to the path listing with honest annotations, never
+   truncated. PDF text extraction deliberately deferred (needs a parser
+   dependency in the zero-dep broker).
 8. **Push-based streaming.** Bundles/files long-poll by design (rides the
    parent↔child tunnel unchanged); true SSE/WS push needs new tunnel
    plumbing. Item 23 scopes the demand side: a subscription vocabulary so

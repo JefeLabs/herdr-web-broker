@@ -7,7 +7,7 @@ import {
   getContext,
   listContext,
   putContext,
-  setContextActive,
+  updateContext,
 } from "./context-store.js";
 import type { EnvRegistry } from "./env-registry.js";
 import { BrokerError } from "./errors.js";
@@ -186,6 +186,7 @@ export async function runBrokerMethod(
       return putContext(cwd, str(p.name, "name"), content, {
         ...(typeof p.content_type === "string" ? { contentType: p.content_type } : {}),
         ...(p.active === false ? { active: false } : {}),
+        ...(p.inline === true ? { inline: true } : {}),
       });
     }
     case "broker.context.list": {
@@ -199,8 +200,13 @@ export async function runBrokerMethod(
     }
     case "broker.context.set": {
       const cwd = await resolveCwd(deps, session, str(p.workspace_id, "workspace_id"));
-      if (typeof p.active !== "boolean") throw new BrokerError("bad_request", "'active' must be a boolean");
-      return setContextActive(cwd, str(p.name, "name"), p.active);
+      const patch: { active?: boolean; inline?: boolean } = {};
+      if (typeof p.active === "boolean") patch.active = p.active;
+      if (typeof p.inline === "boolean") patch.inline = p.inline;
+      if (Object.keys(patch).length === 0) {
+        throw new BrokerError("bad_request", "pass 'active' and/or 'inline' as booleans");
+      }
+      return updateContext(cwd, str(p.name, "name"), patch);
     }
     case "broker.context.delete": {
       const cwd = await resolveCwd(deps, session, str(p.workspace_id, "workspace_id"));

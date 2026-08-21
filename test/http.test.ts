@@ -746,6 +746,47 @@ test("git routes: commit → log → checkout → push against a real repo with 
   }
 });
 
+test("context inline: ?inline=1 on upload embeds content in the prompt preamble; POST {inline} toggles it", async () => {
+  const t = await setup();
+  try {
+    const cwd = scratchRepo();
+    t.ops.index.set("default", "w1", { cwd });
+    const up = await t.authed("/instances/runtime/sessions/default/workspaces/w1/context/notes.md?inline=1", {
+      method: "PUT",
+      headers: { "content-type": "text/markdown" },
+      body: "# decisions\nuse OAuth everywhere\n",
+    });
+    assert.equal(up.status, 201);
+    assert.equal(((await up.json()) as { inline?: boolean }).inline, true);
+
+    // the preamble that rides ask/prompt now carries the CONTENT
+    t.fake.handlers.set("agent.prompt", () => ({ type: "prompted" }));
+    await t.authed("/instances/runtime/sessions/default/agents/w1%3Ap1/prompt", {
+      method: "POST",
+      body: JSON.stringify({ text: "go" }),
+    });
+    const sent = t.fake.received.find((r) => r.method === "agent.prompt")?.params as { text: string };
+    assert.ok(sent.text.includes("use OAuth everywhere"), "inline content rides the prompt");
+
+    // toggling inline off reverts to path-only
+    const off = await t.authed("/instances/runtime/sessions/default/workspaces/w1/context/notes.md", {
+      method: "POST",
+      body: JSON.stringify({ inline: false }),
+    });
+    assert.equal(off.status, 200);
+    t.fake.received.length = 0;
+    await t.authed("/instances/runtime/sessions/default/agents/w1%3Ap1/prompt", {
+      method: "POST",
+      body: JSON.stringify({ text: "go" }),
+    });
+    const sent2 = t.fake.received.find((r) => r.method === "agent.prompt")?.params as { text: string };
+    assert.ok(!sent2.text.includes("use OAuth everywhere"), "path-only again");
+    assert.ok(sent2.text.includes("notes.md"), "still listed by path");
+  } finally {
+    await teardown(t);
+  }
+});
+
 test("context routes: raw upload → list → binary download → toggle → delete", async () => {
   const t = await setup();
   try {

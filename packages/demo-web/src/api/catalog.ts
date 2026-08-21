@@ -682,8 +682,12 @@ export const CATALOG: EndpointSpec[] = [
   {
     id: "context-set",
     group: "Context",
-    title: "Toggle active",
-    summary: "active:false keeps the file but drops it from future prompts; active:true re-attaches it.",
+    title: "Toggle active / inline",
+    summary: "active:false keeps the file but drops it from future prompts; inline:true embeds a small TEXT file's content into the prompt preamble instead of listing its path.",
+    docs:
+      "Inline is whole-file-or-fallback, never truncated: binary files, files over 12KB, or files past the " +
+      "20KB total inline budget fall back to the path listing with an honest annotation. PDFs stay " +
+      "path-listed (agents with file access read them directly).",
     method: "POST",
     pathTemplate: "/instances/{instance}/sessions/{session}/workspaces/{workspace_id}/context/{name}",
     auth: "bearer",
@@ -691,12 +695,13 @@ export const CATALOG: EndpointSpec[] = [
       { key: "workspace_id", label: "workspace_id", kind: "text", required: true, placeholder: "w1" },
       { key: "name", label: "name", kind: "text", required: true, placeholder: "spec.pdf" },
       { key: "active", label: "active — rides prompts", kind: "toggle" },
+      { key: "inline", label: "inline — embed content", kind: "toggle" },
     ],
     build: (v, ctx) => ({
       method: "POST",
       path: `${sess(ctx)}/workspaces/${enc(need(v, "workspace_id"))}/context/${enc(need(v, "name"))}`,
       auth: "bearer",
-      body: { active: v.active === "1" },
+      body: { active: v.active === "1", ...(v.inline !== undefined ? { inline: v.inline === "1" } : {}) },
     }),
   },
   {

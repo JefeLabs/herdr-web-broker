@@ -17,7 +17,15 @@ export interface ContextMeta {
   content_type: string;
   active: boolean;
   uploaded_at: string;
+  /** opt-in: embed the file's TEXT content into prompt preambles (whole
+   * file or not at all — binary/oversized files fall back to path listing) */
+  inline?: boolean;
 }
+
+/** A file either inlines whole or falls back to its path — never a silent
+ * truncation. Caps keep the combined prompt inside the steering budget. */
+export const INLINE_FILE_CAP = 12_000;
+export const INLINE_TOTAL_CAP = 20_000;
 
 export interface ContextEntry extends ContextMeta {
   name: string;
@@ -59,7 +67,7 @@ export function putContext(
   cwd: string,
   name: string,
   content: Buffer,
-  opts: { contentType?: string; active?: boolean },
+  opts: { contentType?: string; active?: boolean; inline?: boolean },
 ): ContextEntry {
   checkName(name);
   if (content.length > CONTEXT_CAP_BYTES) {
@@ -72,6 +80,7 @@ export function putContext(
     content_type: opts.contentType ?? "application/octet-stream",
     active: opts.active ?? true,
     uploaded_at: new Date().toISOString(),
+    ...(opts.inline !== undefined ? { inline: opts.inline } : {}),
   };
   writeMeta(dir, meta);
   return { name, size: content.length, ...meta[name] };
@@ -91,6 +100,7 @@ export function listContext(cwd: string): ContextEntry[] {
       content_type: meta[name]?.content_type ?? "application/octet-stream",
       active: meta[name]?.active ?? true,
       uploaded_at: meta[name]?.uploaded_at ?? "",
+      ...(meta[name]?.inline ? { inline: true } : {}),
     }));
 }
 
@@ -108,17 +118,27 @@ export function getContext(cwd: string, name: string): { content: Buffer; meta: 
   return { content, meta: entry };
 }
 
-export function setContextActive(cwd: string, name: string, active: boolean): ContextEntry {
+export function updateContext(
+  cwd: string,
+  name: string,
+  patch: { active?: boolean; inline?: boolean },
+): ContextEntry {
   mustExist(cwd, name);
   const dir = dirOf(cwd);
   const meta = readMeta(dir);
+  const prev = meta[name];
   meta[name] = {
-    content_type: meta[name]?.content_type ?? "application/octet-stream",
-    active,
-    uploaded_at: meta[name]?.uploaded_at ?? new Date().toISOString(),
+    content_type: prev?.content_type ?? "application/octet-stream",
+    active: patch.active ?? prev?.active ?? true,
+    uploaded_at: prev?.uploaded_at ?? new Date().toISOString(),
+    ...(patch.inline ?? prev?.inline ? { inline: patch.inline ?? prev?.inline } : {}),
   };
   writeMeta(dir, meta);
   return listContext(cwd).find((e) => e.name === name)!;
+}
+
+export function setContextActive(cwd: string, name: string, active: boolean): ContextEntry {
+  return updateContext(cwd, name, { active });
 }
 
 export function deleteContext(cwd: string, name: string): void {
@@ -137,6 +157,40 @@ const human = (n: number) => (n >= 1024 * 1024 ? `${(n / (1024 * 1024)).toFixed(
 export function activeContextPreamble(cwd: string): string | undefined {
   const active = listContext(cwd).filter((e) => e.active);
   if (active.length === 0) return undefined;
-  const items = active.map((e) => `${join(dirOf(cwd), e.name)} (${e.content_type}, ${human(e.size)})`).join("; ");
-  return `Context files attached by the human (read them as needed): ${items}`;
+
+  // Inline pass: a file embeds WHOLE or falls back to its path with an
+  // honest annotation — a silently truncated file would mislead the agent.
+  let inlineBudget = INLINE_TOTAL_CAP;
+  const inlined: { name: string; text: string }[] = [];
+  const notes = new Map<string, string>();
+  for (const e of active) {
+    if (!e.inline) continue;
+    const buf = readFileSync(join(dirOf(cwd), e.name));
+    if (buf.subarray(0, 8192).includes(0)) {
+      notes.set(e.name, "binary — read from path");
+      continue;
+    }
+    if (buf.length > INLINE_FILE_CAP) {
+      notes.set(e.name, "too large to inline — read from path");
+      continue;
+    }
+    if (buf.length > inlineBudget) {
+      notes.set(e.name, "inline budget exhausted — read from path");
+      continue;
+    }
+    inlineBudget -= buf.length;
+    inlined.push({ name: e.name, text: buf.toString("utf8") });
+    notes.set(e.name, "inlined below");
+  }
+
+  const items = active
+    .map((e) => {
+      const note = notes.get(e.name);
+      return `${join(dirOf(cwd), e.name)} (${e.content_type}, ${human(e.size)}${note ? `, ${note}` : ""})`;
+    })
+    .join("; ");
+  const blocks = inlined
+    .map((f) => `Inlined context file '${f.name}':\n<<<\n${f.text}\n>>>`)
+    .join("\n\n");
+  return `Context files attached by the human (read them as needed): ${items}${blocks ? `\n\n${blocks}` : ""}`;
 }
