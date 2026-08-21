@@ -73,6 +73,13 @@ export class BrokerClient {
     return request(this.cfg, "POST", "/parent/auth", { body: id });
   }
 
+  /** Self-eviction ("kick out"): revokes the PRESENTED token at the broker,
+   * closes its live sockets, and clears its presence — dead everywhere.
+   * For a local-only sign-out, just discard the token instead. */
+  signOut(): Promise<{ signed_out: string; token_revoked: boolean; sockets_closed: number }> {
+    return request(this.cfg, "DELETE", "/parent/auth");
+  }
+
   /** Who is currently using the instance (identified tokens only). */
   async presence(): Promise<PresenceEntry[]> {
     const r = await request<{ in_use_by?: PresenceEntry[] }>(this.cfg, "GET", "/parent");

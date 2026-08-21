@@ -40,6 +40,40 @@ test.describe("auth gate", () => {
     await expect(page.locator("article#health")).toBeVisible();
   });
 
+  test("session bar: log off keeps the token valid; kick out revokes it everywhere", async ({ page }) => {
+    // in via self-serve mint — the bar appears in the topbar
+    await page.goto("/#/console");
+    await page.getByRole("button", { name: "get a demo token" }).click();
+    await expect(page.getByRole("heading", { name: "Authentication required" })).toBeHidden();
+    await expect(page.getByRole("button", { name: "kick out" })).toBeVisible();
+
+    const readToken = () =>
+      page.evaluate(() => {
+        for (const k of Object.keys(localStorage)) {
+          try {
+            const v = JSON.parse(localStorage.getItem(k) ?? "");
+            if (typeof v.bearer === "string" && v.bearer) return v.bearer;
+          } catch {}
+        }
+        return "";
+      });
+
+    // LOG OFF: local only — gate returns, but the token still authenticates
+    const tokenA = await readToken();
+    expect(tokenA).toBeTruthy();
+    await page.getByRole("button", { name: "log off" }).click();
+    await expect(page.getByRole("heading", { name: "Authentication required" })).toBeVisible();
+    expect((await brokerFetch("/parent", { token: tokenA })).status).toBe(200);
+
+    // KICK OUT: revoked at the broker — dead everywhere, gate returns
+    await page.getByRole("button", { name: "get a demo token" }).click();
+    await expect(page.getByRole("heading", { name: "Authentication required" })).toBeHidden();
+    const tokenB = await readToken();
+    await page.getByRole("button", { name: "kick out" }).click();
+    await expect(page.getByRole("heading", { name: "Authentication required" })).toBeVisible();
+    expect((await brokerFetch("/parent", { token: tokenB })).status).toBe(401);
+  });
+
   test("a stored token is re-verified on mount — possession is not authentication", async ({ page }) => {
     await authenticate(page, "console");
     // simulate the token dying between visits: replace it in storage only

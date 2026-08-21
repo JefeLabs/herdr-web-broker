@@ -751,6 +751,51 @@ test("presence: POST /parent/auth records identity; /parent shows in_use_by; kic
   }
 });
 
+test("DELETE /parent/auth: a token evicts ITSELF — revoked, sockets closed, presence gone, audited", async () => {
+  const t = await setup();
+  try {
+    t.config.token_mint.enabled = true;
+    const minted = (await (
+      await fetch(t.base + "/admin/tokens", {
+        method: "POST",
+        headers: { "x-admin-token": "admin-tok", "content-type": "application/json" },
+        body: JSON.stringify({ name: "me" }),
+      })
+    ).json()) as { token: string };
+    await fetch(t.base + "/parent/auth", {
+      method: "POST",
+      headers: { authorization: `Bearer ${minted.token}`, "content-type": "application/json" },
+      body: JSON.stringify({ name: "Me" }),
+    });
+    assert.ok(t.presence.list().some((e) => e.token === "me"));
+
+    const res = await fetch(t.base + "/parent/auth", {
+      method: "DELETE",
+      headers: { authorization: `Bearer ${minted.token}` },
+    });
+    assert.equal(res.status, 200);
+    const body = (await res.json()) as { signed_out: string; token_revoked: boolean; sockets_closed: number };
+    assert.equal(body.signed_out, "me");
+    assert.equal(body.token_revoked, true);
+    assert.equal(body.sockets_closed, 2); // the harness's onKickSockets answers 2
+    assert.ok(t.kicked.includes("me"), "live WS sockets for the token were closed");
+    assert.equal(t.presence.list().some((e) => e.token === "me"), false);
+    assert.ok(t.persisted.length >= 2, "revocation persisted via onTokensChanged");
+
+    // dead everywhere — and the OTHER token is untouched
+    const after = await fetch(t.base + "/parent", { headers: { authorization: `Bearer ${minted.token}` } });
+    assert.equal(after.status, 401);
+    assert.equal((await t.authed("/parent")).status, 200);
+
+    const audit = (await (
+      await fetch(t.base + "/admin/audit?limit=10", { headers: { "x-admin-token": "admin-tok" } })
+    ).json()) as { entries: { action: string; actor: string }[] };
+    assert.ok(audit.entries.some((e) => e.action === "auth.self_kick" && e.actor === "me"));
+  } finally {
+    await teardown(t);
+  }
+});
+
 test("token mint: 403 unless [token_mint] enables it; minted tokens work immediately and persist", async () => {
   const t = await setup();
   try {

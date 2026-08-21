@@ -1,4 +1,4 @@
-import { AuthGate } from "@jefelabs/herdr-broker-ui";
+import { AuthGate, SessionBar } from "@jefelabs/herdr-broker-ui";
 import { useEffect, useState } from "react";
 import { send } from "./api/client";
 import { ApiSpec } from "./pages/ApiSpec";
@@ -51,6 +51,14 @@ function Gated({ children }: { children: React.ReactNode }) {
   );
 }
 
+/** Topbar session controls — visible whenever a bearer is stored: copy the
+ * token for your own requests, log off (local), or kick out (revoke). */
+function TopbarSession() {
+  const s = useSettings();
+  if (!s.bearer) return null;
+  return <SessionBar broker={s.broker} token={s.bearer} onLoggedOff={() => s.set("bearer", "")} />;
+}
+
 function useBrokerHealth(): boolean | null {
   const [up, setUp] = useState<boolean | null>(null);
   useEffect(() => {
@@ -86,6 +94,7 @@ export function App() {
             </a>
           ))}
         </nav>
+        <TopbarSession />
         <span className="health-dot" title="GET /health, polled every 10s">
           <span className={`dot ${health === null ? "" : health ? "on" : "off"}`} />
           {health === null ? "probing" : health ? "broker up" : "broker down"}

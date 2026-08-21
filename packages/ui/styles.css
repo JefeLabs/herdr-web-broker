@@ -445,3 +445,11 @@ footer.site {
   flex: 1; background: var(--bg-raise); border: 1px solid var(--line);
   color: var(--ink); padding: 0.5rem 0.7rem; font-family: var(--mono); font-size: 0.8rem;
 }
+
+/* ── session bar — who's logged in, token access, the two exits ───── */
+.session-bar {
+  display: flex; align-items: center; gap: 0.5rem;
+  font-size: 0.72rem; color: var(--ink-faint);
+}
+.session-bar .session-who code { color: var(--amber); }
+.btn.small { padding: 0.25rem 0.55rem; font-size: 0.68rem; }

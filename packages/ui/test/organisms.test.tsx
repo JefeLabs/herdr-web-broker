@@ -5,6 +5,7 @@ afterEach(cleanup);
 import type { BrokerClient, Screen as PaneScreen } from "@jefelabs/herdr-broker-client";
 import { AuthGate } from "../src/organisms/AuthGate.js";
 import { PaneViewer } from "../src/organisms/PaneViewer.js";
+import { SessionBar } from "../src/organisms/SessionBar.js";
 import { WorkspaceBrowser } from "../src/organisms/WorkspaceBrowser.js";
 
 describe("AuthGate", () => {
@@ -91,6 +92,62 @@ describe("AuthGate self-serve token", () => {
     );
     await screen.findByText("authenticate");
     expect(screen.queryByText("get a demo token")).toBeNull();
+  });
+});
+
+describe("AuthGate re-lock", () => {
+  test("clearing the token while unlocked drops straight back to the gate", async () => {
+    const broker = {
+      setToken: vi.fn(),
+      verify: vi.fn(async () => ({ ok: true })),
+    } as unknown as BrokerClient;
+    const view = render(
+      <AuthGate broker={broker} token="tok" onTokenChange={() => undefined}>
+        <div>secret content</div>
+      </AuthGate>,
+    );
+    await waitFor(() => expect(screen.getByText("secret content")).toBeTruthy());
+    view.rerender(
+      <AuthGate broker={broker} token="" onTokenChange={() => undefined}>
+        <div>secret content</div>
+      </AuthGate>,
+    );
+    await waitFor(() => expect(screen.queryByText("secret content")).toBeNull());
+    expect(screen.getByText("Authentication required")).toBeTruthy();
+  });
+});
+
+describe("SessionBar", () => {
+  test("masks the token, exposes copy, and 'log off' clears locally WITHOUT touching the broker", async () => {
+    const broker = { signOut: vi.fn() } as unknown as BrokerClient;
+    const onLoggedOff = vi.fn();
+    render(<SessionBar broker={broker} token="secret-token-abcd" onLoggedOff={onLoggedOff} />);
+    // masked display, never the full token in text
+    expect(screen.getByText(/…abcd/)).toBeTruthy();
+    expect(screen.queryByText("secret-token-abcd")).toBeNull();
+    // the copy button carries the FULL token for subsequent requests
+    expect((screen.getByTitle(/copy bearer token/i) as HTMLButtonElement)).toBeTruthy();
+    fireEvent.click(screen.getByText("log off"));
+    expect(onLoggedOff).toHaveBeenCalledOnce();
+    expect(broker.signOut).not.toHaveBeenCalled();
+  });
+
+  test("'kick out' revokes at the broker, then clears locally — even if the revoke fails", async () => {
+    const broker = {
+      signOut: vi.fn(async () => ({ signed_out: "me", token_revoked: true, sockets_closed: 0 })),
+    } as unknown as BrokerClient;
+    const onLoggedOff = vi.fn();
+    render(<SessionBar broker={broker} token="tok" onLoggedOff={onLoggedOff} />);
+    fireEvent.click(screen.getByText("kick out"));
+    await waitFor(() => expect(onLoggedOff).toHaveBeenCalledOnce());
+    expect(broker.signOut).toHaveBeenCalledOnce();
+
+    // a dead token 401s on signOut — local clear must still happen
+    const dead = { signOut: vi.fn(async () => Promise.reject(new Error("unauthorized"))) } as unknown as BrokerClient;
+    const off2 = vi.fn();
+    render(<SessionBar broker={dead} token="tok2" onLoggedOff={off2} />);
+    fireEvent.click(screen.getAllByText("kick out")[1]);
+    await waitFor(() => expect(off2).toHaveBeenCalledOnce());
   });
 });
 

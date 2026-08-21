@@ -10,4 +10,5 @@ export { PathTemplate } from "./molecules/PathTemplate.js";
 export { AuthGate, type AuthGateProps } from "./organisms/AuthGate.js";
 export { EventsPanel, type EventsPanelProps } from "./organisms/EventsPanel.js";
 export { PaneViewer, type PaneViewerProps } from "./organisms/PaneViewer.js";
+export { SessionBar, type SessionBarProps } from "./organisms/SessionBar.js";
 export { WorkspaceBrowser, type WorkspaceBrowserProps } from "./organisms/WorkspaceBrowser.js";

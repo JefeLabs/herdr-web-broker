@@ -25,6 +25,16 @@ describe("BrokerClient", () => {
     ]);
   });
 
+  test("signOut() self-evicts via DELETE /parent/auth with the presented bearer", async () => {
+    const { calls, fetchFn } = fake(200, '{"signed_out":"me","token_revoked":true,"sockets_closed":1}');
+    const out = await new BrokerClient({ origin: "http://b", token: "mine", fetchFn }).signOut();
+    expect(out.signed_out).toBe("me");
+    expect(out.token_revoked).toBe(true);
+    expect(calls[0].url).toBe("http://b/parent/auth");
+    expect(calls[0].init.method).toBe("DELETE");
+    expect((calls[0].init.headers as Record<string, string>).authorization).toBe("Bearer mine");
+  });
+
   test("verify() reports auth failure without throwing", async () => {
     const { fetchFn } = fake(401, '{"code":"unauthorized","message":"nope"}');
     const out = await new BrokerClient({ origin: "", token: "bad", fetchFn }).verify();

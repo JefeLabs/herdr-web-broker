@@ -57,6 +57,7 @@ the local machine; anything else is an enrolled child.
 | `GET .../workspaces/{w}/context[/{name}]` | list attachments / download one |
 | `POST .../workspaces/{w}/context/{name}` | toggle `{active}` — drop a file from prompts without deleting it |
 | `DELETE .../workspaces/{w}/context/{name}` | remove an attachment |
+| `DELETE /parent/auth` | self-eviction: the presented token revokes itself — sockets closed, presence cleared, dead everywhere |
 | `POST .../agents/{pane}/ask` | structured JSON answer from a TUI agent (file-drop) |
 | `POST .../agents/{pane}/prompt` | fire-and-forget steering: `{text}` to the same agent — spawn once, keep prompting the pane |
 | `POST .../agents/{pane}/model` | switch a running agent's model: `{model}` typed as the CLI's own `/model` command |

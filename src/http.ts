@@ -208,6 +208,28 @@ export function createHttpHandler(deps: HttpDeps) {
       return;
     }
 
+    // DELETE /parent/auth — self-eviction: the presented token kicks
+    // ITSELF (revoked + persisted, WS sockets closed, presence cleared).
+    // Safe without admin — you can only evict the token you hold. Agent
+    // panes are untouched; that stays the admin kick's hammer.
+    if (parts.length === 2 && parts[1] === "auth" && req.method === "DELETE") {
+      const remaining = deps.config.client_tokens.filter((t) => t.name !== tokenName);
+      const tokenRevoked = remaining.length !== deps.config.client_tokens.length;
+      if (tokenRevoked) {
+        deps.config.client_tokens = remaining;
+        deps.onTokensChanged?.();
+      }
+      const socketsClosed = deps.onKickSockets?.(tokenName) ?? 0;
+      deps.presence.remove(tokenName);
+      deps.audit?.record({
+        action: "auth.self_kick",
+        actor: tokenName,
+        remote: req.socket.remoteAddress ?? undefined,
+      });
+      json(res, 200, { signed_out: tokenName, token_revoked: tokenRevoked, sockets_closed: socketsClosed });
+      return;
+    }
+
     const instance = decodeURIComponent(parts[1] ?? "");
     const entry = deps.registry.get(instance);
     if (!entry) throw new BrokerError("unknown_instance", `no instance '${instance}'`);

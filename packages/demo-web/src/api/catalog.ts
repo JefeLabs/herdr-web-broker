@@ -139,6 +139,31 @@ export const CATALOG: EndpointSpec[] = [
     },
   },
   {
+    id: "auth-signout",
+    group: "Instances",
+    title: "Kick out (self-eviction)",
+    summary: "The presented token revokes ITSELF: removed from the config, its live WS sockets closed, presence cleared — dead everywhere. No admin needed; you can only evict the token you hold.",
+    docs:
+      "The topbar's 'kick out' button uses this. For a local-only sign-out just discard the token — it stays " +
+      "valid for other holders. Agent panes are untouched (that's the admin kick's job). Lands in the audit " +
+      "trail as auth.self_kick. Demo caveat: kicking while authed with the shared demo-token revokes it for " +
+      "everyone until the container restarts — mint a personal token via the gate instead.",
+    method: "DELETE",
+    pathTemplate: "/parent/auth",
+    auth: "bearer",
+    fields: [],
+    response: {
+      type: "object",
+      properties: {
+        signed_out: { type: "string" },
+        token_revoked: { type: "boolean" },
+        sockets_closed: { type: "number" },
+      },
+      required: ["signed_out", "token_revoked", "sockets_closed"],
+    },
+    build: () => ({ method: "DELETE", path: "/parent/auth", auth: "bearer" }),
+  },
+  {
     id: "sessions",
     group: "Sessions & Agents",
     title: "List sessions",

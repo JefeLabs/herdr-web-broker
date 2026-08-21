@@ -55,6 +55,13 @@ export function AuthGate({ broker, token, onTokenChange, onIdentify, onRequestTo
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // No token means not authenticated: when the host clears it (log off,
+  // kick out), the gate re-locks immediately instead of waiting for a
+  // reload to notice.
+  useEffect(() => {
+    if (token === "") setState((s) => (s === "ok" ? "denied" : s));
+  }, [token]);
+
   if (state === "ok") return <>{children}</>;
 
   return (
