@@ -530,6 +530,29 @@ test("agent stop route: DELETE .../agents/{pane} closes the agent's pane", async
   }
 });
 
+test("wait + explain routes: POST .../wait blocks and 200s on timeout; GET .../explain passes through", async () => {
+  const t = await setup();
+  try {
+    t.fake.handlers.set("agent.wait", () => ({
+      type: "agent_info",
+      agent: { pane_id: "w1:p1", agent_status: "idle" },
+    }));
+    const waited = await t.authed("/instances/runtime/sessions/default/agents/w1%3Ap1/wait", {
+      method: "POST",
+      body: JSON.stringify({ until: ["idle"], timeout_ms: 5000 }),
+    });
+    assert.equal(waited.status, 200);
+    assert.deepEqual(await waited.json(), { waited: true, status: "idle", raw_status: "idle", pane_id: "w1:p1" });
+
+    t.fake.handlers.set("agent.explain", () => ({ type: "agent_explain", explain: { agent: "claude" } }));
+    const explain = await t.authed("/instances/runtime/sessions/default/agents/w1%3Ap1/explain");
+    assert.equal(explain.status, 200);
+    assert.equal(((await explain.json()) as { explain: { agent: string } }).explain.agent, "claude");
+  } finally {
+    await teardown(t);
+  }
+});
+
 test("worktree routes: GET lists via the workspace; DELETE removes checkout + workspace", async () => {
   const t = await setup();
   try {

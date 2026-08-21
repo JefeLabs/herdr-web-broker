@@ -119,6 +119,21 @@ fake.handlers.set("worktree.remove", (p) => {
   return { type: "worktree_removed", workspace_id: id, path: w?.path ?? null, forced: p?.force === true };
 });
 
+fake.handlers.set("agent.wait", (p) => {
+  const a = fake.agents.find((x) => x.name === p?.target || x.agent === p?.target);
+  return { type: "agent_info", agent: a ?? { agent_status: "idle" } };
+});
+fake.handlers.set("pane.wait_for_output", (p) => ({
+  type: "output_matched",
+  pane_id: p?.pane_id,
+  matched_line: `[sim] matched: ${p?.match?.value ?? ""}`,
+  read: { text: "user@sim:~/work % _" },
+}));
+fake.handlers.set("agent.explain", (p) => ({
+  type: "agent_explain",
+  explain: { agent: p?.target, evaluated_rules: [{ evidence: { all_count: 1, region_preview: "[sim] screen" } }] },
+}));
+
 fake.handlers.set("pane.close", (p) => {
   fake.agents = fake.agents.filter((a) => a.pane_id !== String(p?.pane_id ?? ""));
   return { type: "ok" };

@@ -64,6 +64,46 @@ export class AgentHandle {
     return request(this.session.cfg, "POST", `${this.#base()}/model`, { body: { model } });
   }
 
+  /** Block until the agent transitions into a target status (default:
+   * idle|blocked|done — "needs me or finished") or until the pane's
+   * output matches. Timeout is NOT an error: the reply carries
+   * {waited: false, timed_out: true} so pipelines branch without
+   * try/catch. Pass either until or match, not both. */
+  wait(
+    opts: {
+      until?: string[];
+      match?: string;
+      matchType?: "substring" | "regex";
+      source?: "visible" | "recent";
+      timeoutMs?: number;
+    } = {},
+  ): Promise<{
+    waited: boolean;
+    timed_out?: boolean;
+    status?: string;
+    raw_status?: string;
+    matched_line?: string;
+    pane_id: string;
+  }> {
+    const timeoutMs = opts.timeoutMs ?? 30_000;
+    return request(this.session.cfg, "POST", `${this.#base()}/wait`, {
+      body: {
+        ...(opts.until ? { until: opts.until } : {}),
+        ...(opts.match ? { match: opts.match } : {}),
+        ...(opts.matchType ? { match_type: opts.matchType } : {}),
+        ...(opts.source ? { source: opts.source } : {}),
+        ...(opts.timeoutMs !== undefined ? { timeout_ms: opts.timeoutMs } : {}),
+      },
+      timeoutMs: timeoutMs + 30_000,
+    });
+  }
+
+  /** herdr's agent-detection diagnostics for this pane — the answer to
+   * "why does this pane show the wrong kind or status". */
+  explain(): Promise<{ pane_id: string; agent: string; kind: string; explain: unknown }> {
+    return request(this.session.cfg, "GET", `${this.#base()}/explain`);
+  }
+
   /** Stop the agent for good: closes its pane (the process dies with the
    * PTY); the workspace and the rest of the team survive. For a mid-run
    * cancel that keeps the agent alive, use interrupt() instead. */

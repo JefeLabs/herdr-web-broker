@@ -332,6 +332,103 @@ test("broker.worktree.remove: deletes the checkout, keeps the branch, forgets th
   }
 });
 
+test("broker.agent.wait: status wait defaults to needs-me-or-done; timeout is a 200, not an error", async () => {
+  const t = await setup();
+  try {
+    t.fake.handlers.set("agent.wait", () => ({
+      type: "agent_info",
+      agent: { pane_id: "w1:p1", name: "copilot", agent: "copilot", agent_status: "blocked" },
+    }));
+    const out = (await runBrokerMethod(t.deps, "default", "broker.agent.wait", { pane_id: "w1:p1" })) as {
+      waited: boolean;
+      status: string;
+      raw_status: string;
+      pane_id: string;
+    };
+    assert.deepEqual(out, { waited: true, status: "blocked", raw_status: "blocked", pane_id: "w1:p1" });
+    const sent = t.fake.received.find((r) => r.method === "agent.wait");
+    assert.deepEqual(sent?.params, { target: "copilot", until: ["idle", "blocked", "done"], timeout_ms: 30_000 });
+
+    // herdr's timeout becomes a branchable 200-shape, mirroring screen's unchanged
+    t.fake.handlers.set("agent.wait", () => {
+      throw new FakeHerdrError("timeout", "timed out waiting for agent status");
+    });
+    const timedOut = (await runBrokerMethod(t.deps, "default", "broker.agent.wait", {
+      pane_id: "w1:p1",
+      until: ["done"],
+      timeout_ms: 2_000,
+    })) as { waited: boolean; timed_out?: boolean };
+    assert.deepEqual(timedOut, { waited: false, timed_out: true, pane_id: "w1:p1" });
+
+    // until values are validated; until+match together is a contract error
+    await assert.rejects(
+      runBrokerMethod(t.deps, "default", "broker.agent.wait", { pane_id: "w1:p1", until: ["sleeping"] }),
+      (e: BrokerError) => e.code === "bad_request",
+    );
+    await assert.rejects(
+      runBrokerMethod(t.deps, "default", "broker.agent.wait", { pane_id: "w1:p1", until: ["idle"], match: "x" }),
+      (e: BrokerError) => e.code === "bad_request",
+    );
+  } finally {
+    await t.teardown();
+  }
+});
+
+test("broker.agent.wait: output wait rides pane.wait_for_output and returns the matched line", async () => {
+  const t = await setup();
+  try {
+    t.fake.handlers.set("pane.wait_for_output", () => ({
+      type: "output_matched",
+      pane_id: "w1:p1",
+      matched_line: "│ Confirm folder trust │",
+      read: { text: "big screen text" },
+    }));
+    const out = (await runBrokerMethod(t.deps, "default", "broker.agent.wait", {
+      pane_id: "w1:p1",
+      match: "trust",
+      match_type: "substring",
+    })) as { waited: boolean; matched_line: string; pane_id: string };
+    assert.deepEqual(out, { waited: true, matched_line: "│ Confirm folder trust │", pane_id: "w1:p1" });
+    const sent = t.fake.received.find((r) => r.method === "pane.wait_for_output");
+    assert.deepEqual(sent?.params, {
+      pane_id: "w1:p1",
+      source: "visible",
+      match: { type: "substring", value: "trust" },
+      timeout_ms: 30_000,
+    });
+  } finally {
+    await t.teardown();
+  }
+});
+
+test("broker.agent.explain: passes through herdr's detection diagnostics", async () => {
+  const t = await setup();
+  try {
+    t.fake.handlers.set("agent.explain", () => ({
+      type: "agent_explain",
+      explain: { agent: "copilot", evaluated_rules: [{ evidence: { all_count: 2 } }] },
+    }));
+    const out = (await runBrokerMethod(t.deps, "default", "broker.agent.explain", { pane_id: "w1:p1" })) as {
+      pane_id: string;
+      agent: string;
+      kind: string;
+      explain: { agent: string };
+    };
+    assert.equal(out.pane_id, "w1:p1");
+    assert.equal(out.kind, "copilot");
+    assert.equal(out.explain.agent, "copilot");
+    const sent = t.fake.received.find((r) => r.method === "agent.explain");
+    assert.deepEqual(sent?.params, { target: "copilot" });
+
+    await assert.rejects(
+      runBrokerMethod(t.deps, "default", "broker.agent.explain", { pane_id: "w9:p9" }),
+      (e: BrokerError) => e.code === "bad_request" && /no agent in pane/.test(e.message),
+    );
+  } finally {
+    await t.teardown();
+  }
+});
+
 test("broker.agent.stop: closes the agent's pane; empty panes answer 'no agent in pane'", async () => {
   const t = await setup();
   try {

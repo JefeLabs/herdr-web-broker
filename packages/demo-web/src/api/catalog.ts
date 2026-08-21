@@ -220,6 +220,76 @@ export const CATALOG: EndpointSpec[] = [
     }),
   },
   {
+    id: "agent-wait",
+    group: "Sessions & Agents",
+    title: "Wait (status or output)",
+    summary: "Block until the agent transitions into a target status (default: idle|blocked|done — 'needs me or finished') or until the pane's output matches. Timeout answers 200 {waited:false, timed_out:true}, not an error.",
+    docs:
+      "Rides herdr's agent.wait / pane.wait_for_output (wire-verified). A current status that already matches " +
+      "returns immediately. Pass either until (statuses) or match (+ match_type substring|regex, source " +
+      "visible|recent), not both. The pipeline primitive: no client-side polling loops.",
+    method: "POST",
+    pathTemplate: "/instances/{instance}/sessions/{session}/agents/{pane_id}/wait",
+    auth: "bearer",
+    fields: [
+      { key: "pane_id", label: "pane_id", kind: "text", required: true, placeholder: "w1:p1" },
+      { key: "until", label: "until (JSON array of statuses)", kind: "json", placeholder: '["idle","blocked","done"]' },
+      { key: "match", label: "match (output wait)", kind: "text", placeholder: "Confirm folder trust" },
+      { key: "match_type", label: "match type", kind: "select", options: ["substring", "regex"] },
+      { key: "timeout_ms", label: "timeout_ms", kind: "number", placeholder: "30000" },
+    ],
+    response: {
+      type: "object",
+      properties: {
+        waited: { type: "boolean" },
+        timed_out: { type: "boolean" },
+        status: { type: "string" },
+        raw_status: { type: "string" },
+        matched_line: { type: "string" },
+        pane_id: { type: "string" },
+      },
+      required: ["waited", "pane_id"],
+    },
+    build: (v, ctx) => {
+      const body: Record<string, unknown> = {};
+      if (v.until?.trim()) body.until = parseJson(v.until, "until");
+      if (v.match?.trim()) {
+        body.match = v.match.trim();
+        if (v.match_type?.trim()) body.match_type = v.match_type.trim();
+      }
+      if (v.timeout_ms?.trim()) body.timeout_ms = Number(v.timeout_ms);
+      return { method: "POST", path: `${sess(ctx)}/agents/${enc(need(v, "pane_id"))}/wait`, auth: "bearer", body };
+    },
+  },
+  {
+    id: "agent-explain",
+    group: "Sessions & Agents",
+    title: "Explain agent detection",
+    summary: "herdr's agent-detection diagnostics for a pane: which rules evaluated, the evidence counts, and a screen-region preview — the answer to 'why does this pane show the wrong kind or status'.",
+    docs:
+      "Rides herdr's agent.explain (wire-verified). Pure read — the debugging surface for detection oddities " +
+      "like an agent listed without a kind during its launch window.",
+    method: "GET",
+    pathTemplate: "/instances/{instance}/sessions/{session}/agents/{pane_id}/explain",
+    auth: "bearer",
+    fields: [{ key: "pane_id", label: "pane_id", kind: "text", required: true, placeholder: "w1:p1" }],
+    response: {
+      type: "object",
+      properties: {
+        pane_id: { type: "string" },
+        agent: { type: "string" },
+        kind: { type: "string" },
+        explain: { type: "object" },
+      },
+      required: ["pane_id", "agent", "kind"],
+    },
+    build: (v, ctx) => ({
+      method: "GET",
+      path: `${sess(ctx)}/agents/${enc(need(v, "pane_id"))}/explain`,
+      auth: "bearer",
+    }),
+  },
+  {
     id: "agent-stop",
     group: "Sessions & Agents",
     title: "Stop agent",

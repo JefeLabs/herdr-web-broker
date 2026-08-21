@@ -69,6 +69,8 @@ the local machine; anything else is an enrolled child.
 | `POST .../agents/{pane}/prompt` | fire-and-forget steering: `{text}` to the same agent — spawn once, keep prompting the pane |
 | `POST .../agents/{pane}/model` | switch a running agent's model: `{model}` typed as the CLI's own `/model` command |
 | `POST .../agents/{pane}/slash/{command}` | type any CLI slash command into the pane (`/clear`, `/instructions`…); optional single-line `{args}` |
+| `POST .../agents/{pane}/wait` | block until a status transition (`until`) or an output match (`match`) — timeout answers 200 `{waited:false, timed_out:true}` |
+| `GET .../agents/{pane}/explain` | herdr agent-detection diagnostics: rules, evidence, region preview |
 | `GET .../panes/{pane}/screen?source=&version=&wait_ms=` | the pane's terminal text with a content-version hash — long-poll returns the moment the screen changes; `source=recent` for scrollback (tail-truncated) |
 | `POST .../agents/{pane}/spec-bundles` | create/continue a spec bundle (a dir of design files) and prompt the agent to draft into it: `{name\|bundle, prompt, file?}` — `file` focuses the page being viewed |
 | `POST .../agents/{pane}/spec-bundles/{b}/plan` | ask the agent to distill the bundle into `plan.md` |

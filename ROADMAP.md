@@ -15,15 +15,14 @@ missing endpoints/SDK/UI, not missing reachability):
     the checkout while the BRANCH survives for merging. Wire-verified and
     proven live: two agents on two branches of one repo, one removed, the
     other untouched.
-21. **Consumer wait endpoint.** `agent.wait` and `pane.wait_for_output
-    {match: substring|regex}` are wire-verified but unexposed. A
-    `POST .../agents/{pane}/wait {until?, match?, timeout_ms}` lets
-    pipelines block on "agent went idle" or "output matched" without
-    polling. Small, high leverage.
-22. **`agent.explain` debug surface.** herdr's agent-detection diagnostics
-    as an endpoint + console card — answers "why does this pane show no
-    kind / wrong status" (the exact class of field bug hit on day one).
-    Tiny.
+21. ~~**Consumer wait endpoint.**~~ Done: `POST ./agents/{pane}/wait` —
+    status wait (`until`, default idle|blocked|done) or output wait
+    (`match` + substring|regex); timeout is a branchable 200, not an
+    error. Rides agent.wait / pane.wait_for_output.
+22. ~~**`agent.explain` debug surface.**~~ Done: `GET
+    ./agents/{pane}/explain` + console card — rules, evidence counts,
+    region preview. Fixed a latent route bug on the way: the agents-list
+    matcher lacked a length check and swallowed agents GET sub-routes.
 23. **Event passthrough** (scopes item 8): the broker WS emits only
     `agent_status` + instance online/offline; herdr's richer events
     (`pane.output_matched`, `pane.created/exited`, `workspace_*`,

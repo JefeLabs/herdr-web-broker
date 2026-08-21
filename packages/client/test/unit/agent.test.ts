@@ -104,6 +104,22 @@ describe("AgentHandle", () => {
     expect(urls.length).toBe(4);
   });
 
+  test("wait() posts until/match to the wait route; explain() GETs diagnostics", async () => {
+    const { calls, fetchFn } = fake([{ status: 200, body: '{"waited":true,"status":"idle","raw_status":"idle","pane_id":"w1:p1"}' }]);
+    const agent = agentOf(fetchFn);
+    const out = await agent.wait({ until: ["idle"], timeoutMs: 5000 });
+    expect(out.waited).toBe(true);
+    expect(calls[0].url).toBe("/instances/runtime/sessions/default/agents/w1%3Ap1/wait");
+    expect(JSON.parse(String(calls[0].init.body))).toEqual({ until: ["idle"], timeout_ms: 5000 });
+
+    await agent.wait({ match: "trust", matchType: "substring" });
+    expect(JSON.parse(String(calls[1].init.body))).toEqual({ match: "trust", match_type: "substring" });
+
+    await agent.explain();
+    expect(calls[2].url).toBe("/instances/runtime/sessions/default/agents/w1%3Ap1/explain");
+    expect(calls[2].init.method ?? "GET").toBe("GET");
+  });
+
   test("stop() ends the agent via DELETE on its pane", async () => {
     const { calls, fetchFn } = fake([{ status: 200, body: '{"stopped":true,"pane_id":"w1:p1","agent":"copilot","kind":"copilot"}' }]);
     const out = await agentOf(fetchFn).stop();

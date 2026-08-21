@@ -317,7 +317,7 @@ export function createHttpHandler(deps: HttpDeps) {
     }
 
     // GET /instances/{i}/sessions/{s}/agents
-    if (parts[4] === "agents" && req.method === "GET") {
+    if (parts.length === 5 && parts[4] === "agents" && req.method === "GET") {
       let agents = entry.sessions[session].agents;
       if (url.searchParams.get("fresh") === "1") {
         agents = mapAgentList(await callInstance(instance, session, "agent.list", {}));
@@ -337,6 +337,24 @@ export function createHttpHandler(deps: HttpDeps) {
       body.timeout_ms = t;
       const result = await callInstance(instance, session, "broker.agent.spawn", body, t + 30_000);
       json(res, 201, result as Record<string, unknown>);
+      return;
+    }
+
+    // POST .../agents/{pane}/wait — block until a status transition or an
+    // output match; a timeout answers 200 {waited:false, timed_out:true}
+    if (parts.length === 7 && parts[4] === "agents" && parts[6] === "wait" && req.method === "POST") {
+      const body = await readBody(req);
+      const waitMs = Math.min(Math.max(typeof body.timeout_ms === "number" ? body.timeout_ms : 30_000, 1_000), 600_000);
+      body.timeout_ms = waitMs;
+      const params = { ...body, pane_id: decodeURIComponent(parts[5]) };
+      json(res, 200, await callInstance(instance, session, "broker.agent.wait", params, waitMs + 15_000));
+      return;
+    }
+
+    // GET .../agents/{pane}/explain — herdr's agent-detection diagnostics
+    if (parts.length === 7 && parts[4] === "agents" && parts[6] === "explain" && req.method === "GET") {
+      const params = { pane_id: decodeURIComponent(parts[5]) };
+      json(res, 200, await callInstance(instance, session, "broker.agent.explain", params));
       return;
     }
 

@@ -158,6 +158,14 @@ send `Escape` first.
   deadline, so an idle pane costs one waiting request. `source=recent`
   reads scrollback (tail-truncated at 256K chars). The SDK's
   `watchScreen()` manages the loop; the demo's Pane page renders it.
+- **`POST .../agents/{pane}/wait`** — the pipeline primitive: block until
+  the agent transitions into a target status (`until`, default
+  `idle|blocked|done` — "needs me or finished") or until the screen
+  matches (`match` + `match_type: substring|regex`). Timeout is a
+  branchable `200 {waited: false, timed_out: true}`, not an error.
+- **`GET .../agents/{pane}/explain`** — herdr's detection diagnostics
+  (rules, evidence, region preview): the answer to "why does this pane
+  show the wrong kind or status".
 - **`pane.read`** over rpc — the same screen as a one-shot, when you
   don't need the long-poll discipline.
 

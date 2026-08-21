@@ -223,6 +223,15 @@ export async function runBrokerMethod(
       return screen(deps, session, p);
     case "broker.agent.stop":
       return stopAgent(deps, session, p);
+    case "broker.agent.wait":
+      return waitAgent(deps, session, p);
+    case "broker.agent.explain": {
+      const pane = str(p.pane_id, "pane_id");
+      const { kind, entry } = await agentInPane(deps, session, pane);
+      const target = typeof entry.name === "string" && entry.name ? entry.name : String(entry.agent ?? kind);
+      const r = (await deps.local.request(session, "agent.explain", { target }, 15_000)) as { explain?: unknown };
+      return { pane_id: pane, agent: target, kind, explain: r?.explain ?? null };
+    }
     case "broker.agent.ask":
       return ask(deps, session, p);
     case "broker.agent.model":
@@ -535,6 +544,57 @@ async function contextPreambleFor(deps: OpsDeps, session: string, pane: string):
     return activeContextPreamble(cwd);
   } catch {
     return undefined;
+  }
+}
+
+const AGENT_STATUSES = new Set(["idle", "working", "blocked", "done", "unknown"]);
+
+/** Consumer wait: block until the agent transitions into a target status
+ * (herdr agent.wait — a current state that already matches returns
+ * immediately) or until the pane's output matches (pane.wait_for_output).
+ * herdr's timeout becomes a branchable 200-shape, mirroring the screen
+ * endpoint's `unchanged` — pipelines fork on it without try/catch. */
+async function waitAgent(deps: OpsDeps, session: string, p: Record<string, unknown>): Promise<unknown> {
+  const pane = str(p.pane_id, "pane_id");
+  const timeoutMs = Math.min(Math.max(typeof p.timeout_ms === "number" ? p.timeout_ms : 30_000, 1_000), 600_000);
+  const hasMatch = typeof p.match === "string" && p.match.length > 0;
+  if (hasMatch && p.until !== undefined) {
+    throw new BrokerError("bad_request", "pass either 'until' (status wait) or 'match' (output wait), not both");
+  }
+  const { entry } = await agentInPane(deps, session, pane);
+  const target = typeof entry.name === "string" && entry.name ? entry.name : String(entry.agent ?? "");
+
+  try {
+    if (hasMatch) {
+      const matchType = p.match_type === "regex" ? "regex" : "substring";
+      const source = p.source === "recent" ? "recent" : "visible";
+      const r = (await deps.local.request(
+        session,
+        "pane.wait_for_output",
+        { pane_id: pane, source, match: { type: matchType, value: p.match }, timeout_ms: timeoutMs },
+        timeoutMs + 10_000,
+      )) as { matched_line?: unknown };
+      return { waited: true, matched_line: typeof r?.matched_line === "string" ? r.matched_line : "", pane_id: pane };
+    }
+    let until = ["idle", "blocked", "done"];
+    if (p.until !== undefined) {
+      if (!Array.isArray(p.until) || p.until.length === 0 || !p.until.every((u) => AGENT_STATUSES.has(String(u)))) {
+        throw new BrokerError("bad_request", "'until' must be a non-empty array of idle|working|blocked|done|unknown");
+      }
+      until = p.until.map(String);
+    }
+    const r = (await deps.local.request(
+      session,
+      "agent.wait",
+      { target, until, timeout_ms: timeoutMs },
+      timeoutMs + 10_000,
+    )) as { agent?: { agent_status?: unknown } };
+    const raw = String(r?.agent?.agent_status ?? "unknown");
+    return { waited: true, status: foldStatus(raw), raw_status: raw, pane_id: pane };
+  } catch (e) {
+    const err = e instanceof BrokerError ? e : new BrokerError("upstream_error", String(e));
+    if (err.code === "timeout") return { waited: false, timed_out: true, pane_id: pane };
+    throw err;
   }
 }
 
