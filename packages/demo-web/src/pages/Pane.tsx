@@ -1,32 +1,22 @@
-import type { AgentInfo } from "@jefelabs/herdr-broker-client";
-import { PaneViewer } from "@jefelabs/herdr-broker-ui";
-import { useCallback, useEffect, useState } from "react";
+import { PaneViewer, useAgents } from "@jefelabs/herdr-broker-ui";
+import { useEffect, useState } from "react";
 import { useSettings } from "../settings";
 
 /** Thin page: pane picker around the ui package's PaneViewer organism.
- * Pick an agent's pane and watch its terminal live — the long-poll screen
+ * The roster comes from the hooks layer (useAgents); the long-poll screen
  * endpoint delivers a frame only when the screen actually changes. */
 export function PanePage() {
   const settings = useSettings();
-  const [agents, setAgents] = useState<AgentInfo[]>([]);
+  const { agents, error: err, reload } = useAgents(
+    { instance: settings.instance, session: settings.session },
+    settings.broker,
+  );
   const [pane, setPane] = useState("");
-  const [err, setErr] = useState<string | null>(null);
-
-  const load = useCallback(async () => {
-    setErr(null);
-    try {
-      const list = await settings.broker.instance(settings.instance).session(settings.session).agents({ fresh: true });
-      setAgents(list);
-      setPane((cur) => (cur && list.some((a) => a.id === cur) ? cur : (list[0]?.id ?? "")));
-    } catch (e) {
-      setAgents([]);
-      setErr(String(e));
-    }
-  }, [settings.broker, settings.instance, settings.session]);
 
   useEffect(() => {
-    void load();
-  }, [load]);
+    setPane((cur) => (cur && agents.some((a) => a.id === cur) ? cur : (agents[0]?.id ?? "")));
+  }, [agents]);
+  const load = reload;
 
   return (
     <div className="page">

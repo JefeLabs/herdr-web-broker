@@ -3,9 +3,9 @@ import {
   type BrokerClient,
   type DiffResult,
   type TreeNode,
-  type Workspace,
 } from "@jefelabs/herdr-broker-client";
 import { useState } from "react";
+import { useWorkspaces } from "../hooks/useLists.js";
 import { DiffView } from "../molecules/DiffView.js";
 
 export interface WorkspaceBrowserProps {
@@ -23,9 +23,11 @@ const describe = (e: unknown) =>
 export function WorkspaceBrowser({ broker, instance, session: sessionName }: WorkspaceBrowserProps) {
   const session = broker.instance(instance).session(sessionName);
 
-  const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
-  const [loaded, setLoaded] = useState(false);
-  const [loadError, setLoadError] = useState<string | null>(null);
+  // the list lives in the hook; this organism loads on demand (auto: false)
+  const { workspaces, error: loadError, loaded, reload } = useWorkspaces(
+    { instance, session: sessionName, auto: false },
+    broker,
+  );
   const [busy, setBusy] = useState(false);
   const [selected, setSelected] = useState<{ ws: string; repo: string } | null>(null);
   const [tree, setTree] = useState<{ tree: TreeNode; truncated: boolean } | null>(null);
@@ -38,16 +40,8 @@ export function WorkspaceBrowser({ broker, instance, session: sessionName }: Wor
     setSelected(null);
     setTree(null);
     setDiff(null);
-    setLoadError(null);
-    try {
-      setWorkspaces(await session.workspaces());
-    } catch (e) {
-      setWorkspaces([]);
-      setLoadError(describe(e));
-    } finally {
-      setLoaded(true);
-      setBusy(false);
-    }
+    await reload();
+    setBusy(false);
   }
 
   async function browse(ws: string, repoPath: string, baseRef = base) {

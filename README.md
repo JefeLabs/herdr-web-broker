@@ -124,6 +124,13 @@ setModel/interrupt`, repo reads, spec-bundle `follow()` long-polling, and a
 WS event channel with subprotocol auth and reconnect. The demo site's
 workspace browser, auth gate, and events panel are built on it.
 
+`@jefelabs/herdr-broker-ui` adds React on top: atomic components
+(AuthGate, PaneViewer, WorkspaceBrowser, EventsPanel, SessionBar) plus a
+**hooks layer** — `BrokerProvider`/`useBroker`, `useVerify`, `useScreen`,
+`useAgents`, `useWorkspaces`, `useEventChannel` — each extracted from the
+organisms' own field-proven effects, and consumed by them, so the two
+never drift.
+
 ## Demo site
 
 [packages/demo-web](packages/demo-web) is a React site that exercises every endpoint above,

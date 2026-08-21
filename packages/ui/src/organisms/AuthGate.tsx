@@ -1,5 +1,6 @@
-import { BrokerNetworkError, type BrokerClient } from "@jefelabs/herdr-broker-client";
-import { useCallback, useEffect, useState, type ReactNode } from "react";
+import type { BrokerClient } from "@jefelabs/herdr-broker-client";
+import { useCallback, useState, type ReactNode } from "react";
+import { useVerify } from "../hooks/useVerify.js";
 
 export interface AuthGateProps {
   broker: BrokerClient;
@@ -20,47 +21,25 @@ export interface AuthGateProps {
  * verified against the broker (broker.verify()). A stored token is
  * re-verified on mount — possession of storage is not authentication. */
 export function AuthGate({ broker, token, onTokenChange, onIdentify, onRequestToken, children }: AuthGateProps) {
-  const [state, setState] = useState<"checking" | "ok" | "denied">("checking");
-  const [error, setError] = useState<string | null>(null);
+  // the verify state machine lives in the hook — mount verify, re-lock on
+  // an emptied token, verify() for the buttons
+  const { state, error: verifyError, verify } = useVerify(token, broker);
+  const [localError, setLocalError] = useState<string | null>(null);
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
+  const error = localError ?? verifyError;
 
-  const verify = useCallback(
+  const attempt = useCallback(
     async (candidate: string, identity?: { name?: string; email?: string }) => {
-      setState("checking");
-      setError(null);
-      broker.setToken(candidate);
-      try {
-        const res = await broker.verify();
-        if (res.ok) {
-          if (onIdentify && identity && (identity.name || identity.email)) {
-            await onIdentify(identity).catch(() => undefined); // presence is best-effort
-          }
-          setState("ok");
-        } else {
-          setState("denied");
-          setError(res.error?.message ?? "token rejected");
-        }
-      } catch (e) {
-        setState("denied");
-        setError(e instanceof BrokerNetworkError ? "broker unreachable — is it running?" : String(e));
+      setLocalError(null);
+      const ok = await verify(candidate);
+      if (ok && onIdentify && identity && (identity.name || identity.email)) {
+        await onIdentify(identity).catch(() => undefined); // presence is best-effort
       }
+      return ok;
     },
-    [broker, onIdentify],
+    [verify, onIdentify],
   );
-
-  useEffect(() => {
-    void verify(token);
-    // verify only on mount — edits re-verify through the button
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  // No token means not authenticated: when the host clears it (log off,
-  // kick out), the gate re-locks immediately instead of waiting for a
-  // reload to notice.
-  useEffect(() => {
-    if (token === "") setState((s) => (s === "ok" ? "denied" : s));
-  }, [token]);
 
   if (state === "ok") return <>{children}</>;
 
@@ -79,7 +58,7 @@ export function AuthGate({ broker, token, onTokenChange, onIdentify, onRequestTo
             value={token}
             placeholder="from [[client_tokens]] in config.toml"
             onChange={(e) => onTokenChange(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && void verify(token, { name, email })}
+            onKeyDown={(e) => e.key === "Enter" && void attempt(token, { name, email })}
           />
         </label>
         {onIdentify && (
@@ -99,7 +78,7 @@ export function AuthGate({ broker, token, onTokenChange, onIdentify, onRequestTo
           <button
             className="btn"
             disabled={state === "checking"}
-            onClick={() => void verify(token, { name, email })}
+            onClick={() => void attempt(token, { name, email })}
           >
             {state === "checking" ? "verifying…" : "authenticate"}
           </button>
@@ -109,14 +88,13 @@ export function AuthGate({ broker, token, onTokenChange, onIdentify, onRequestTo
               disabled={state === "checking"}
               onClick={() =>
                 void (async () => {
-                  setError(null);
+                  setLocalError(null);
                   try {
                     const minted = await onRequestToken();
                     onTokenChange(minted);
-                    await verify(minted, { name, email });
+                    await attempt(minted, { name, email });
                   } catch (e) {
-                    setState("denied");
-                    setError(e instanceof Error ? e.message : String(e));
+                    setLocalError(e instanceof Error ? e.message : String(e));
                   }
                 })()
               }

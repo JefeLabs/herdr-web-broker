@@ -1,3 +1,14 @@
+// hooks — the SDK's read/watch patterns as React primitives
+export {
+  BrokerProvider,
+  useAgents,
+  useBroker,
+  useEventChannel,
+  useScreen,
+  useVerify,
+  useWorkspaces,
+  type VerifyState,
+} from "./hooks/index.js";
 // atoms
 export { AuthBadge, MethodChip } from "./atoms/Chip.js";
 export { CopyButton } from "./atoms/CopyButton.js";

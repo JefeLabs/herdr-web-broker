@@ -119,16 +119,18 @@ map!), `pane.close`, `agent.wait`, and `agent.prompt`'s
     tunnel, the remote deny-list, and offline detection (13 checks). Runs
     weekly in herdr-drift.yml and on demand locally. Wire truth captured:
     herdr reaps a workspace when its last pane closes.
-14. **React hooks entry point** for the SDK/ui packages — organisms take
-    props today; a hooks layer was explicitly deferred.
+14. ~~**React hooks entry point.**~~ Done: `BrokerProvider`/`useBroker`,
+    `useVerify`, `useScreen`, `useAgents`, `useWorkspaces`,
+    `useEventChannel` — each extracted from the organisms' proven effects
+    and consumed BY the organisms (dogfooded), so hook and component never
+    drift. All existing ui/demo/e2e suites passed unchanged through the
+    refactor.
 
 ## Suggested order
 
-The herdr-surface gaps lead: **worktrees (20)** as the headline feature,
-then the quick wins **wait endpoint (21)** and **agent.explain (22)**;
-**event passthrough (23)** rides whenever item 8's push plumbing happens.
-After that: agent ownership (5), the remaining deferred features (4, 7, 8)
-and the hooks layer (14) as demand dictates. The **name (11) comes second
-to last** and **publication (12) last** — renaming is cheap until
-something is published, so the decision waits until the code is done
-moving.
+The herdr-surface priorities (20–22) are done; **event passthrough (23)**
+rides whenever item 8's push plumbing happens. From here: the deferred
+features (**4, 7, 8**) as demand dictates, then the **React hooks layer
+(14)**, then **agent ownership (5)**. The **name (11) comes second to
+last** and **publication (12) last** — renaming is cheap until something
+is published, so the decision waits until the code is done moving.

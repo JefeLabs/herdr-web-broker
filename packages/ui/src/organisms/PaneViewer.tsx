@@ -1,5 +1,6 @@
-import type { BrokerClient, Screen, ScreenSource } from "@jefelabs/herdr-broker-client";
+import type { BrokerClient, ScreenSource } from "@jefelabs/herdr-broker-client";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useScreen } from "../hooks/useScreen.js";
 
 export interface PaneViewerProps {
   broker: BrokerClient;
@@ -20,19 +21,13 @@ export function PaneViewer({ broker, instance, session, paneId }: PaneViewerProp
   );
   const [source, setSource] = useState<ScreenSource>("visible");
   const [live, setLive] = useState(true);
-  const [frame, setFrame] = useState<Screen | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
   const [input, setInput] = useState("");
   const screenRef = useRef<HTMLPreElement | null>(null);
 
-  useEffect(() => {
-    if (!live) return;
-    setError(null);
-    return agent.watchScreen((s) => setFrame(s), {
-      source,
-      onError: (e) => setError(String(e)),
-    });
-  }, [agent, source, live]);
+  // the watch loop lives in the hook; this organism just renders frames
+  const { frame, error: screenError } = useScreen({ instance, session, paneId, source, live }, broker);
+  const error = actionError ?? screenError;
 
   useEffect(() => {
     const el = screenRef.current;
@@ -46,7 +41,7 @@ export function PaneViewer({ broker, instance, session, paneId }: PaneViewerProp
     try {
       await agent.type(text);
     } catch (e) {
-      setError(String(e));
+      setActionError(String(e));
     }
   }
 
@@ -54,7 +49,7 @@ export function PaneViewer({ broker, instance, session, paneId }: PaneViewerProp
     try {
       await agent.keys(["Escape"]);
     } catch (e) {
-      setError(String(e));
+      setActionError(String(e));
     }
   }
 

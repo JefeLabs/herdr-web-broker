@@ -1,5 +1,6 @@
 import { BrokerApiError, type BrokerClient } from "@jefelabs/herdr-broker-client";
 import { useEffect, useRef, useState } from "react";
+import { useEventChannel } from "../hooks/useEventChannel.js";
 
 export interface EventsPanelProps {
   broker: BrokerClient;
@@ -19,7 +20,8 @@ const now = () => new Date().toLocaleTimeString([], { hour12: false });
  * auto-reconnect, typed subscriptions, rpc frames on the same socket. */
 export function EventsPanel({ broker, instance, session }: EventsPanelProps) {
   const logRef = useRef<HTMLDivElement | null>(null);
-  const [connected, setConnected] = useState(false);
+  // connection state + controls live in the hook; the log stays local
+  const { connected, connect, close } = useEventChannel(broker);
   const [log, setLog] = useState<LogLine[]>([]);
   const [frame, setFrame] = useState(
     JSON.stringify({ instance, session, method: "agent.list", params: {} }, null, 2),
@@ -35,19 +37,14 @@ export function EventsPanel({ broker, instance, session }: EventsPanelProps) {
   useEffect(() => {
     const events = broker.events;
     const offs = [
-      events.on("open", () => {
-        setConnected(true);
-        push("sys", "open — subprotocol bearer auth; status events stream unsolicited");
-      }),
+      events.on("open", () => push("sys", "open — subprotocol bearer auth; status events stream unsolicited")),
       events.on("close", (e) => {
-        setConnected(false);
         const clean = (e as { clean?: boolean })?.clean;
         push("sys", clean ? "closed" : "dropped — reconnecting with backoff");
       }),
-      events.on("auth_failed", () => {
-        setConnected(false);
-        push("sys", "token rejected (revoked or kicked) — reconnect stopped; re-authenticate to resume");
-      }),
+      events.on("auth_failed", () =>
+        push("sys", "token rejected (revoked or kicked) — reconnect stopped; re-authenticate to resume"),
+      ),
       events.on("agent_status", (e) => push("in", `agent_status ${JSON.stringify(e)}`)),
       events.on("instance_online", (e) => push("in", `instance_online ${JSON.stringify(e)}`)),
       events.on("instance_offline", (e) => push("in", `instance_offline ${JSON.stringify(e)}`)),
@@ -93,11 +90,11 @@ export function EventsPanel({ broker, instance, session }: EventsPanelProps) {
         </p>
         <div className="card-actions">
           {!connected ? (
-            <button className="btn" onClick={() => broker.events.connect()}>
+            <button className="btn" onClick={connect}>
               connect
             </button>
           ) : (
-            <button className="btn danger" onClick={() => broker.events.close()}>
+            <button className="btn danger" onClick={close}>
               disconnect
             </button>
           )}
