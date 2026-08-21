@@ -35,7 +35,7 @@ async function setup() {
 }
 
 function dial(port: number, name: string, secret: string): WebSocket {
-  return new WebSocket(`ws://127.0.0.1:${port}/parent/enroll`, {
+  return new WebSocket(`ws://127.0.0.1:${port}/enroll`, {
     headers: { "x-herdr-broker-name": name, "x-herdr-broker-secret": secret },
   });
 }

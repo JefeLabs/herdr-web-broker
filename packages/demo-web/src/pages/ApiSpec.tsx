@@ -33,7 +33,7 @@ export function ApiSpec() {
       <p className="note" style={{ maxWidth: "48rem" }}>
         Generated from the same catalog that renders the live console, so these docs cannot drift from the demo.
         Import the OpenAPI document into Swagger UI, Postman, or Insomnia for client generation. The WebSocket
-        channel (WS /parent/ws) is described in its console card — OpenAPI has no vocabulary for it.
+        channel (WS /events) is described in its console card — OpenAPI has no vocabulary for it.
       </p>
       {showJson && (
         <div style={{ marginBottom: "2rem" }}>

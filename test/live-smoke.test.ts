@@ -27,12 +27,12 @@ test("live smoke: daemon attaches to a real herdr and serves truth", async (t) =
     herdrVersion: which.stdout.trim(),
   }))!;
   const sessions = (await (
-    await fetch(`${handle.base}/parent/runtime/sessions`, {
+    await fetch(`${handle.base}/instances/runtime/sessions`, {
       headers: { authorization: "Bearer tok" },
     })
   ).json()) as { sessions: { name: string }[] };
   assert.ok(sessions.sessions.length >= 1, "expected at least the default session");
-  const rpc = await fetch(`${handle.base}/parent/runtime/sessions/${sessions.sessions[0].name}/rpc`, {
+  const rpc = await fetch(`${handle.base}/instances/runtime/sessions/${sessions.sessions[0].name}/rpc`, {
     method: "POST",
     headers: { authorization: "Bearer tok", "content-type": "application/json" },
     body: JSON.stringify({ method: "ping" }),
@@ -41,7 +41,7 @@ test("live smoke: daemon attaches to a real herdr and serves truth", async (t) =
 
   const firstSession = sessions.sessions[0].name;
   const agentsRes = (await (
-    await fetch(`${handle.base}/parent/runtime/sessions/${firstSession}/agents?fresh=1`, {
+    await fetch(`${handle.base}/instances/runtime/sessions/${firstSession}/agents?fresh=1`, {
       headers: { authorization: "Bearer tok" },
     })
   ).json()) as { agents: { id: unknown; title: unknown; status: unknown }[] };

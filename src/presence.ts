@@ -1,5 +1,5 @@
 /** Who is using this instance. Identity is opt-in: a client POSTs
- * /parent/auth with an optional name/email, keyed by which client token it
+ * /auth with an optional name/email, keyed by which client token it
  * presented; every later authed request from that token refreshes
  * last_seen. Silent entries expire so a closed laptop doesn't look like an
  * active user forever. In-memory by design — presence is a live signal,

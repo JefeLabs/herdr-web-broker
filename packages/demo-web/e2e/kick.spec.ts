@@ -19,7 +19,7 @@ test("kick revokes the token and the gate refuses it on reload", async ({ page }
   expect(kicked.status).toBe(200);
 
   // the token is dead at the API…
-  const after = await brokerFetch("/parent", { token });
+  const after = await brokerFetch("/instances", { token });
   expect(after.status).toBe(401);
 
   // …and the gate re-verifies the stored token on mount, so reload lands

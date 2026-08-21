@@ -82,7 +82,7 @@ const authed = (base: string, path: string, init: RequestInit = {}) =>
 test("child enrolls; parent rollup shows both instances with child agents", async () => {
   const parts = await bootPair();
   try {
-    const roll = (await (await authed(parts.parent.base, "/parent")).json()) as {
+    const roll = (await (await authed(parts.parent.base, "/instances")).json()) as {
       instances: { instance: string; online: boolean; counts: { idle: number } }[];
     };
     const names = roll.instances.map((i) => i.instance).sort();
@@ -98,7 +98,7 @@ test("child enrolls; parent rollup shows both instances with child agents", asyn
 test("forwarded rpc reaches the child's herdr and returns its result", async () => {
   const parts = await bootPair();
   try {
-    const res = await authed(parts.parent.base, "/parent/laptop/sessions/default/rpc", {
+    const res = await authed(parts.parent.base, "/instances/laptop/sessions/default/rpc", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ method: "agent.list" }),
@@ -130,7 +130,7 @@ test("child status events stream up and update the parent cache", async () => {
 test("remote-denied methods fast-fail at the parent without touching the tunnel", async () => {
   const parts = await bootPair();
   try {
-    const res = await authed(parts.parent.base, "/parent/laptop/sessions/default/rpc", {
+    const res = await authed(parts.parent.base, "/instances/laptop/sessions/default/rpc", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ method: "server.stop" }),
@@ -146,7 +146,7 @@ test("remote-denied methods fast-fail at the parent without touching the tunnel"
 test("the child enforces its own policy even when the parent's is permissive", async () => {
   const parts = await bootPair([]); // parent forwards everything; child keeps defaults
   try {
-    const res = await authed(parts.parent.base, "/parent/laptop/sessions/default/rpc", {
+    const res = await authed(parts.parent.base, "/instances/laptop/sessions/default/rpc", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ method: "server.stop" }),
@@ -168,7 +168,7 @@ test("revocation severs the tunnel; offline keeps last_seen; child retry is refu
       headers: { "x-admin-token": parts.parent.adminToken },
     });
     await waitFor(() => parts.parent.registry.get("laptop")!.online === false);
-    const res = await authed(parts.parent.base, "/parent/laptop/sessions/default/rpc", {
+    const res = await authed(parts.parent.base, "/instances/laptop/sessions/default/rpc", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ method: "agent.list" }),
@@ -216,7 +216,7 @@ test("broker.* over the tunnel executes in the child's ops and returns through r
     const cwd = scratchRepo();
     parts.fakeChild.handlers.set("workspace.create", () => ({ root_pane: { pane_id: "w2:p1" } }));
     parts.fakeChild.handlers.set("agent.start", () => ({ type: "agent_started" }));
-    const spawn = await authed(parts.parent.base, "/parent/laptop/sessions/default/agents", {
+    const spawn = await authed(parts.parent.base, "/instances/laptop/sessions/default/agents", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ kind: "copilot", cwd }),
@@ -224,7 +224,7 @@ test("broker.* over the tunnel executes in the child's ops and returns through r
     assert.equal(spawn.status, 201);
 
     writeFileSync(join(cwd, "a.txt"), "two\n");
-    const diff = await authed(parts.parent.base, "/parent/laptop/sessions/default/workspaces/w2/repos/-/git/diff");
+    const diff = await authed(parts.parent.base, "/instances/laptop/sessions/default/workspaces/w2/repos/-/git/diff");
     assert.equal(diff.status, 200);
     assert.match(((await diff.json()) as { diff: string }).diff, /\+two/);
     // the virtual methods never reached the child's herdr socket as themselves
@@ -241,7 +241,7 @@ test("BrokerError.details survives the tunnel round-trip (spec §2.1 partial-fai
     parts.fakeChild.handlers.set("workspace.create", () => ({ root_pane: { pane_id: "w9:p1" } }));
     // no agent.start handler → the child's herdr answers a not_found error,
     // which broker.agent.spawn wraps with the orphaned workspace_id/pane_id.
-    const res = await authed(parts.parent.base, "/parent/laptop/sessions/default/agents", {
+    const res = await authed(parts.parent.base, "/instances/laptop/sessions/default/agents", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ kind: "copilot", cwd }),
@@ -258,7 +258,7 @@ test("BrokerError.details survives the tunnel round-trip (spec §2.1 partial-fai
 test("broker.repo.* in remote_deny fast-fails at the parent", async () => {
   const parts = await bootPair(["broker.repo.*"]);
   try {
-    const res = await authed(parts.parent.base, "/parent/laptop/sessions/default/workspaces/w1/repos/-/git/diff");
+    const res = await authed(parts.parent.base, "/instances/laptop/sessions/default/workspaces/w1/repos/-/git/diff");
     assert.equal(res.status, 403);
     assert.equal(((await res.json()) as { code: string }).code, "method_denied");
   } finally {

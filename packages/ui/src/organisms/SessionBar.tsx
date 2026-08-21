@@ -14,7 +14,7 @@ export interface SessionBarProps {
 /** Post-login session controls: the bearer rides every request, so the bar
  * surfaces it (masked, copy for curl/Postman/SDK use) with two exits —
  * "log off" forgets it locally (still valid elsewhere), "kick out"
- * self-evicts at the broker (DELETE /parent/auth: token revoked, sockets
+ * self-evicts at the broker (DELETE /auth: token revoked, sockets
  * closed, presence cleared) and then forgets it. A failed revoke (already
  * dead) still clears locally. */
 export function SessionBar({ broker, token, who, onLoggedOff }: SessionBarProps) {

@@ -10,7 +10,7 @@ import { defineConfig } from "vitest/config";
 const target = process.env.VITE_BROKER_TARGET ?? "http://127.0.0.1:7591";
 
 const proxy = {
-  "/parent/ws": {
+  "/events": {
     target,
     ws: true,
     configure(p: HttpProxy.Server) {
@@ -20,7 +20,8 @@ const proxy = {
       });
     },
   },
-  "/parent": { target },
+  "/instances": { target },
+  "/auth": { target },
   "/health": { target },
   "/admin": { target },
 };

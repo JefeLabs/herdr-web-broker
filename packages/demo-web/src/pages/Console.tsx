@@ -89,7 +89,7 @@ function SettingsStrip() {
 }
 
 /** free-text input with datalist suggestions — pickers stay usable before
- * the first successful /parent fetch */
+ * the first successful /instances fetch */
 function ComboInput({
   value,
   options,

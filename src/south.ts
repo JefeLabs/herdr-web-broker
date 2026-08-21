@@ -60,7 +60,7 @@ export class ParentLink {
 
   #dial(): void {
     if (this.#stopped) return;
-    const url = this.opts.address.replace(/\/$/, "") + "/parent/enroll";
+    const url = this.opts.address.replace(/\/$/, "") + "/enroll";
     const ws = new WebSocket(url, {
       headers: {
         "x-herdr-broker-name": this.opts.name,

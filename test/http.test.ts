@@ -84,14 +84,14 @@ test("auth rate limit: too many bad bearers earn 429 — even for the right toke
   const t = await setup({ limiter: new AuthLimiter({ maxFailures: 3, windowMs: 60_000 }) });
   try {
     for (let i = 0; i < 3; i++) {
-      const bad = await fetch(t.base + "/parent", { headers: { authorization: "Bearer wrong" } });
+      const bad = await fetch(t.base + "/instances", { headers: { authorization: "Bearer wrong" } });
       assert.equal(bad.status, 401);
     }
-    const blocked = await fetch(t.base + "/parent", { headers: { authorization: "Bearer wrong" } });
+    const blocked = await fetch(t.base + "/instances", { headers: { authorization: "Bearer wrong" } });
     assert.equal(blocked.status, 429);
     assert.equal(((await blocked.json()) as { code: string }).code, "rate_limited");
     // the right token is blocked from that address too — that IS the feature
-    assert.equal((await t.authed("/parent")).status, 429);
+    assert.equal((await t.authed("/instances")).status, 429);
     // health stays reachable — liveness probes must never be limited
     assert.equal((await fetch(t.base + "/health")).status, 200);
   } finally {
@@ -104,16 +104,16 @@ test("auth rate limit: credential-less requests 401 but never count — an unaut
   try {
     // an app polling without a token (fresh browser, gate not passed yet)
     for (let i = 0; i < 6; i++) {
-      const bare = await fetch(t.base + "/parent");
+      const bare = await fetch(t.base + "/instances");
       assert.equal(bare.status, 401, "always 401, never 429");
     }
     // the real login still works — no failures were recorded
-    assert.equal((await t.authed("/parent")).status, 200);
+    assert.equal((await t.authed("/instances")).status, 200);
     // admin without the header is the same: 401, not a counted attempt
     for (let i = 0; i < 6; i++) {
       assert.equal((await fetch(t.base + "/admin/status")).status, 401);
     }
-    assert.equal((await t.authed("/parent")).status, 200);
+    assert.equal((await t.authed("/instances")).status, 200);
   } finally {
     await teardown(t);
   }
@@ -123,11 +123,11 @@ test("auth rate limit: a successful auth clears the address's failure count", as
   const t = await setup({ limiter: new AuthLimiter({ maxFailures: 3, windowMs: 60_000 }) });
   try {
     for (let i = 0; i < 2; i++) {
-      await fetch(t.base + "/parent", { headers: { authorization: "Bearer wrong" } });
+      await fetch(t.base + "/instances", { headers: { authorization: "Bearer wrong" } });
     }
-    assert.equal((await t.authed("/parent")).status, 200, "still under the limit — real token works");
+    assert.equal((await t.authed("/instances")).status, 200, "still under the limit — real token works");
     for (let i = 0; i < 2; i++) {
-      const bad = await fetch(t.base + "/parent", { headers: { authorization: "Bearer wrong" } });
+      const bad = await fetch(t.base + "/instances", { headers: { authorization: "Bearer wrong" } });
       assert.equal(bad.status, 401, "counter restarted after the success");
     }
   } finally {
@@ -142,7 +142,7 @@ test("auth rate limit: bad admin tokens count toward the same address's limit", 
       const bad = await fetch(t.base + "/admin/status", { headers: { "x-admin-token": "wrong" } });
       assert.equal(bad.status, 401);
     }
-    assert.equal((await t.authed("/parent")).status, 429);
+    assert.equal((await t.authed("/instances")).status, 429);
   } finally {
     await teardown(t);
   }
@@ -157,7 +157,7 @@ test("audit: admin actions and env writes land in the trail, readable via GET /a
       headers: { "x-admin-token": "admin-tok", "content-type": "application/json" },
       body: JSON.stringify({ name: "guest" }),
     });
-    await t.authed("/parent/runtime/env", {
+    await t.authed("/instances/runtime/env", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ name: "SOME_KEY", value: "v", kind: "copilot" }),
@@ -178,42 +178,42 @@ test("audit: admin actions and env writes land in the trail, readable via GET /a
   }
 });
 
-test("health needs no auth; /parent does", async () => {
+test("health needs no auth; /instances does", async () => {
   const t = await setup();
   const health = await (await fetch(t.base + "/health")).json();
   assert.equal(health.ok, true);
   assert.equal(health.name, "herdr-web-broker");
-  assert.equal((await fetch(t.base + "/parent")).status, 401);
+  assert.equal((await fetch(t.base + "/instances")).status, 401);
   await teardown(t);
 });
 
 test("GET grammar: rollup, instance, sessions, agents", async () => {
   const t = await setup();
   const { authed } = t;
-  const roll = await (await authed("/parent")).json();
+  const roll = await (await authed("/instances")).json();
   assert.equal(roll.instances[0].instance, "runtime");
   assert.deepEqual(roll.instances[0].counts, { working: 1, blocked: 0, idle: 0 });
 
-  const inst = await (await authed("/parent/runtime")).json();
+  const inst = await (await authed("/instances/runtime")).json();
   assert.equal(inst.herdr_version, "0.8.0-test");
   assert.deepEqual(inst.sessions, ["default"]);
 
-  const sessions = await (await authed("/parent/runtime/sessions")).json();
+  const sessions = await (await authed("/instances/runtime/sessions")).json();
   assert.deepEqual(sessions.sessions, [
     { name: "default", counts: { working: 1, blocked: 0, idle: 0 } },
   ]);
 
-  const agents = await (await authed("/parent/runtime/sessions/default/agents")).json();
+  const agents = await (await authed("/instances/runtime/sessions/default/agents")).json();
   assert.equal(agents.agents[0].id, "w1:p1");
-  assert.equal((await authed("/parent/ghost")).status, 404);
-  assert.equal((await authed("/parent/runtime/sessions/ghost/agents")).status, 404);
+  assert.equal((await authed("/instances/ghost")).status, 404);
+  assert.equal((await authed("/instances/runtime/sessions/ghost/agents")).status, 404);
   await teardown(t);
 });
 
 test("rpc passthrough returns herdr results and relays herdr errors as 502", async () => {
   const t = await setup();
   const { authed } = t;
-  const ok = await authed("/parent/runtime/sessions/default/rpc", {
+  const ok = await authed("/instances/runtime/sessions/default/rpc", {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ method: "agent.list", params: {} }),
@@ -221,7 +221,7 @@ test("rpc passthrough returns herdr results and relays herdr errors as 502", asy
   assert.equal(ok.status, 200);
   assert.equal((await ok.json()).result.agents.length, 1);
 
-  const bad = await authed("/parent/runtime/sessions/default/rpc", {
+  const bad = await authed("/instances/runtime/sessions/default/rpc", {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ method: "no.such.method" }),
@@ -235,7 +235,7 @@ test("fresh=1 forwards agent.list and refreshes the registry", async () => {
   const t = await setup();
   const { fake, registry, authed } = t;
   fake.agents = [{ pane_id: "w1:p1", name: "claude", agent_status: "blocked" }];
-  const res = await (await authed("/parent/runtime/sessions/default/agents?fresh=1")).json();
+  const res = await (await authed("/instances/runtime/sessions/default/agents?fresh=1")).json();
   assert.equal(res.agents[0].status, "blocked");
   assert.deepEqual(registry.counts("runtime"), { working: 0, blocked: 1, idle: 0 });
   await teardown(t);
@@ -257,7 +257,7 @@ test("oversized body destroys the socket instead of desyncing keep-alive", async
     params: { blob: "x".repeat(1_500_000) },
   });
   try {
-    const res = await authed("/parent/runtime/sessions/default/rpc", {
+    const res = await authed("/instances/runtime/sessions/default/rpc", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: oversized,
@@ -302,7 +302,7 @@ test("admin: token-gated child minting and revocation", async () => {
 
 test("broker.* virtual methods are reachable through the raw rpc passthrough", async () => {
   const t = await setup();
-  const res = await t.authed("/parent/runtime/sessions/default/rpc", {
+  const res = await t.authed("/instances/runtime/sessions/default/rpc", {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ method: "broker.workspace.list" }),
@@ -318,7 +318,7 @@ test("broker.* virtual methods are reachable through the raw rpc passthrough", a
 async function spawnDemo(t: Awaited<ReturnType<typeof setup>>, cwd: string) {
   t.fake.handlers.set("workspace.create", () => ({ root_pane: { pane_id: "w2:p1" } }));
   t.fake.handlers.set("agent.start", () => ({ type: "agent_started" }));
-  const res = await t.authed("/parent/runtime/sessions/default/agents", {
+  const res = await t.authed("/instances/runtime/sessions/default/agents", {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ kind: "copilot", cwd, label: "demo" }),
@@ -334,7 +334,7 @@ test("POST .../agents spawns and answers 201; bad bodies answer 400", async () =
   const body = (await res.json()) as { workspace_id: string; pane_id: string; agent: string };
   assert.equal(body.workspace_id, "w2");
   assert.equal(body.pane_id, "w2:p1");
-  const bad = await t.authed("/parent/runtime/sessions/default/agents", {
+  const bad = await t.authed("/instances/runtime/sessions/default/agents", {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ kind: "copilot" }),
@@ -348,7 +348,7 @@ test("POST .../agents with an absurd timeout_ms is clamped instead of overflowin
   const cwd = scratchRepo();
   t.fake.handlers.set("workspace.create", () => ({ root_pane: { pane_id: "w2:p1" } }));
   t.fake.handlers.set("agent.start", () => ({ type: "agent_started" }));
-  const res = await t.authed("/parent/runtime/sessions/default/agents", {
+  const res = await t.authed("/instances/runtime/sessions/default/agents", {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ kind: "copilot", cwd, timeout_ms: 1e15 }),
@@ -364,7 +364,7 @@ test("GET .../workspaces shows the team roster and discovered repos after a spaw
   const t = await setup();
   const cwd = scratchRepo();
   await spawnDemo(t, cwd);
-  const res = await t.authed("/parent/runtime/sessions/default/workspaces");
+  const res = await t.authed("/instances/runtime/sessions/default/workspaces");
   assert.equal(res.status, 200);
   const body = (await res.json()) as {
     workspaces: { workspace_id: string; cwd: string | null; repos: { path: string }[] }[];
@@ -381,21 +381,21 @@ test("GET tree and diff routes serve the workspace-root repo via the '-' token",
   await spawnDemo(t, cwd);
   writeFileSync(join(cwd, "a.txt"), "two\n");
 
-  const tree = await t.authed("/parent/runtime/sessions/default/workspaces/w2/repos/-/tree");
+  const tree = await t.authed("/instances/runtime/sessions/default/workspaces/w2/repos/-/tree");
   assert.equal(tree.status, 200);
   const treeBody = (await tree.json()) as { tree: { children: { name: string }[] } };
   assert.deepEqual(treeBody.tree.children.map((c) => c.name), ["a.txt"]);
 
-  const diff = await t.authed("/parent/runtime/sessions/default/workspaces/w2/repos/-/git/diff");
+  const diff = await t.authed("/instances/runtime/sessions/default/workspaces/w2/repos/-/git/diff");
   assert.equal(diff.status, 200);
   const diffBody = (await diff.json()) as { branch: string; diff: string };
   assert.equal(diffBody.branch, "main");
   assert.match(diffBody.diff, /\+two/);
 
-  assert.equal((await t.authed("/parent/runtime/sessions/default/workspaces/w2/repos/ghost/tree")).status, 404);
-  assert.equal((await t.authed("/parent/runtime/sessions/default/workspaces/w9/repos/-/tree")).status, 404);
+  assert.equal((await t.authed("/instances/runtime/sessions/default/workspaces/w2/repos/ghost/tree")).status, 404);
+  assert.equal((await t.authed("/instances/runtime/sessions/default/workspaces/w9/repos/-/tree")).status, 404);
   assert.equal(
-    (await t.authed("/parent/runtime/sessions/default/workspaces/w2/repos/-/git/diff?base=-rf")).status,
+    (await t.authed("/instances/runtime/sessions/default/workspaces/w2/repos/-/git/diff?base=-rf")).status,
     400,
   );
   await teardown(t);
@@ -411,7 +411,7 @@ test("POST .../agents/{pane}/ask returns the parsed answer", async () => {
     writeFileSync(join(cwd, ".herdr", "answers", `${m[1]}.json`), '{"files_changed":1}');
     return { type: "prompted" };
   });
-  const res = await t.authed("/parent/runtime/sessions/default/agents/w2%3Ap1/ask", {
+  const res = await t.authed("/instances/runtime/sessions/default/agents/w2%3Ap1/ask", {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ prompt: "what changed?", timeout_ms: 5000 }),
@@ -427,7 +427,7 @@ test("admin: token revocation takes effect immediately and persists via the call
     // second token so revocation of one leaves the other working
     t.config.client_tokens.push({ name: "second", token: "tok2" });
 
-    assert.equal((await t.authed("/parent")).status, 200, "primary token works before revocation");
+    assert.equal((await t.authed("/instances")).status, 200, "primary token works before revocation");
 
     const gone = await fetch(t.base + "/admin/tokens/t", {
       method: "DELETE",
@@ -437,8 +437,8 @@ test("admin: token revocation takes effect immediately and persists via the call
     assert.deepEqual(await gone.json(), { revoked: "t", remaining: 1 });
     assert.equal(t.persisted.length, 1, "revocation persists through the onTokensChanged callback");
 
-    assert.equal((await t.authed("/parent")).status, 401, "revoked token refused immediately");
-    const other = await fetch(t.base + "/parent", { headers: { authorization: "Bearer tok2" } });
+    assert.equal((await t.authed("/instances")).status, 401, "revoked token refused immediately");
+    const other = await fetch(t.base + "/instances", { headers: { authorization: "Bearer tok2" } });
     assert.equal(other.status, 200, "remaining token still works");
 
     const unknown = await fetch(t.base + "/admin/tokens/ghost", {
@@ -458,16 +458,16 @@ test("model routes: instance catalog with kind filter; pane switch sends the CLI
     t.fake.agents = [{ pane_id: "w1:p1", name: "claude", agent: "claude", agent_status: "idle" }];
     t.fake.handlers.set("pane.send_input", () => ({ type: "ok" }));
 
-    const all = await t.authed("/parent/runtime/models");
+    const all = await t.authed("/instances/runtime/models");
     assert.equal(all.status, 200);
     const catalog = (await all.json()).models as { kind: string; id: string; context_window?: number }[];
     assert.ok(new Set(catalog.map((m) => m.kind)).size > 1, "unfiltered catalog spans kinds");
 
-    const filtered = await t.authed("/parent/runtime/models?kind=claude");
+    const filtered = await t.authed("/instances/runtime/models?kind=claude");
     const claude = (await filtered.json()).models as { kind: string }[];
     assert.ok(claude.length > 0 && claude.every((m) => m.kind === "claude"));
 
-    const sw = await t.authed("/parent/runtime/sessions/default/agents/w1%3Ap1/model", {
+    const sw = await t.authed("/instances/runtime/sessions/default/agents/w1%3Ap1/model", {
       method: "POST",
       body: JSON.stringify({ model: "opus" }),
     });
@@ -482,7 +482,7 @@ test("model routes: instance catalog with kind filter; pane switch sends the CLI
     const sent = t.fake.received.find((r) => r.method === "pane.send_input");
     assert.deepEqual(sent?.params, { pane_id: "w1:p1", text: "/model opus", keys: ["Enter"] });
 
-    const bad = await t.authed("/parent/runtime/sessions/default/agents/w1%3Ap1/model", {
+    const bad = await t.authed("/instances/runtime/sessions/default/agents/w1%3Ap1/model", {
       method: "POST",
       body: JSON.stringify({ model: "gpt-99" }),
     });
@@ -498,7 +498,7 @@ test("slash route: POST .../slash/{command} types the command; args ride the bod
   try {
     t.fake.agents = [{ pane_id: "w1:p1", name: "claude", agent: "claude", agent_status: "idle" }];
     t.fake.handlers.set("pane.send_input", () => ({ type: "ok" }));
-    const res = await t.authed("/parent/runtime/sessions/default/agents/w1%3Ap1/slash/instructions", {
+    const res = await t.authed("/instances/runtime/sessions/default/agents/w1%3Ap1/slash/instructions", {
       method: "POST",
       body: JSON.stringify({ args: "keep answers short" }),
     });
@@ -520,7 +520,7 @@ test("agent stop route: DELETE .../agents/{pane} closes the agent's pane", async
   const t = await setup();
   try {
     t.fake.handlers.set("pane.close", () => ({ type: "ok" }));
-    const res = await t.authed("/parent/runtime/sessions/default/agents/w1%3Ap1", { method: "DELETE" });
+    const res = await t.authed("/instances/runtime/sessions/default/agents/w1%3Ap1", { method: "DELETE" });
     assert.equal(res.status, 200);
     const body = (await res.json()) as { stopped: boolean; agent: string };
     assert.equal(body.stopped, true);
@@ -535,7 +535,7 @@ test("workspace close route: DELETE .../workspaces/{w} reaps it", async () => {
   try {
     t.ops.index.set("default", "w1", { cwd: scratchRepo() });
     t.fake.handlers.set("workspace.close", () => ({ type: "ok" }));
-    const res = await t.authed("/parent/runtime/sessions/default/workspaces/w1", { method: "DELETE" });
+    const res = await t.authed("/instances/runtime/sessions/default/workspaces/w1", { method: "DELETE" });
     assert.equal(res.status, 200);
     assert.deepEqual(await res.json(), { workspace_id: "w1", closed: true });
     assert.equal(t.ops.index.get("default", "w1"), undefined);
@@ -549,7 +549,7 @@ test("pane screen route: GET serves the terminal text; version+wait_ms long-poll
   try {
     t.fake.handlers.set("pane.read", () => ({ type: "pane_read", read: { text: "❯ building…" } }));
 
-    const res = await t.authed("/parent/runtime/sessions/default/panes/w1%3Ap1/screen");
+    const res = await t.authed("/instances/runtime/sessions/default/panes/w1%3Ap1/screen");
     assert.equal(res.status, 200);
     const body = (await res.json()) as { pane_id: string; source: string; text: string; version: string };
     assert.equal(body.pane_id, "w1:p1");
@@ -557,16 +557,16 @@ test("pane screen route: GET serves the terminal text; version+wait_ms long-poll
     assert.equal(body.text, "❯ building…");
 
     const idle = await t.authed(
-      `/parent/runtime/sessions/default/panes/w1%3Ap1/screen?version=${body.version}&wait_ms=100`,
+      `/instances/runtime/sessions/default/panes/w1%3Ap1/screen?version=${body.version}&wait_ms=100`,
     );
     assert.equal(((await idle.json()) as { unchanged?: boolean }).unchanged, true);
 
-    const recent = await t.authed("/parent/runtime/sessions/default/panes/w1%3Ap1/screen?source=recent");
+    const recent = await t.authed("/instances/runtime/sessions/default/panes/w1%3Ap1/screen?source=recent");
     assert.equal(((await recent.json()) as { source: string }).source, "recent");
     const sent = t.fake.received.find((r) => r.method === "pane.read" && (r.params as { source: string }).source === "recent");
     assert.ok(sent, "recent source reached herdr");
 
-    const bad = await t.authed("/parent/runtime/sessions/default/panes/w1%3Ap1/screen?source=history");
+    const bad = await t.authed("/instances/runtime/sessions/default/panes/w1%3Ap1/screen?source=history");
     assert.equal(bad.status, 400);
   } finally {
     await teardown(t);
@@ -581,7 +581,7 @@ test("spec-bundle routes: drive creates and prompts; get/list/plan wire through"
     t.fake.agents = [{ pane_id: "w1:p1", name: "claude", agent: "claude", agent_status: "idle" }];
     t.fake.handlers.set("agent.prompt", () => ({ type: "prompted" }));
 
-    const drive = await t.authed("/parent/runtime/sessions/default/agents/w1%3Ap1/spec-bundles", {
+    const drive = await t.authed("/instances/runtime/sessions/default/agents/w1%3Ap1/spec-bundles", {
       method: "POST",
       body: JSON.stringify({ name: "checkout", prompt: "draft it" }),
     });
@@ -589,23 +589,23 @@ test("spec-bundle routes: drive creates and prompts; get/list/plan wire through"
     const made = (await drive.json()) as { bundle: string; dir: string; files: string[]; version: string };
     assert.deepEqual(made.files, ["overview.md"]);
 
-    const got = await t.authed(`/parent/runtime/sessions/default/workspaces/w1/spec-bundles/${made.bundle}`);
+    const got = await t.authed(`/instances/runtime/sessions/default/workspaces/w1/spec-bundles/${made.bundle}`);
     assert.equal(got.status, 200);
     const body = (await got.json()) as { version: string; files: Record<string, { content: string }> };
     assert.ok(body.files["overview.md"].content.includes("checkout"));
 
     const idle = await t.authed(
-      `/parent/runtime/sessions/default/workspaces/w1/spec-bundles/${made.bundle}?version=${body.version}&wait_ms=150`,
+      `/instances/runtime/sessions/default/workspaces/w1/spec-bundles/${made.bundle}?version=${body.version}&wait_ms=150`,
     );
     assert.equal(((await idle.json()) as { unchanged?: boolean }).unchanged, true);
 
-    const list = await t.authed("/parent/runtime/sessions/default/workspaces/w1/spec-bundles");
+    const list = await t.authed("/instances/runtime/sessions/default/workspaces/w1/spec-bundles");
     assert.deepEqual(((await list.json()) as { bundles: { bundle: string }[] }).bundles.map((b) => b.bundle), [
       made.bundle,
     ]);
 
     const plan = await t.authed(
-      `/parent/runtime/sessions/default/agents/w1%3Ap1/spec-bundles/${made.bundle}/plan`,
+      `/instances/runtime/sessions/default/agents/w1%3Ap1/spec-bundles/${made.bundle}/plan`,
       { method: "POST", body: JSON.stringify({ prompt: "backend first" }) },
     );
     assert.equal(plan.status, 200);
@@ -620,7 +620,7 @@ test("prompt route: POST .../agents/{pane}/prompt steers the agent fire-and-forg
   try {
     t.fake.agents = [{ pane_id: "w1:p1", name: "claude", agent: "claude", agent_status: "working" }];
     t.fake.handlers.set("agent.prompt", () => ({ type: "prompted" }));
-    const res = await t.authed("/parent/runtime/sessions/default/agents/w1%3Ap1/prompt", {
+    const res = await t.authed("/instances/runtime/sessions/default/agents/w1%3Ap1/prompt", {
       method: "POST",
       body: JSON.stringify({ text: "focus on the tests first" }),
     });
@@ -638,10 +638,10 @@ test("repo file route: reads content by path; traversal answers 400", async () =
   try {
     const cwd = scratchRepo();
     t.ops.index.set("default", "w1", { cwd });
-    const ok = await t.authed("/parent/runtime/sessions/default/workspaces/w1/repos/-/file?path=a.txt");
+    const ok = await t.authed("/instances/runtime/sessions/default/workspaces/w1/repos/-/file?path=a.txt");
     assert.equal(ok.status, 200);
     assert.equal(((await ok.json()) as { content: string }).content, "one\n");
-    const bad = await t.authed("/parent/runtime/sessions/default/workspaces/w1/repos/-/file?path=..%2Fescape");
+    const bad = await t.authed("/instances/runtime/sessions/default/workspaces/w1/repos/-/file?path=..%2Fescape");
     assert.equal(bad.status, 400);
   } finally {
     await teardown(t);
@@ -658,7 +658,7 @@ test("git routes: commit → log → checkout → push against a real repo with 
     t.ops.index.set("default", "w1", { cwd });
     writeFileSync(join(cwd, "vibe.txt"), "made by an agent\n");
 
-    const commit = await t.authed("/parent/runtime/sessions/default/workspaces/w1/repos/-/git/commit", {
+    const commit = await t.authed("/instances/runtime/sessions/default/workspaces/w1/repos/-/git/commit", {
       method: "POST",
       body: JSON.stringify({ message: "vibe: agent work" }),
     });
@@ -667,17 +667,17 @@ test("git routes: commit → log → checkout → push against a real repo with 
     assert.equal(made.committed, true);
     assert.equal(made.branch, "main");
 
-    const log = await t.authed("/parent/runtime/sessions/default/workspaces/w1/repos/-/git/log?limit=5");
+    const log = await t.authed("/instances/runtime/sessions/default/workspaces/w1/repos/-/git/log?limit=5");
     const commits = ((await log.json()) as { commits: { subject: string }[] }).commits;
     assert.equal(commits[0].subject, "vibe: agent work");
 
-    const co = await t.authed("/parent/runtime/sessions/default/workspaces/w1/repos/-/git/checkout", {
+    const co = await t.authed("/instances/runtime/sessions/default/workspaces/w1/repos/-/git/checkout", {
       method: "POST",
       body: JSON.stringify({ ref: "feat/vibe", create: true }),
     });
     assert.deepEqual(await co.json(), { workspace_id: "w1", repo: "-", branch: "feat/vibe" });
 
-    const push = await t.authed("/parent/runtime/sessions/default/workspaces/w1/repos/-/git/push", {
+    const push = await t.authed("/instances/runtime/sessions/default/workspaces/w1/repos/-/git/push", {
       method: "POST",
       body: JSON.stringify({}),
     });
@@ -685,7 +685,7 @@ test("git routes: commit → log → checkout → push against a real repo with 
     assert.equal(pushed.pushed, true);
     assert.equal(pushed.branch, "feat/vibe");
 
-    const bad = await t.authed("/parent/runtime/sessions/default/workspaces/w1/repos/-/git/commit", {
+    const bad = await t.authed("/instances/runtime/sessions/default/workspaces/w1/repos/-/git/commit", {
       method: "POST",
       body: JSON.stringify({ message: "   " }),
     });
@@ -702,7 +702,7 @@ test("context routes: raw upload → list → binary download → toggle → del
     t.ops.index.set("default", "w1", { cwd });
     const bytes = Buffer.from([0x25, 0x50, 0x44, 0x46, 0x00, 0xff, 0x01]); // %PDF + binary tail
 
-    const up = await t.authed("/parent/runtime/sessions/default/workspaces/w1/context/spec.pdf", {
+    const up = await t.authed("/instances/runtime/sessions/default/workspaces/w1/context/spec.pdf", {
       method: "PUT",
       headers: { "content-type": "application/pdf" },
       body: bytes,
@@ -710,37 +710,37 @@ test("context routes: raw upload → list → binary download → toggle → del
     assert.equal(up.status, 201);
     assert.equal(((await up.json()) as { active: boolean }).active, true);
 
-    const list = await t.authed("/parent/runtime/sessions/default/workspaces/w1/context");
+    const list = await t.authed("/instances/runtime/sessions/default/workspaces/w1/context");
     const attachments = ((await list.json()) as { attachments: { name: string; content_type: string }[] }).attachments;
     assert.deepEqual([attachments[0].name, attachments[0].content_type], ["spec.pdf", "application/pdf"]);
 
-    const dl = await t.authed("/parent/runtime/sessions/default/workspaces/w1/context/spec.pdf");
+    const dl = await t.authed("/instances/runtime/sessions/default/workspaces/w1/context/spec.pdf");
     assert.equal(dl.headers.get("content-type"), "application/pdf");
     assert.deepEqual(Buffer.from(await dl.arrayBuffer()), bytes, "binary round-trips exactly");
 
-    const toggled = await t.authed("/parent/runtime/sessions/default/workspaces/w1/context/spec.pdf", {
+    const toggled = await t.authed("/instances/runtime/sessions/default/workspaces/w1/context/spec.pdf", {
       method: "POST",
       body: JSON.stringify({ active: false }),
     });
     assert.equal(((await toggled.json()) as { active: boolean }).active, false);
 
-    const gone = await t.authed("/parent/runtime/sessions/default/workspaces/w1/context/spec.pdf", {
+    const gone = await t.authed("/instances/runtime/sessions/default/workspaces/w1/context/spec.pdf", {
       method: "DELETE",
     });
     assert.equal(gone.status, 200);
-    assert.equal((await t.authed("/parent/runtime/sessions/default/workspaces/w1/context/spec.pdf")).status, 404);
+    assert.equal((await t.authed("/instances/runtime/sessions/default/workspaces/w1/context/spec.pdf")).status, 404);
   } finally {
     await teardown(t);
   }
 });
 
-test("presence: POST /parent/auth records identity; /parent shows in_use_by; kick evicts everything", async () => {
+test("presence: POST /auth records identity; /instances shows in_use_by; kick evicts everything", async () => {
   const t = await setup();
   try {
     t.fake.agents = [{ pane_id: "w1:p1", name: "claude", agent: "claude", agent_status: "idle" }];
     t.fake.handlers.set("pane.send_input", () => ({ type: "ok" }));
 
-    const id = await t.authed("/parent/auth", {
+    const id = await t.authed("/auth", {
       method: "POST",
       body: JSON.stringify({ name: "Kathia", email: "kathia@example.com" }),
     });
@@ -748,10 +748,10 @@ test("presence: POST /parent/auth records identity; /parent shows in_use_by; kic
     const entry = (await id.json()) as { token: string; name: string; email: string };
     assert.deepEqual([entry.token, entry.name, entry.email], ["t", "Kathia", "kathia@example.com"]);
 
-    const roll = (await (await t.authed("/parent")).json()) as { in_use_by: { token: string; name: string }[] };
+    const roll = (await (await t.authed("/instances")).json()) as { in_use_by: { token: string; name: string }[] };
     assert.deepEqual(roll.in_use_by.map((u) => [u.token, u.name]), [["t", "Kathia"]]);
 
-    const badEmail = await t.authed("/parent/auth", { method: "POST", body: JSON.stringify({ email: "not-an-email" }) });
+    const badEmail = await t.authed("/auth", { method: "POST", body: JSON.stringify({ email: "not-an-email" }) });
     assert.equal(badEmail.status, 400);
 
     const kick = await fetch(t.base + "/admin/kick/t", {
@@ -772,14 +772,14 @@ test("presence: POST /parent/auth records identity; /parent shows in_use_by; kic
     assert.deepEqual(sent?.params, { pane_id: "w1:p1", text: "/logout", keys: ["Enter"] });
 
     // the kicked token is dead immediately, and presence is cleared
-    assert.equal((await t.authed("/parent")).status, 401);
+    assert.equal((await t.authed("/instances")).status, 401);
     assert.equal(t.presence.list().length, 0);
   } finally {
     await teardown(t);
   }
 });
 
-test("DELETE /parent/auth: a token evicts ITSELF — revoked, sockets closed, presence gone, audited", async () => {
+test("DELETE /auth: a token evicts ITSELF — revoked, sockets closed, presence gone, audited", async () => {
   const t = await setup();
   try {
     t.config.token_mint.enabled = true;
@@ -790,14 +790,14 @@ test("DELETE /parent/auth: a token evicts ITSELF — revoked, sockets closed, pr
         body: JSON.stringify({ name: "me" }),
       })
     ).json()) as { token: string };
-    await fetch(t.base + "/parent/auth", {
+    await fetch(t.base + "/auth", {
       method: "POST",
       headers: { authorization: `Bearer ${minted.token}`, "content-type": "application/json" },
       body: JSON.stringify({ name: "Me" }),
     });
     assert.ok(t.presence.list().some((e) => e.token === "me"));
 
-    const res = await fetch(t.base + "/parent/auth", {
+    const res = await fetch(t.base + "/auth", {
       method: "DELETE",
       headers: { authorization: `Bearer ${minted.token}` },
     });
@@ -811,9 +811,9 @@ test("DELETE /parent/auth: a token evicts ITSELF — revoked, sockets closed, pr
     assert.ok(t.persisted.length >= 2, "revocation persisted via onTokensChanged");
 
     // dead everywhere — and the OTHER token is untouched
-    const after = await fetch(t.base + "/parent", { headers: { authorization: `Bearer ${minted.token}` } });
+    const after = await fetch(t.base + "/instances", { headers: { authorization: `Bearer ${minted.token}` } });
     assert.equal(after.status, 401);
-    assert.equal((await t.authed("/parent")).status, 200);
+    assert.equal((await t.authed("/instances")).status, 200);
 
     const audit = (await (
       await fetch(t.base + "/admin/audit?limit=10", { headers: { "x-admin-token": "admin-tok" } })
@@ -846,7 +846,7 @@ test("token mint: 403 unless [token_mint] enables it; minted tokens work immedia
     assert.ok(out.token.length >= 40);
     assert.equal(t.persisted.length, 1, "minted tokens persist to config.toml");
 
-    const asGuest = await fetch(t.base + "/parent", { headers: { authorization: `Bearer ${out.token}` } });
+    const asGuest = await fetch(t.base + "/instances", { headers: { authorization: `Bearer ${out.token}` } });
     assert.equal(asGuest.status, 200, "the minted token authenticates immediately");
 
     // show-once: only the sha256 of the token is stored — the plaintext
@@ -865,7 +865,7 @@ test("token mint: 403 unless [token_mint] enables it; minted tokens work immedia
 test("env routes: store, list (redacted, with source), delete; value absent everywhere", async () => {
   const t = await setup();
   try {
-    const post = await t.authed("/parent/runtime/env", {
+    const post = await t.authed("/instances/runtime/env", {
       method: "POST",
       body: JSON.stringify({ name: "COPILOT_GITHUB_TOKEN", value: "super-sekret", kind: "copilot" }),
     });
@@ -873,15 +873,15 @@ test("env routes: store, list (redacted, with source), delete; value absent ever
     const stored = await post.json();
     assert.deepEqual(stored, { status: "stored", name: "COPILOT_GITHUB_TOKEN", scope: { kind: "copilot" } });
 
-    const list = await t.authed("/parent/runtime/env");
+    const list = await t.authed("/instances/runtime/env");
     const body = await list.text();
     assert.ok(!body.includes("super-sekret"), "value must never appear in responses");
     const vars = JSON.parse(body).vars as { name: string; source: string }[];
     assert.deepEqual(vars.map((v) => [v.name, v.source]), [["COPILOT_GITHUB_TOKEN", "manual"]]);
 
-    const del = await t.authed("/parent/runtime/env/COPILOT_GITHUB_TOKEN?kind=copilot", { method: "DELETE" });
+    const del = await t.authed("/instances/runtime/env/COPILOT_GITHUB_TOKEN?kind=copilot", { method: "DELETE" });
     assert.equal(del.status, 200);
-    const delAgain = await t.authed("/parent/runtime/env/COPILOT_GITHUB_TOKEN?kind=copilot", { method: "DELETE" });
+    const delAgain = await t.authed("/instances/runtime/env/COPILOT_GITHUB_TOKEN?kind=copilot", { method: "DELETE" });
     assert.equal(delAgain.status, 404);
   } finally {
     await teardown(t);
@@ -891,15 +891,15 @@ test("env routes: store, list (redacted, with source), delete; value absent ever
 test("env routes: bad name 400, unauthenticated 401, disabled 403", async () => {
   const t = await setup();
   try {
-    const bad = await t.authed("/parent/runtime/env", {
+    const bad = await t.authed("/instances/runtime/env", {
       method: "POST",
       body: JSON.stringify({ name: "not-valid", value: "v" }),
     });
     assert.equal(bad.status, 400);
-    const anon = await fetch(t.base + "/parent/runtime/env");
+    const anon = await fetch(t.base + "/instances/runtime/env");
     assert.equal(anon.status, 401);
     (t.ops as { env: EnvRegistry }).env = new EnvRegistry({ stateDir: tmpDir(), enabled: false });
-    const off = await t.authed("/parent/runtime/env");
+    const off = await t.authed("/instances/runtime/env");
     assert.equal(off.status, 403);
   } finally {
     await teardown(t);

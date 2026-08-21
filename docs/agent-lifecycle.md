@@ -2,14 +2,14 @@
 
 How a coding agent is born, directed, observed, and dies through the
 herdr-web-broker API. Every stage below is an HTTP call against
-`/parent/{instance}/sessions/{session}` (bearer auth; `runtime` is the local
+`/instances/{instance}/sessions/{session}` (bearer auth; `runtime` is the local
 machine) — the pane id returned at birth is the handle for everything after.
 
 ```
 spawn ──► ready ──► converse ◄──► steer ──► observe ──► (die)
   │          │          │            │          │
   POST       pane.read  prompt/ask   prompt     GET /agents
-  /agents    send_keys  spec-bundles Escape     WS /parent/ws
+  /agents    send_keys  spec-bundles Escape     WS /events
 ```
 
 ## 1. Birth — spawn
@@ -28,7 +28,7 @@ POST .../agents
 - Exactly one of `cwd` (mode A: a new working set) or `workspace_id`
   (mode B: grow the team — the broker splits a new pane **into** that
   workspace via herdr's `pane.split`, wire-verified).
-- Credentials stored in the env registry (`POST /parent/{i}/env`, scoped by
+- Credentials stored in the env registry (`POST /instances/{i}/env`, scoped by
   `kind`) reach the pane shell before the CLI starts: natively via
   `pane.split`'s env map on mode B, via a seconds-lived 0600 drop file on
   mode A.
@@ -125,7 +125,7 @@ each CLI's own — check the effect with `pane.read` or the event stream.
   commands (`/clear`, `/instructions`, `/help` …), optional single-line
   `{"args"}`.
 - `POST .../agents/{pane}/model` `{"model": "gpt-5"}` — model switch,
-  validated against `GET /parent/{i}/models` (builtin catalog +
+  validated against `GET /instances/{i}/models` (builtin catalog +
   `[[models.catalog]]` config overrides).
 
 Both return `"sent"` semantics — the TUI gives no machine ack, so
@@ -140,7 +140,7 @@ send `Escape` first.
   counts — plus `raw_status`, the unfolded truth. **`unknown` and `done`
   fold to `idle`**, so a dead-but-listed agent looks idle in `status`;
   `raw_status` is where you see it.
-- **`WS /parent/ws`** — unsolicited `agent_status` events the moment an
+- **`WS /events`** — unsolicited `agent_status` events the moment an
   agent changes state (`blocked` = waiting on a human, the signal this
   product exists for). Auth: `Authorization` header, `Sec-WebSocket-Protocol:
   bearer, <token>` (browser-friendly, preferred), or `?token=` (fallback —
@@ -193,6 +193,6 @@ Cleanup and remaining limitations:
 | Design docs loop | `POST .../agents/{pane}/spec-bundles` + long-poll GET |
 | Status | `GET .../agents?fresh=1` (`status` + `raw_status`) |
 | Watch the terminal | `GET .../panes/{pane}/screen?version=&wait_ms=` (long-poll) |
-| Live events | `WS /parent/ws` |
+| Live events | `WS /events` |
 | Stop one agent | `DELETE .../agents/{pane}` (its pane closes; the team survives) |
 | Reap a working set | `DELETE .../workspaces/{w}` (panes + agents die with it) |

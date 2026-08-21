@@ -11,7 +11,7 @@
 
 const BASE = process.env.BROKER_URL ?? "http://127.0.0.1:7591";
 const TOKEN = process.env.BROKER_TOKEN ?? "demo-token";
-const SESSION = `${BASE}/parent/runtime/sessions/default`;
+const SESSION = `${BASE}/instances/runtime/sessions/default`;
 
 let failures = 0;
 
@@ -44,7 +44,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // 2. spawn — exercises workspace.create + agent.start + the pane-busy retry
 let pane;
 {
-  const r = await call("POST", "/parent/runtime/sessions/default/agents", {
+  const r = await call("POST", "/instances/runtime/sessions/default/agents", {
     kind: "copilot",
     cwd: "/work",
     label: "drift probe",
@@ -61,7 +61,7 @@ let pane;
 
 // 3. agent.list shape via fresh=1 — id/title/status + raw_status
 {
-  const r = await call("GET", "/parent/runtime/sessions/default/agents?fresh=1");
+  const r = await call("GET", "/instances/runtime/sessions/default/agents?fresh=1");
   const agents = r.body?.agents ?? [];
   const mine = agents.find((a) => a.id === pane);
   check(
@@ -79,7 +79,7 @@ let version;
   let ok = false;
   const deadline = Date.now() + 60_000;
   while (Date.now() < deadline) {
-    const r = await call("GET", `/parent/runtime/sessions/default/panes/${encodeURIComponent(pane)}/screen`);
+    const r = await call("GET", `/instances/runtime/sessions/default/panes/${encodeURIComponent(pane)}/screen`);
     text = r.body?.text ?? "";
     version = r.body?.version;
     if (r.status === 200 && /copilot|trust|login/i.test(text)) {
@@ -95,7 +95,7 @@ let version;
 // 5. answer the trust dialog through pane.send_input, then long-poll for
 //    the changed frame — the pair proves write + change-detection
 {
-  const sent = await call("POST", "/parent/runtime/sessions/default/rpc", {
+  const sent = await call("POST", "/instances/runtime/sessions/default/rpc", {
     method: "pane.send_input",
     params: { pane_id: pane, text: "1", keys: ["Enter"] },
   });
@@ -106,7 +106,7 @@ let version;
   while (Date.now() < deadline) {
     const r = await call(
       "GET",
-      `/parent/runtime/sessions/default/panes/${encodeURIComponent(pane)}/screen?version=${version}&wait_ms=10000`,
+      `/instances/runtime/sessions/default/panes/${encodeURIComponent(pane)}/screen?version=${version}&wait_ms=10000`,
     );
     if (r.status === 200 && r.body?.unchanged !== true && r.body?.version !== version) {
       changed = true;
@@ -118,7 +118,7 @@ let version;
 
 // 6. status fold still reaches the registry (the WS event path's source)
 {
-  const r = await call("GET", "/parent/runtime");
+  const r = await call("GET", "/instances/runtime");
   check(
     "instance detail: online with a sessions rollup",
     r.status === 200 && r.body?.online === true && Array.isArray(r.body?.sessions),

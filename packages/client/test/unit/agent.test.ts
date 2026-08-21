@@ -24,10 +24,10 @@ describe("AgentHandle", () => {
     await agent.slash("clear");
     await agent.setModel("gpt-5");
     expect(calls.map((c) => [c.url, String(c.init.body)])).toEqual([
-      ["/parent/runtime/sessions/default/agents/w1%3Ap1/prompt", '{"text":"focus on tests"}'],
-      ["/parent/runtime/sessions/default/agents/w1%3Ap1/slash/instructions", '{"args":"keep it short"}'],
-      ["/parent/runtime/sessions/default/agents/w1%3Ap1/slash/clear", "{}"],
-      ["/parent/runtime/sessions/default/agents/w1%3Ap1/model", '{"model":"gpt-5"}'],
+      ["/instances/runtime/sessions/default/agents/w1%3Ap1/prompt", '{"text":"focus on tests"}'],
+      ["/instances/runtime/sessions/default/agents/w1%3Ap1/slash/instructions", '{"args":"keep it short"}'],
+      ["/instances/runtime/sessions/default/agents/w1%3Ap1/slash/clear", "{}"],
+      ["/instances/runtime/sessions/default/agents/w1%3Ap1/model", '{"model":"gpt-5"}'],
     ]);
   });
 
@@ -68,7 +68,7 @@ describe("AgentHandle", () => {
     const agent = agentOf(fetchFn);
     const s = await agent.screen();
     expect(s).toMatchObject({ text: "❯ _", version: "abcd" });
-    expect(calls[0].url).toBe("/parent/runtime/sessions/default/panes/w1%3Ap1/screen");
+    expect(calls[0].url).toBe("/instances/runtime/sessions/default/panes/w1%3Ap1/screen");
 
     await agent.screen({ source: "recent", version: "abcd", waitMs: 25_000 });
     expect(calls[1].url).toContain("/panes/w1%3Ap1/screen?");
@@ -108,7 +108,7 @@ describe("AgentHandle", () => {
     const { calls, fetchFn } = fake([{ status: 200, body: '{"stopped":true,"pane_id":"w1:p1","agent":"copilot","kind":"copilot"}' }]);
     const out = await agentOf(fetchFn).stop();
     expect(out.stopped).toBe(true);
-    expect(calls[0].url).toBe("/parent/runtime/sessions/default/agents/w1%3Ap1");
+    expect(calls[0].url).toBe("/instances/runtime/sessions/default/agents/w1%3Ap1");
     expect(calls[0].init.method).toBe("DELETE");
   });
 
@@ -136,7 +136,7 @@ describe("AgentHandle", () => {
     expect(JSON.parse(String(calls[0].init.body))).toEqual({ name: "checkout flow", prompt: "draft it", file: "api.md" });
     expect(JSON.parse(String(calls[1].init.body))).toEqual({ bundle: "2026-08-20-checkout-flow", prompt: "answer: OAuth" });
     expect(calls[2].url).toBe(
-      "/parent/runtime/sessions/default/agents/w1%3Ap1/spec-bundles/2026-08-20-checkout-flow/plan",
+      "/instances/runtime/sessions/default/agents/w1%3Ap1/spec-bundles/2026-08-20-checkout-flow/plan",
     );
   });
 });

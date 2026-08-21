@@ -39,15 +39,15 @@ the local machine; anything else is an enrolled child.
 
 | Route | Meaning |
 | --- | --- |
-| `GET /parent` | all instances with live status rollup |
-| `GET /parent/{instance}` | one instance: online, versions, sessions |
-| `GET /parent/{instance}/sessions` | herdr sessions on that machine |
-| `GET /parent/{instance}/sessions/{s}/agents` | agents + status (`?fresh=1` re-queries) |
-| `POST /parent/{instance}/sessions/{s}/rpc` | any herdr socket method: `{"method", "params"}` |
-| `POST /parent/{instance}/sessions/{s}/agents` | spawn a team agent: `{kind, cwd|workspace_id, label?, name?, args?}` — `workspace_id` splits a new pane INTO that workspace (native pane.split, env injected by herdr); `cwd` starts a fresh working set |
+| `GET /instances` | all instances with live status rollup |
+| `GET /instances/{instance}` | one instance: online, versions, sessions |
+| `GET /instances/{instance}/sessions` | herdr sessions on that machine |
+| `GET /instances/{instance}/sessions/{s}/agents` | agents + status (`?fresh=1` re-queries) |
+| `POST /instances/{instance}/sessions/{s}/rpc` | any herdr socket method: `{"method", "params"}` |
+| `POST /instances/{instance}/sessions/{s}/agents` | spawn a team agent: `{kind, cwd|workspace_id, label?, name?, args?}` — `workspace_id` splits a new pane INTO that workspace (native pane.split, env injected by herdr); `cwd` starts a fresh working set |
 | `DELETE .../workspaces/{w}` | close a workspace and every pane in it — the reaper for abandoned working sets (agents die with their panes) |
 | `DELETE .../agents/{pane}` | stop one agent: closes its pane; the workspace and the rest of the team survive |
-| `GET /parent/{instance}/sessions/{s}/workspaces` | working sets: team roster + discovered repos per workspace |
+| `GET /instances/{instance}/sessions/{s}/workspaces` | working sets: team roster + discovered repos per workspace |
 | `GET .../workspaces/{w}/repos/{r}/tree` | repo file tree (`{r}` = repo path; `-` = workspace root) |
 | `GET .../workspaces/{w}/repos/{r}/git/diff?base=REF` | branch, status, unified diff |
 | `GET .../workspaces/{w}/repos/{r}/file?path=` | raw file contents (768KB cap, containment-guarded, `.git` refused) |
@@ -59,7 +59,7 @@ the local machine; anything else is an enrolled child.
 | `GET .../workspaces/{w}/context[/{name}]` | list attachments / download one |
 | `POST .../workspaces/{w}/context/{name}` | toggle `{active}` — drop a file from prompts without deleting it |
 | `DELETE .../workspaces/{w}/context/{name}` | remove an attachment |
-| `DELETE /parent/auth` | self-eviction: the presented token revokes itself — sockets closed, presence cleared, dead everywhere |
+| `DELETE /auth` | self-eviction: the presented token revokes itself — sockets closed, presence cleared, dead everywhere |
 | `POST .../agents/{pane}/ask` | structured JSON answer from a TUI agent (file-drop) |
 | `POST .../agents/{pane}/prompt` | fire-and-forget steering: `{text}` to the same agent — spawn once, keep prompting the pane |
 | `POST .../agents/{pane}/model` | switch a running agent's model: `{model}` typed as the CLI's own `/model` command |
@@ -69,15 +69,15 @@ the local machine; anything else is an enrolled child.
 | `POST .../agents/{pane}/spec-bundles/{b}/plan` | ask the agent to distill the bundle into `plan.md` |
 | `GET .../workspaces/{w}/spec-bundles` | list bundles + member files |
 | `GET .../workspaces/{w}/spec-bundles/{b}?version=&wait_ms=` | pull all member files with a combined version; long-poll returns the moment the agent saves |
-| `GET /parent/{instance}/models?kind=` | model catalog per CLI kind with attributes (context window etc) — builtin defaults + `[[models.catalog]]` config overrides |
-| `POST /parent/{instance}/env` | store an env var for agent spawns: `{name, value, kind?, session?}` — write-only |
-| `GET /parent/{instance}/env` | stored names + scopes + source (`manual`/`hook`) — never values |
-| `DELETE /parent/{instance}/env/{name}` | remove an entry (`?kind=&session=` select the scope) |
-| `POST /parent/auth` | opt-in identity: `{name?, email?}` — shows in `/parent`'s `in_use_by` so others see the instance is occupied (10min TTL, refreshed by activity) |
+| `GET /instances/{instance}/models?kind=` | model catalog per CLI kind with attributes (context window etc) — builtin defaults + `[[models.catalog]]` config overrides |
+| `POST /instances/{instance}/env` | store an env var for agent spawns: `{name, value, kind?, session?}` — write-only |
+| `GET /instances/{instance}/env` | stored names + scopes + source (`manual`/`hook`) — never values |
+| `DELETE /instances/{instance}/env/{name}` | remove an entry (`?kind=&session=` select the scope) |
+| `POST /auth` | opt-in identity: `{name?, email?}` — shows in `/instances`'s `in_use_by` so others see the instance is occupied (10min TTL, refreshed by activity) |
 | `POST /admin/tokens` | mint a bearer token by name — dev-only, off unless `[token_mint] enabled = true`; minted tokens persist and revoke like any other |
 | `POST /admin/kick/{token}` | full eviction: revoke the token, terminate their WS sockets, `/logout` matching agent panes (`{kinds?, logout_agents?}`), clear presence |
 | `DELETE /admin/tokens/{name}` | revoke a client token: immediate for new requests/WS upgrades, persisted to config.toml (admin-gated) |
-| `WS /parent/ws` | duplex rpc + unsolicited status events |
+| `WS /events` | duplex rpc + unsolicited status events |
 
 How these fit together across an agent's life — spawn, first-run dialogs,
 conversation, mid-run steering, observation, death — is walked through in

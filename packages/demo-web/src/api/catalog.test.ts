@@ -63,7 +63,7 @@ test("health needs no auth; admin routes need admin auth", () => {
 
 test("instance detail encodes the context instance", () => {
   const req = spec("instance").build({}, { ...ctx, instance: "my box" });
-  expect(req.path).toBe("/parent/my%20box");
+  expect(req.path).toBe("/instances/my%20box");
 });
 
 test("agents: fresh toggle becomes ?fresh=1, absent otherwise", () => {
@@ -77,7 +77,7 @@ test("spawn: cwd mode builds the body; args parse as a JSON array", () => {
     ctx,
   );
   expect(req.method).toBe("POST");
-  expect(req.path).toBe("/parent/runtime/sessions/default/agents");
+  expect(req.path).toBe("/instances/runtime/sessions/default/agents");
   expect(req.body).toEqual({ kind: "copilot", cwd: "/work", label: "demo", args: ["--model", "gpt-5"] });
 });
 
@@ -93,28 +93,28 @@ test("spawn: missing kind or missing target throws", () => {
 
 test("tree: the workspace-root repo '-' and slashed repo paths are both encoded path segments", () => {
   expect(spec("tree").build({ workspace_id: "w1", repo: "-" }, ctx).path).toBe(
-    "/parent/runtime/sessions/default/workspaces/w1/repos/-/tree",
+    "/instances/runtime/sessions/default/workspaces/w1/repos/-/tree",
   );
   expect(spec("tree").build({ workspace_id: "w1", repo: "pkg/app" }, ctx).path).toContain("/repos/pkg%2Fapp/tree");
 });
 
 test("diff: base ref rides the query string only when given", () => {
   const req = spec("diff").build({ workspace_id: "w1", repo: "-", base: "origin/main" }, ctx);
-  expect(req.path).toBe("/parent/runtime/sessions/default/workspaces/w1/repos/-/git/diff");
+  expect(req.path).toBe("/instances/runtime/sessions/default/workspaces/w1/repos/-/git/diff");
   expect(req.query).toEqual({ base: "origin/main" });
   expect(spec("diff").build({ workspace_id: "w1", repo: "-" }, ctx).query).toBeUndefined();
 });
 
 test("repo-file: path rides the query, repo and workspace are path segments", () => {
   const req = spec("repo-file").build({ workspace_id: "w1", repo: "pkg/app", path: "src/index.ts" }, ctx);
-  expect(req.path).toBe("/parent/runtime/sessions/default/workspaces/w1/repos/pkg%2Fapp/file");
+  expect(req.path).toBe("/instances/runtime/sessions/default/workspaces/w1/repos/pkg%2Fapp/file");
   expect(req.query).toEqual({ path: "src/index.ts" });
   expect(() => spec("repo-file").build({ workspace_id: "w1", repo: "-" }, ctx)).toThrow(/path/);
 });
 
 test("ask: pane id is encoded and prompt is required", () => {
   const req = spec("ask").build({ pane_id: "w1:p1", prompt: "list files", timeout_ms: "60000" }, ctx);
-  expect(req.path).toBe("/parent/runtime/sessions/default/agents/w1%3Ap1/ask");
+  expect(req.path).toBe("/instances/runtime/sessions/default/agents/w1%3Ap1/ask");
   expect(req.body).toEqual({ prompt: "list files", timeout_ms: 60000 });
   expect(() => spec("ask").build({ pane_id: "w1:p1" }, ctx)).toThrow(/prompt/);
 });
@@ -122,7 +122,7 @@ test("ask: pane id is encoded and prompt is required", () => {
 test("prompt: fire-and-forget steering — pane in the path, text in the body", () => {
   const req = spec("prompt").build({ pane_id: "w1:p1", text: "focus on tests" }, ctx);
   expect(req.method).toBe("POST");
-  expect(req.path).toBe("/parent/runtime/sessions/default/agents/w1%3Ap1/prompt");
+  expect(req.path).toBe("/instances/runtime/sessions/default/agents/w1%3Ap1/prompt");
   expect(req.body).toEqual({ text: "focus on tests" });
   expect(() => spec("prompt").build({ pane_id: "w1:p1" }, ctx)).toThrow(/text/);
 });
@@ -130,7 +130,7 @@ test("prompt: fire-and-forget steering — pane in the path, text in the body", 
 test("slash: command joins the path, args ride the body only when set", () => {
   const req = spec("slash").build({ pane_id: "w1:p1", command: "instructions", args: "keep it short" }, ctx);
   expect(req.method).toBe("POST");
-  expect(req.path).toBe("/parent/runtime/sessions/default/agents/w1%3Ap1/slash/instructions");
+  expect(req.path).toBe("/instances/runtime/sessions/default/agents/w1%3Ap1/slash/instructions");
   expect(req.body).toEqual({ args: "keep it short" });
   expect(spec("slash").build({ pane_id: "w1:p1", command: "clear" }, ctx).body).toEqual({});
   expect(() => spec("slash").build({ pane_id: "w1:p1" }, ctx)).toThrow(/command/);
@@ -141,22 +141,22 @@ test("spec bundle specs: drive body, plan path, get long-poll query", () => {
     { pane_id: "w1:p1", name: "checkout", prompt: "draft it", file: "api.md" },
     ctx,
   );
-  expect(drive.path).toBe("/parent/runtime/sessions/default/agents/w1%3Ap1/spec-bundles");
+  expect(drive.path).toBe("/instances/runtime/sessions/default/agents/w1%3Ap1/spec-bundles");
   expect(drive.body).toEqual({ name: "checkout", prompt: "draft it", file: "api.md" });
 
   const plan = spec("spec-plan").build({ pane_id: "w1:p1", bundle: "2026-08-20-checkout" }, ctx);
-  expect(plan.path).toBe("/parent/runtime/sessions/default/agents/w1%3Ap1/spec-bundles/2026-08-20-checkout/plan");
+  expect(plan.path).toBe("/instances/runtime/sessions/default/agents/w1%3Ap1/spec-bundles/2026-08-20-checkout/plan");
 
   const get = spec("spec-get").build(
     { workspace_id: "w1", bundle: "2026-08-20-checkout", version: "abc", wait_ms: "25000" },
     ctx,
   );
-  expect(get.path).toBe("/parent/runtime/sessions/default/workspaces/w1/spec-bundles/2026-08-20-checkout");
+  expect(get.path).toBe("/instances/runtime/sessions/default/workspaces/w1/spec-bundles/2026-08-20-checkout");
   expect(get.query).toEqual({ version: "abc", wait_ms: "25000" });
   expect(spec("spec-get").build({ workspace_id: "w1", bundle: "b" }, ctx).query).toBeUndefined();
 
   expect(spec("spec-list").build({ workspace_id: "w1" }, ctx).path).toBe(
-    "/parent/runtime/sessions/default/workspaces/w1/spec-bundles",
+    "/instances/runtime/sessions/default/workspaces/w1/spec-bundles",
   );
 });
 
@@ -169,13 +169,13 @@ test("rpc: params must be valid JSON", () => {
 test("env-delete: scope selectors become query params only when set", () => {
   const req = spec("env-delete").build({ name: "GH_TOKEN", kind: "copilot" }, ctx);
   expect(req.method).toBe("DELETE");
-  expect(req.path).toBe("/parent/runtime/env/GH_TOKEN");
+  expect(req.path).toBe("/instances/runtime/env/GH_TOKEN");
   expect(req.query).toEqual({ kind: "copilot" });
   expect(spec("env-delete").build({ name: "GH_TOKEN" }, ctx).query).toBeUndefined();
 });
 
 test("models-list: kind filter rides the query only when set", () => {
-  expect(spec("models-list").build({}, ctx).path).toBe("/parent/runtime/models");
+  expect(spec("models-list").build({}, ctx).path).toBe("/instances/runtime/models");
   expect(spec("models-list").build({}, ctx).query).toBeUndefined();
   expect(spec("models-list").build({ kind: "claude" }, ctx).query).toEqual({ kind: "claude" });
 });
@@ -183,7 +183,7 @@ test("models-list: kind filter rides the query only when set", () => {
 test("agent-model: pane is encoded into the path and model is required", () => {
   const req = spec("agent-model").build({ pane_id: "w1:p1", model: "opus" }, ctx);
   expect(req.method).toBe("POST");
-  expect(req.path).toBe("/parent/runtime/sessions/default/agents/w1%3Ap1/model");
+  expect(req.path).toBe("/instances/runtime/sessions/default/agents/w1%3Ap1/model");
   expect(req.body).toEqual({ model: "opus" });
   expect(() => spec("agent-model").build({ pane_id: "w1:p1" }, ctx)).toThrow(/model/);
 });

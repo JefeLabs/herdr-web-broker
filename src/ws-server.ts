@@ -32,7 +32,7 @@ export interface WsDeps {
 }
 
 export interface UpgradeHandle {
-  /** Terminates every currently-connected /parent/enroll and /parent/ws
+  /** Terminates every currently-connected /enroll and /events
    * client. http.Server's own closeAllConnections() does not reach these —
    * a socket handed off via the 'upgrade' event is no longer tracked as an
    * HTTP connection, only as a ws WebSocketServer client. */
@@ -71,7 +71,7 @@ export function attachUpgradeHandling(server: Server, deps: WsDeps): UpgradeHand
   server.on("upgrade", (req: IncomingMessage, socket: Duplex, head: Buffer) => {
     const reqUrl = new URL(req.url ?? "/", "http://placeholder");
     const path = reqUrl.pathname;
-    if (path === "/parent/enroll") {
+    if (path === "/enroll") {
       const name = String(req.headers["x-herdr-broker-name"] ?? "");
       const secret = String(req.headers["x-herdr-broker-secret"] ?? "");
       const child = deps.children.get(name);
@@ -81,7 +81,7 @@ export function attachUpgradeHandling(server: Server, deps: WsDeps): UpgradeHand
         return;
       }
       enrollWss.handleUpgrade(req, socket, head, (ws) => acceptChild(deps, name, ws));
-    } else if (path === "/parent/ws") {
+    } else if (path === "/events") {
       // Same failed-auth limiter as HTTP: an address hammering the upgrade
       // path gets 429 before any token comparison.
       const remoteIp = req.socket.remoteAddress ?? "unknown";

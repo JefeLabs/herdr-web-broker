@@ -27,7 +27,7 @@ export interface HttpDeps {
   /** invoked after admin token revocation mutates config.client_tokens —
    * the daemon persists the new set to config.toml */
   onTokensChanged?: () => void;
-  /** who is using the instance (opt-in identity via POST /parent/auth) */
+  /** who is using the instance (opt-in identity via POST /auth) */
   presence: Presence;
   /** terminates live WS sockets authed with the token; returns how many */
   onKickSockets?: (tokenName: string) => number;
@@ -185,19 +185,10 @@ export function createHttpHandler(deps: HttpDeps) {
     }
     limiter.success(remoteIp);
     deps.presence.touch(tokenName);
-    if (parts[0] !== "parent") {
-      throw new BrokerError("unknown_instance", `no route ${url.pathname}`);
-    }
 
-    // GET /parent
-    if (parts.length === 1 && req.method === "GET") {
-      json(res, 200, { instances: deps.registry.rollup(), in_use_by: deps.presence.list() });
-      return;
-    }
-
-    // POST /parent/auth — opt-in identity: who is using this instance.
-    // ("auth" is therefore a reserved instance name.)
-    if (parts.length === 2 && parts[1] === "auth" && req.method === "POST") {
+    // POST /auth — opt-in identity: who is using this instance. Top-level
+    // by design: it is about the presented TOKEN, not about any instance.
+    if (parts.length === 1 && parts[0] === "auth" && req.method === "POST") {
       const body = await readBody(req);
       const name = typeof body.name === "string" ? body.name.trim().slice(0, 64) : undefined;
       const email = typeof body.email === "string" ? body.email.trim().slice(0, 128) : undefined;
@@ -208,11 +199,11 @@ export function createHttpHandler(deps: HttpDeps) {
       return;
     }
 
-    // DELETE /parent/auth — self-eviction: the presented token kicks
+    // DELETE /auth — self-eviction: the presented token kicks
     // ITSELF (revoked + persisted, WS sockets closed, presence cleared).
     // Safe without admin — you can only evict the token you hold. Agent
     // panes are untouched; that stays the admin kick's hammer.
-    if (parts.length === 2 && parts[1] === "auth" && req.method === "DELETE") {
+    if (parts.length === 1 && parts[0] === "auth" && req.method === "DELETE") {
       const remaining = deps.config.client_tokens.filter((t) => t.name !== tokenName);
       const tokenRevoked = remaining.length !== deps.config.client_tokens.length;
       if (tokenRevoked) {
@@ -230,11 +221,21 @@ export function createHttpHandler(deps: HttpDeps) {
       return;
     }
 
+    if (parts[0] !== "instances") {
+      throw new BrokerError("unknown_instance", `no route ${url.pathname}`);
+    }
+
+    // GET /instances
+    if (parts.length === 1 && req.method === "GET") {
+      json(res, 200, { instances: deps.registry.rollup(), in_use_by: deps.presence.list() });
+      return;
+    }
+
     const instance = decodeURIComponent(parts[1] ?? "");
     const entry = deps.registry.get(instance);
     if (!entry) throw new BrokerError("unknown_instance", `no instance '${instance}'`);
 
-    // GET /parent/{i}
+    // GET /instances/{i}
     if (parts.length === 2 && req.method === "GET") {
       json(res, 200, {
         instance,
@@ -248,7 +249,7 @@ export function createHttpHandler(deps: HttpDeps) {
       return;
     }
 
-    // POST/GET /parent/{i}/env, DELETE /parent/{i}/env/{name} — env registry
+    // POST/GET /instances/{i}/env, DELETE /instances/{i}/env/{name} — env registry
     // (env spec §3). Instance-scoped: any live session carries the transport.
     if (parts[2] === "env") {
       const transport = Object.keys(entry.sessions)[0];
@@ -288,7 +289,7 @@ export function createHttpHandler(deps: HttpDeps) {
       }
     }
 
-    // GET /parent/{i}/models[?kind=] — model catalog (builtin + config),
+    // GET /instances/{i}/models[?kind=] — model catalog (builtin + config),
     // instance-scoped like /env: any live session carries the transport.
     if (parts.length === 3 && parts[2] === "models" && req.method === "GET") {
       const transport = Object.keys(entry.sessions)[0];
@@ -299,7 +300,7 @@ export function createHttpHandler(deps: HttpDeps) {
       return;
     }
 
-    // GET /parent/{i}/sessions
+    // GET /instances/{i}/sessions
     if (parts.length === 3 && parts[2] === "sessions" && req.method === "GET") {
       const sessions = Object.entries(entry.sessions).map(([name, sess]) => {
         const counts = { working: 0, blocked: 0, idle: 0 };
@@ -315,7 +316,7 @@ export function createHttpHandler(deps: HttpDeps) {
       throw new BrokerError("unknown_session", `'${instance}' has no session '${session}'`);
     }
 
-    // GET /parent/{i}/sessions/{s}/agents
+    // GET /instances/{i}/sessions/{s}/agents
     if (parts[4] === "agents" && req.method === "GET") {
       let agents = entry.sessions[session].agents;
       if (url.searchParams.get("fresh") === "1") {
@@ -326,7 +327,7 @@ export function createHttpHandler(deps: HttpDeps) {
       return;
     }
 
-    // POST /parent/{i}/sessions/{s}/agents — spawn a team agent (spec §2.1)
+    // POST /instances/{i}/sessions/{s}/agents — spawn a team agent (spec §2.1)
     if (parts.length === 5 && parts[4] === "agents" && req.method === "POST") {
       const body = await readBody(req);
       // Clamp before it reaches setTimeout anywhere downstream — an
@@ -346,7 +347,7 @@ export function createHttpHandler(deps: HttpDeps) {
       return;
     }
 
-    // GET /parent/{i}/sessions/{s}/workspaces — working sets (spec §2.2)
+    // GET /instances/{i}/sessions/{s}/workspaces — working sets (spec §2.2)
     if (parts.length === 5 && parts[4] === "workspaces" && req.method === "GET") {
       json(res, 200, await callInstance(instance, session, "broker.workspace.list", {}));
       return;
@@ -551,7 +552,7 @@ export function createHttpHandler(deps: HttpDeps) {
       return;
     }
 
-    // POST /parent/{i}/sessions/{s}/rpc
+    // POST /instances/{i}/sessions/{s}/rpc
     if (parts[4] === "rpc" && req.method === "POST") {
       const body = await readBody(req);
       const method = body.method;

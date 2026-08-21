@@ -20,13 +20,13 @@ describe("buildOpenApi", () => {
   });
 
   test("agents path carries GET and POST (list + spawn)", () => {
-    const p = paths["/parent/{instance}/sessions/{session}/agents"];
+    const p = paths["/instances/{instance}/sessions/{session}/agents"];
     expect(p.get.operationId).toBe("agents");
     expect(p.post.operationId).toBe("spawn");
   });
 
   test("path placeholders become required path parameters", () => {
-    const params = paths["/parent/{instance}/sessions/{session}/agents"].get.parameters ?? [];
+    const params = paths["/instances/{instance}/sessions/{session}/agents"].get.parameters ?? [];
     const byName = Object.fromEntries(params.map((p) => [p.name, p]));
     expect(byName.instance.in).toBe("path");
     expect(byName.instance.required).toBe(true);
@@ -34,12 +34,12 @@ describe("buildOpenApi", () => {
   });
 
   test("non-path GET fields become query parameters", () => {
-    const params = paths["/parent/{instance}/sessions/{session}/agents"].get.parameters ?? [];
+    const params = paths["/instances/{instance}/sessions/{session}/agents"].get.parameters ?? [];
     expect(params.some((p) => p.name === "fresh" && p.in === "query")).toBe(true);
   });
 
   test("POST fields become requestBody properties; UI-only fields are excluded", () => {
-    const props = paths["/parent/{instance}/sessions/{session}/agents"].post.requestBody?.content[
+    const props = paths["/instances/{instance}/sessions/{session}/agents"].post.requestBody?.content[
       "application/json"
     ].schema.properties;
     expect(props).toBeDefined();
@@ -52,11 +52,11 @@ describe("buildOpenApi", () => {
   test("auth maps to security: none is open, admin uses adminToken", () => {
     expect(paths["/health"].get.security).toEqual([]);
     expect(paths["/admin/status"].get.security).toEqual([{ adminToken: [] }]);
-    expect(paths["/parent"].get.security).toEqual([{ bearerAuth: [] }]);
+    expect(paths["/instances"].get.security).toEqual([{ bearerAuth: [] }]);
   });
 
   test("env delete: name is a path param, scopes are query params", () => {
-    const params = paths["/parent/{instance}/env/{name}"].delete.parameters ?? [];
+    const params = paths["/instances/{instance}/env/{name}"].delete.parameters ?? [];
     const byName = Object.fromEntries(params.map((p) => [p.name, p.in]));
     expect(byName.name).toBe("path");
     expect(byName.kind).toBe("query");
@@ -84,7 +84,7 @@ describe("buildOpenApi", () => {
   });
 
   test("endpoints with declared response schemas surface them for codegen", () => {
-    const spawn = paths["/parent/{instance}/sessions/{session}/agents"].post as Op & {
+    const spawn = paths["/instances/{instance}/sessions/{session}/agents"].post as Op & {
       responses: Record<string, { content?: { "application/json": { schema: { properties: Record<string, { type?: string }> } } } }>;
     };
     const schema = spawn.responses["201"].content?.["application/json"].schema;

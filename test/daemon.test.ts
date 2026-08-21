@@ -27,7 +27,7 @@ test("daemon boots, serves health and authed REST, and closes cleanly", async ()
   const health = await (await fetch(`${handle.base}/health`)).json();
   assert.equal(health.ok, true);
   const roll = await (
-    await fetch(`${handle.base}/parent`, { headers: { authorization: "Bearer tok" } })
+    await fetch(`${handle.base}/instances`, { headers: { authorization: "Bearer tok" } })
   ).json();
   assert.equal(roll.instances[0].instance, "runtime");
   await handle.close();
@@ -51,7 +51,7 @@ test("boot migrates plaintext config tokens to hashes; the original bearer still
   });
   try {
     // the plaintext token authenticates exactly as before…
-    const roll = await fetch(`${handle!.base}/parent`, { headers: { authorization: "Bearer plain-secret" } });
+    const roll = await fetch(`${handle!.base}/instances`, { headers: { authorization: "Bearer plain-secret" } });
     assert.equal(roll.status, 200);
     // …but at rest the config now holds only the hash
     const disk = readFileSync(join(configDir, "config.toml"), "utf8");

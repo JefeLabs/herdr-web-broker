@@ -39,7 +39,7 @@ export interface EndpointSpec {
 }
 
 const enc = encodeURIComponent;
-const sess = (ctx: Ctx) => `/parent/${enc(ctx.instance)}/sessions/${enc(ctx.session)}`;
+const sess = (ctx: Ctx) => `/instances/${enc(ctx.instance)}/sessions/${enc(ctx.session)}`;
 
 function need(values: Record<string, string>, key: string): string {
   const v = values[key]?.trim();
@@ -91,10 +91,10 @@ export const CATALOG: EndpointSpec[] = [
     title: "List instances",
     summary: "Every enrolled instance with its live status rollup. 'runtime' is this machine; anything else is a paired child.",
     method: "GET",
-    pathTemplate: "/parent",
+    pathTemplate: "/instances",
     auth: "bearer",
     fields: [],
-    build: () => ({ method: "GET", path: "/parent", auth: "bearer" }),
+    build: () => ({ method: "GET", path: "/instances", auth: "bearer" }),
   },
   {
     id: "instance",
@@ -102,19 +102,19 @@ export const CATALOG: EndpointSpec[] = [
     title: "Instance detail",
     summary: "One instance: online flag, platform, herdr version, agent counts, session names.",
     method: "GET",
-    pathTemplate: "/parent/{instance}",
+    pathTemplate: "/instances/{instance}",
     auth: "bearer",
     fields: [],
-    build: (_v, ctx) => ({ method: "GET", path: `/parent/${enc(ctx.instance)}`, auth: "bearer" }),
+    build: (_v, ctx) => ({ method: "GET", path: `/instances/${enc(ctx.instance)}`, auth: "bearer" }),
   },
   {
     id: "auth-identify",
     group: "Instances",
     title: "Identify (who's using this)",
-    summary: "Opt-in identity for the presented token — name/email show up in /parent's in_use_by so others can see the instance is occupied.",
-    docs: "Presence is in-memory and expires after ~10 minutes of silence; every authed request refreshes it. 'auth' is a reserved instance name.",
+    summary: "Opt-in identity for the presented token — name/email show up in /instances's in_use_by so others can see the instance is occupied.",
+    docs: "Presence is in-memory and expires after ~10 minutes of silence; every authed request refreshes it. Top-level by design — it is about the presented token, not any instance.",
     method: "POST",
-    pathTemplate: "/parent/auth",
+    pathTemplate: "/auth",
     auth: "bearer",
     fields: [
       { key: "name", label: "your name", kind: "text", placeholder: "Kathia" },
@@ -135,7 +135,7 @@ export const CATALOG: EndpointSpec[] = [
       const body: Record<string, unknown> = {};
       if (v.name?.trim()) body.name = v.name.trim();
       if (v.email?.trim()) body.email = v.email.trim();
-      return { method: "POST", path: "/parent/auth", auth: "bearer", body };
+      return { method: "POST", path: "/auth", auth: "bearer", body };
     },
   },
   {
@@ -149,7 +149,7 @@ export const CATALOG: EndpointSpec[] = [
       "trail as auth.self_kick. Demo caveat: kicking while authed with the shared demo-token revokes it for " +
       "everyone until the container restarts — mint a personal token via the gate instead.",
     method: "DELETE",
-    pathTemplate: "/parent/auth",
+    pathTemplate: "/auth",
     auth: "bearer",
     fields: [],
     response: {
@@ -161,7 +161,7 @@ export const CATALOG: EndpointSpec[] = [
       },
       required: ["signed_out", "token_revoked", "sockets_closed"],
     },
-    build: () => ({ method: "DELETE", path: "/parent/auth", auth: "bearer" }),
+    build: () => ({ method: "DELETE", path: "/auth", auth: "bearer" }),
   },
   {
     id: "sessions",
@@ -169,10 +169,10 @@ export const CATALOG: EndpointSpec[] = [
     title: "List sessions",
     summary: "herdr sessions on the instance, each with working/blocked/idle agent counts.",
     method: "GET",
-    pathTemplate: "/parent/{instance}/sessions",
+    pathTemplate: "/instances/{instance}/sessions",
     auth: "bearer",
     fields: [],
-    build: (_v, ctx) => ({ method: "GET", path: `/parent/${enc(ctx.instance)}/sessions`, auth: "bearer" }),
+    build: (_v, ctx) => ({ method: "GET", path: `/instances/${enc(ctx.instance)}/sessions`, auth: "bearer" }),
   },
   {
     id: "agents",
@@ -184,7 +184,7 @@ export const CATALOG: EndpointSpec[] = [
       "truth (unknown/done fold to idle, so a dead-but-listed agent is only visible there) and fresh=1 also " +
       "returns interactive_ready/launch_pending.",
     method: "GET",
-    pathTemplate: "/parent/{instance}/sessions/{session}/agents",
+    pathTemplate: "/instances/{instance}/sessions/{session}/agents",
     auth: "bearer",
     fields: [{ key: "fresh", label: "fresh — re-query herdr", kind: "toggle" }],
     response: {
@@ -230,7 +230,7 @@ export const CATALOG: EndpointSpec[] = [
       "the agent alive, send Escape via rpc pane.send_keys instead; to end a whole working set, use " +
       "DELETE .../workspaces/{w}.",
     method: "DELETE",
-    pathTemplate: "/parent/{instance}/sessions/{session}/agents/{pane_id}",
+    pathTemplate: "/instances/{instance}/sessions/{session}/agents/{pane_id}",
     auth: "bearer",
     fields: [{ key: "pane_id", label: "pane_id", kind: "text", required: true, placeholder: "w1:p1" }],
     response: {
@@ -272,7 +272,7 @@ export const CATALOG: EndpointSpec[] = [
       required: ["workspace_id", "pane_id", "agent", "status"],
     },
     method: "POST",
-    pathTemplate: "/parent/{instance}/sessions/{session}/agents",
+    pathTemplate: "/instances/{instance}/sessions/{session}/agents",
     auth: "bearer",
     fields: [
       { key: "kind", label: "kind", kind: "text", required: true, placeholder: "copilot" },
@@ -302,7 +302,7 @@ export const CATALOG: EndpointSpec[] = [
     title: "List workspaces",
     summary: "Working sets: team roster (agents + status) and discovered git repos per workspace.",
     method: "GET",
-    pathTemplate: "/parent/{instance}/sessions/{session}/workspaces",
+    pathTemplate: "/instances/{instance}/sessions/{session}/workspaces",
     auth: "bearer",
     fields: [],
     build: (_v, ctx) => ({ method: "GET", path: `${sess(ctx)}/workspaces`, auth: "bearer" }),
@@ -317,7 +317,7 @@ export const CATALOG: EndpointSpec[] = [
       "agents in the workspace are terminated with their panes, and the broker forgets the workspace's " +
       "recorded cwd. There is no undo — spawn again to rebuild.",
     method: "DELETE",
-    pathTemplate: "/parent/{instance}/sessions/{session}/workspaces/{workspace_id}",
+    pathTemplate: "/instances/{instance}/sessions/{session}/workspaces/{workspace_id}",
     auth: "bearer",
     fields: [{ key: "workspace_id", label: "workspace_id", kind: "text", required: true, placeholder: "w2" }],
     response: {
@@ -341,7 +341,7 @@ export const CATALOG: EndpointSpec[] = [
     summary: "git's own file list (tracked + untracked-but-not-ignored) folded into a tree — .git and node_modules never appear.",
     docs: "repo is the discovered repo's path within the workspace; '-' means the workspace root itself is the repo.",
     method: "GET",
-    pathTemplate: "/parent/{instance}/sessions/{session}/workspaces/{workspace_id}/repos/{repo}/tree",
+    pathTemplate: "/instances/{instance}/sessions/{session}/workspaces/{workspace_id}/repos/{repo}/tree",
     auth: "bearer",
     fields: [
       { key: "workspace_id", label: "workspace_id", kind: "text", required: true, placeholder: "w1" },
@@ -359,7 +359,7 @@ export const CATALOG: EndpointSpec[] = [
     title: "Repo git diff",
     summary: "Branch, porcelain status, and unified diff — optionally against a base ref.",
     method: "GET",
-    pathTemplate: "/parent/{instance}/sessions/{session}/workspaces/{workspace_id}/repos/{repo}/git/diff",
+    pathTemplate: "/instances/{instance}/sessions/{session}/workspaces/{workspace_id}/repos/{repo}/git/diff",
     auth: "bearer",
     fields: [
       { key: "workspace_id", label: "workspace_id", kind: "text", required: true, placeholder: "w1" },
@@ -380,7 +380,7 @@ export const CATALOG: EndpointSpec[] = [
     summary: "Raw file contents by path — the piece tree/diff can't serve, so IDE-like UIs can open unchanged files too.",
     docs: "Size-capped at 768KB with the same containment guards as the rest of the API; .git internals are refused; binary files return {binary: true} without content.",
     method: "GET",
-    pathTemplate: "/parent/{instance}/sessions/{session}/workspaces/{workspace_id}/repos/{repo}/file",
+    pathTemplate: "/instances/{instance}/sessions/{session}/workspaces/{workspace_id}/repos/{repo}/file",
     auth: "bearer",
     fields: [
       { key: "workspace_id", label: "workspace_id", kind: "text", required: true, placeholder: "w1" },
@@ -416,7 +416,7 @@ export const CATALOG: EndpointSpec[] = [
       "add_all:false commits only what's already staged. Identity: body author wins, else repo/global config, " +
       "else a herdr-web-broker fallback so commits never fail on missing identity.",
     method: "POST",
-    pathTemplate: "/parent/{instance}/sessions/{session}/workspaces/{workspace_id}/repos/{repo}/git/commit",
+    pathTemplate: "/instances/{instance}/sessions/{session}/workspaces/{workspace_id}/repos/{repo}/git/commit",
     auth: "bearer",
     fields: [
       { key: "workspace_id", label: "workspace_id", kind: "text", required: true, placeholder: "w1" },
@@ -447,7 +447,7 @@ export const CATALOG: EndpointSpec[] = [
     title: "Log",
     summary: "Recent commits, newest first — {sha, subject, author, when}.",
     method: "GET",
-    pathTemplate: "/parent/{instance}/sessions/{session}/workspaces/{workspace_id}/repos/{repo}/git/log",
+    pathTemplate: "/instances/{instance}/sessions/{session}/workspaces/{workspace_id}/repos/{repo}/git/log",
     auth: "bearer",
     fields: [
       { key: "workspace_id", label: "workspace_id", kind: "text", required: true, placeholder: "w1" },
@@ -467,7 +467,7 @@ export const CATALOG: EndpointSpec[] = [
     title: "Push",
     summary: "Push the branch (defaults: origin, current branch). Credential and network failures surface git's own stderr as git_error.",
     method: "POST",
-    pathTemplate: "/parent/{instance}/sessions/{session}/workspaces/{workspace_id}/repos/{repo}/git/push",
+    pathTemplate: "/instances/{instance}/sessions/{session}/workspaces/{workspace_id}/repos/{repo}/git/push",
     auth: "bearer",
     fields: [
       { key: "workspace_id", label: "workspace_id", kind: "text", required: true, placeholder: "w1" },
@@ -493,7 +493,7 @@ export const CATALOG: EndpointSpec[] = [
     title: "Checkout",
     summary: "Switch to a branch or ref; create:true makes the branch first.",
     method: "POST",
-    pathTemplate: "/parent/{instance}/sessions/{session}/workspaces/{workspace_id}/repos/{repo}/git/checkout",
+    pathTemplate: "/instances/{instance}/sessions/{session}/workspaces/{workspace_id}/repos/{repo}/git/checkout",
     auth: "bearer",
     fields: [
       { key: "workspace_id", label: "workspace_id", kind: "text", required: true, placeholder: "w1" },
@@ -518,7 +518,7 @@ export const CATALOG: EndpointSpec[] = [
       "workspace, so the agent knows to read them. Upload rides PUT .../context/{name} with a raw binary body " +
       "(8MB cap) — use the upload card above or the SDK's context scope.",
     method: "GET",
-    pathTemplate: "/parent/{instance}/sessions/{session}/workspaces/{workspace_id}/context",
+    pathTemplate: "/instances/{instance}/sessions/{session}/workspaces/{workspace_id}/context",
     auth: "bearer",
     fields: [{ key: "workspace_id", label: "workspace_id", kind: "text", required: true, placeholder: "w1" }],
     build: (v, ctx) => ({
@@ -533,7 +533,7 @@ export const CATALOG: EndpointSpec[] = [
     title: "Toggle active",
     summary: "active:false keeps the file but drops it from future prompts; active:true re-attaches it.",
     method: "POST",
-    pathTemplate: "/parent/{instance}/sessions/{session}/workspaces/{workspace_id}/context/{name}",
+    pathTemplate: "/instances/{instance}/sessions/{session}/workspaces/{workspace_id}/context/{name}",
     auth: "bearer",
     fields: [
       { key: "workspace_id", label: "workspace_id", kind: "text", required: true, placeholder: "w1" },
@@ -553,7 +553,7 @@ export const CATALOG: EndpointSpec[] = [
     title: "Delete attachment",
     summary: "Remove the file from the workspace context store.",
     method: "DELETE",
-    pathTemplate: "/parent/{instance}/sessions/{session}/workspaces/{workspace_id}/context/{name}",
+    pathTemplate: "/instances/{instance}/sessions/{session}/workspaces/{workspace_id}/context/{name}",
     auth: "bearer",
     fields: [
       { key: "workspace_id", label: "workspace_id", kind: "text", required: true, placeholder: "w1" },
@@ -586,7 +586,7 @@ export const CATALOG: EndpointSpec[] = [
       required: ["answer"],
     },
     method: "POST",
-    pathTemplate: "/parent/{instance}/sessions/{session}/agents/{pane_id}/ask",
+    pathTemplate: "/instances/{instance}/sessions/{session}/agents/{pane_id}/ask",
     auth: "bearer",
     fields: [
       { key: "pane_id", label: "pane_id", kind: "text", required: true, placeholder: "w1:p1" },
@@ -609,7 +609,7 @@ export const CATALOG: EndpointSpec[] = [
       "The pane_id is the conversation handle — the agent CLI keeps its full context between prompts. Use ask " +
       "when you want a structured JSON reply; watch progress via WS status events or pane.read over rpc.",
     method: "POST",
-    pathTemplate: "/parent/{instance}/sessions/{session}/agents/{pane_id}/prompt",
+    pathTemplate: "/instances/{instance}/sessions/{session}/agents/{pane_id}/prompt",
     auth: "bearer",
     fields: [
       { key: "pane_id", label: "pane_id", kind: "text", required: true, placeholder: "w1:p1" },
@@ -642,7 +642,7 @@ export const CATALOG: EndpointSpec[] = [
       "must be a single line (multi-line would smuggle extra Enter-terminated input) — full prompts belong to " +
       "ask or agent.prompt. Same 'sent' semantics as the model switch.",
     method: "POST",
-    pathTemplate: "/parent/{instance}/sessions/{session}/agents/{pane_id}/slash/{command}",
+    pathTemplate: "/instances/{instance}/sessions/{session}/agents/{pane_id}/slash/{command}",
     auth: "bearer",
     fields: [
       { key: "pane_id", label: "pane_id", kind: "text", required: true, placeholder: "w1:p1" },
@@ -667,7 +667,7 @@ export const CATALOG: EndpointSpec[] = [
       "or {unchanged: true} at the deadline (max 30s) — one waiting request per idle pane, not a poll storm. " +
       "Write back through rpc pane.send_input / pane.send_keys; the SDK's watchScreen() manages the loop.",
     method: "GET",
-    pathTemplate: "/parent/{instance}/sessions/{session}/panes/{pane_id}/screen",
+    pathTemplate: "/instances/{instance}/sessions/{session}/panes/{pane_id}/screen",
     auth: "bearer",
     fields: [
       { key: "pane_id", label: "pane_id", kind: "text", required: true, placeholder: "w1:p1" },
@@ -712,7 +712,7 @@ export const CATALOG: EndpointSpec[] = [
       "the page you're viewing — the agent focuses there and puts its '## Open questions' in that file. Answer " +
       "questions by driving again with the same bundle id.",
     method: "POST",
-    pathTemplate: "/parent/{instance}/sessions/{session}/agents/{pane_id}/spec-bundles",
+    pathTemplate: "/instances/{instance}/sessions/{session}/agents/{pane_id}/spec-bundles",
     auth: "bearer",
     fields: [
       { key: "pane_id", label: "pane_id", kind: "text", required: true, placeholder: "w1:p1" },
@@ -735,7 +735,7 @@ export const CATALOG: EndpointSpec[] = [
     title: "Request implementation plan",
     summary: "Ask the agent to distill the bundle's design files into plan.md inside the same bundle.",
     method: "POST",
-    pathTemplate: "/parent/{instance}/sessions/{session}/agents/{pane_id}/spec-bundles/{bundle}/plan",
+    pathTemplate: "/instances/{instance}/sessions/{session}/agents/{pane_id}/spec-bundles/{bundle}/plan",
     auth: "bearer",
     fields: [
       { key: "pane_id", label: "pane_id", kind: "text", required: true, placeholder: "w1:p1" },
@@ -755,7 +755,7 @@ export const CATALOG: EndpointSpec[] = [
     title: "List spec bundles",
     summary: "Bundles found in the workspace with their member files.",
     method: "GET",
-    pathTemplate: "/parent/{instance}/sessions/{session}/workspaces/{workspace_id}/spec-bundles",
+    pathTemplate: "/instances/{instance}/sessions/{session}/workspaces/{workspace_id}/spec-bundles",
     auth: "bearer",
     fields: [{ key: "workspace_id", label: "workspace_id", kind: "text", required: true, placeholder: "w1" }],
     build: (v, ctx) => ({
@@ -773,7 +773,7 @@ export const CATALOG: EndpointSpec[] = [
       "Long-poll instead of push so child instances stream through the parent↔child tunnel unchanged. Loop " +
       "GET → render → GET with the returned version to follow the bundle live.",
     method: "GET",
-    pathTemplate: "/parent/{instance}/sessions/{session}/workspaces/{workspace_id}/spec-bundles/{bundle}",
+    pathTemplate: "/instances/{instance}/sessions/{session}/workspaces/{workspace_id}/spec-bundles/{bundle}",
     auth: "bearer",
     fields: [
       { key: "workspace_id", label: "workspace_id", kind: "text", required: true, placeholder: "w1" },
@@ -800,7 +800,7 @@ export const CATALOG: EndpointSpec[] = [
     summary: "Any herdr socket method by name — agent.list, pane.read, workspace.create… gated by the remote deny-list.",
     docs: "broker.* virtual methods dispatch in the broker itself; everything else forwards to herdr's socket verbatim.",
     method: "POST",
-    pathTemplate: "/parent/{instance}/sessions/{session}/rpc",
+    pathTemplate: "/instances/{instance}/sessions/{session}/rpc",
     auth: "bearer",
     fields: [
       { key: "method", label: "method", kind: "text", required: true, placeholder: "agent.list" },
@@ -822,7 +822,7 @@ export const CATALOG: EndpointSpec[] = [
     title: "Store env var",
     summary: "Write-only credential store for agent spawns — the value is exported into the pane shell at spawn, never readable back.",
     method: "POST",
-    pathTemplate: "/parent/{instance}/env",
+    pathTemplate: "/instances/{instance}/env",
     auth: "bearer",
     fields: [
       { key: "name", label: "name", kind: "text", required: true, placeholder: "GH_TOKEN" },
@@ -834,7 +834,7 @@ export const CATALOG: EndpointSpec[] = [
       const body: Record<string, unknown> = { name: need(v, "name"), value: need(v, "value") };
       if (v.kind?.trim()) body.kind = v.kind.trim();
       if (v.session?.trim()) body.session = v.session.trim();
-      return { method: "POST", path: `/parent/${enc(ctx.instance)}/env`, auth: "bearer", body };
+      return { method: "POST", path: `/instances/${enc(ctx.instance)}/env`, auth: "bearer", body };
     },
   },
   {
@@ -843,10 +843,10 @@ export const CATALOG: EndpointSpec[] = [
     title: "List env vars",
     summary: "Stored names, scopes, and source (manual/hook) — values are never returned.",
     method: "GET",
-    pathTemplate: "/parent/{instance}/env",
+    pathTemplate: "/instances/{instance}/env",
     auth: "bearer",
     fields: [],
-    build: (_v, ctx) => ({ method: "GET", path: `/parent/${enc(ctx.instance)}/env`, auth: "bearer" }),
+    build: (_v, ctx) => ({ method: "GET", path: `/instances/${enc(ctx.instance)}/env`, auth: "bearer" }),
   },
   {
     id: "env-delete",
@@ -854,7 +854,7 @@ export const CATALOG: EndpointSpec[] = [
     title: "Delete env var",
     summary: "Remove one entry; kind/session query params select the scoped variant.",
     method: "DELETE",
-    pathTemplate: "/parent/{instance}/env/{name}",
+    pathTemplate: "/instances/{instance}/env/{name}",
     auth: "bearer",
     fields: [
       { key: "name", label: "name", kind: "text", required: true, placeholder: "GH_TOKEN" },
@@ -867,7 +867,7 @@ export const CATALOG: EndpointSpec[] = [
       if (v.session?.trim()) query.session = v.session.trim();
       return {
         method: "DELETE",
-        path: `/parent/${enc(ctx.instance)}/env/${enc(need(v, "name"))}`,
+        path: `/instances/${enc(ctx.instance)}/env/${enc(need(v, "name"))}`,
         auth: "bearer",
         ...(Object.keys(query).length > 0 ? { query } : {}),
       };
@@ -882,12 +882,12 @@ export const CATALOG: EndpointSpec[] = [
       "No CLI exposes a machine-readable model list, so this is a registry: entries report source builtin or " +
       "config. Extend or correct it with [[models.catalog]] rows in config.toml — no code change needed.",
     method: "GET",
-    pathTemplate: "/parent/{instance}/models",
+    pathTemplate: "/instances/{instance}/models",
     auth: "bearer",
     fields: [{ key: "kind", label: "kind filter", kind: "text", placeholder: "copilot" }],
     build: (v, ctx) => ({
       method: "GET",
-      path: `/parent/${enc(ctx.instance)}/models`,
+      path: `/instances/${enc(ctx.instance)}/models`,
       auth: "bearer",
       ...(v.kind?.trim() ? { query: { kind: v.kind.trim() } } : {}),
     }),
@@ -902,7 +902,7 @@ export const CATALOG: EndpointSpec[] = [
       "Unknown models 404 (extend [[models.catalog]]); kinds without a switch template answer " +
       "model_switch_unsupported (add [[models.switch]]).",
     method: "POST",
-    pathTemplate: "/parent/{instance}/sessions/{session}/agents/{pane_id}/model",
+    pathTemplate: "/instances/{instance}/sessions/{session}/agents/{pane_id}/model",
     auth: "bearer",
     fields: [
       { key: "pane_id", label: "pane_id", kind: "text", required: true, placeholder: "w1:p1" },

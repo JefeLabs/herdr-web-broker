@@ -68,7 +68,7 @@ describe("EventChannel", () => {
     ch.on("open", (e) => opened.push(e));
     ch.connect();
     const sock = FakeSocket.instances[0];
-    expect(sock.url).toBe("ws://broker:7591/parent/ws");
+    expect(sock.url).toBe("ws://broker:7591/events");
     expect(sock.protocols).toEqual(["bearer", "tok"]);
     sock.emitOpen();
     expect(opened.length).toBe(1);

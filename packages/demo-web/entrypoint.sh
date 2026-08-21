@@ -57,7 +57,7 @@ ADMIN_TOKEN_FILE=$(find "$HOME/.local/state/herdr" "$HOME/.config/herdr" -name a
 # demo Copilot agents start authenticated instead of stopping at /login.
 if [ -n "${COPILOT_GITHUB_TOKEN:-}" ]; then
   BODY=$(printf '{"name":"COPILOT_GITHUB_TOKEN","value":"%s","kind":"copilot"}' "$COPILOT_GITHUB_TOKEN")
-  if curl -fsS -X POST http://127.0.0.1:7591/parent/runtime/env \
+  if curl -fsS -X POST http://127.0.0.1:7591/instances/runtime/env \
       -H "Authorization: Bearer ${BROKER_TOKEN}" -H "content-type: application/json" \
       -d "$BODY" >/dev/null; then
     log "COPILOT_GITHUB_TOKEN seeded into the env registry (kind copilot) — Copilot agents spawn authenticated"

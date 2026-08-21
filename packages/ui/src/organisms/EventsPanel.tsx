@@ -15,7 +15,7 @@ interface LogLine {
 
 const now = () => new Date().toLocaleTimeString([], { hour12: false });
 
-/** WS /parent/ws through the SDK's EventChannel: subprotocol bearer auth,
+/** WS /events through the SDK's EventChannel: subprotocol bearer auth,
  * auto-reconnect, typed subscriptions, rpc frames on the same socket. */
 export function EventsPanel({ broker, instance, session }: EventsPanelProps) {
   const logRef = useRef<HTMLDivElement | null>(null);
@@ -81,7 +81,7 @@ export function EventsPanel({ broker, instance, session }: EventsPanelProps) {
     <article className="card" id="ws">
       <div className="card-head">
         <span className="chip ws">WS</span>
-        <code className="mono-path">/parent/ws</code>
+        <code className="mono-path">/events</code>
         <span className="spacer" />
         <span className="chip auth">bearer</span>
       </div>

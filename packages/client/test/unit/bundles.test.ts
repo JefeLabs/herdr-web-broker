@@ -36,7 +36,7 @@ describe("BundleScope", () => {
     const scope = scopeOf(fetchFn);
     const bundles = await scope.list();
     expect(bundles[0].bundle).toBe("b");
-    expect(calls[0]).toBe("/parent/runtime/sessions/default/workspaces/w1/spec-bundles");
+    expect(calls[0]).toBe("/instances/runtime/sessions/default/workspaces/w1/spec-bundles");
   });
 
   test("follow threads versions, skips unchanged, delivers on change, and stops on unsubscribe", async () => {

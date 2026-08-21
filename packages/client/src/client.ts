@@ -54,7 +54,7 @@ export class BrokerClient {
    * broker accepts it live. Auth failures report, they don't throw. */
   async verify(): Promise<{ ok: boolean; error?: BrokerApiError }> {
     try {
-      await request(this.cfg, "GET", "/parent");
+      await request(this.cfg, "GET", "/instances");
       return { ok: true };
     } catch (e) {
       if (e instanceof BrokerApiError) return { ok: false, error: e };
@@ -63,26 +63,26 @@ export class BrokerClient {
   }
 
   async instances(): Promise<InstanceRollup[]> {
-    const r = await request<{ instances: InstanceRollup[] }>(this.cfg, "GET", "/parent");
+    const r = await request<{ instances: InstanceRollup[] }>(this.cfg, "GET", "/instances");
     return r.instances;
   }
 
   /** Opt-in identity: tell others who is using this instance. Rides the
-   * presented token; shows up in /parent's in_use_by until kicked/expired. */
+   * presented token; shows up in /instances's in_use_by until kicked/expired. */
   identify(id: { name?: string; email?: string } = {}): Promise<PresenceEntry> {
-    return request(this.cfg, "POST", "/parent/auth", { body: id });
+    return request(this.cfg, "POST", "/auth", { body: id });
   }
 
   /** Self-eviction ("kick out"): revokes the PRESENTED token at the broker,
    * closes its live sockets, and clears its presence — dead everywhere.
    * For a local-only sign-out, just discard the token instead. */
   signOut(): Promise<{ signed_out: string; token_revoked: boolean; sockets_closed: number }> {
-    return request(this.cfg, "DELETE", "/parent/auth");
+    return request(this.cfg, "DELETE", "/auth");
   }
 
   /** Who is currently using the instance (identified tokens only). */
   async presence(): Promise<PresenceEntry[]> {
-    const r = await request<{ in_use_by?: PresenceEntry[] }>(this.cfg, "GET", "/parent");
+    const r = await request<{ in_use_by?: PresenceEntry[] }>(this.cfg, "GET", "/instances");
     return r.in_use_by ?? [];
   }
 
@@ -109,7 +109,7 @@ export class InstanceHandle {
   ) {}
 
   #base(): string {
-    return `/parent/${enc(this.name)}`;
+    return `/instances/${enc(this.name)}`;
   }
 
   detail(): Promise<InstanceDetail> {
@@ -154,7 +154,7 @@ export class SessionHandle {
   ) {}
 
   base(): string {
-    return `/parent/${enc(this.instance)}/sessions/${enc(this.name)}`;
+    return `/instances/${enc(this.instance)}/sessions/${enc(this.name)}`;
   }
 
   async agents(opts: { fresh?: boolean } = {}): Promise<AgentInfo[]> {

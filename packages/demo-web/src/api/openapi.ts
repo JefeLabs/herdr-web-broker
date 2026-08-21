@@ -89,7 +89,7 @@ export function buildOpenApi() {
       description:
         "herdr's local socket lifted onto the network — REST + WebSocket, federated parent↔child. " +
         "Instance 'runtime' is the machine the broker runs on; other instances are paired children " +
-        "reached over their outbound tunnel. WS /parent/ws (not expressible in OpenAPI) carries duplex " +
+        "reached over their outbound tunnel. WS /events (not expressible in OpenAPI) carries duplex " +
         "rpc frames {id, instance, session, method, params} and unsolicited {event} pushes.",
     },
     servers: [{ url: "http://127.0.0.1:7591", description: "local broker" }],

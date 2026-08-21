@@ -23,7 +23,7 @@ async function boot() {
 
 test("ws upgrade requires a bearer token", async () => {
   const { fake, handle } = await boot();
-  const ws = new WebSocket(`ws://127.0.0.1:${handle.port}/parent/ws`);
+  const ws = new WebSocket(`ws://127.0.0.1:${handle.port}/events`);
   const err = await new Promise<Error>((r) => ws.once("error", r));
   assert.match(err.message, /401/);
   await handle.close();
@@ -32,12 +32,12 @@ test("ws upgrade requires a bearer token", async () => {
 
 test("ws upgrade accepts ?token= for browser clients that cannot set headers", async () => {
   const { fake, handle } = await boot();
-  const ws = new WebSocket(`ws://127.0.0.1:${handle.port}/parent/ws?token=tok`);
+  const ws = new WebSocket(`ws://127.0.0.1:${handle.port}/events?token=tok`);
   await new Promise((r) => ws.once("open", r));
   const reply = new Promise<Record<string, unknown>>((r) => ws.once("message", (d) => r(JSON.parse(String(d)))));
   ws.send(JSON.stringify({ id: "q1", method: "events.subscribe" }));
   assert.deepEqual(await reply, { id: "q1", result: { subscribed: true } });
-  const bad = new WebSocket(`ws://127.0.0.1:${handle.port}/parent/ws?token=wrong`);
+  const bad = new WebSocket(`ws://127.0.0.1:${handle.port}/events?token=wrong`);
   const err = await new Promise<Error>((r) => bad.once("error", r));
   assert.match(err.message, /401/);
   ws.close();
@@ -47,13 +47,13 @@ test("ws upgrade accepts ?token= for browser clients that cannot set headers", a
 
 test("ws upgrade accepts the token via Sec-WebSocket-Protocol (preferred over ?token= — no URL leakage)", async () => {
   const { fake, handle } = await boot();
-  const ws = new WebSocket(`ws://127.0.0.1:${handle.port}/parent/ws`, ["bearer", "tok"]);
+  const ws = new WebSocket(`ws://127.0.0.1:${handle.port}/events`, ["bearer", "tok"]);
   await new Promise((r) => ws.once("open", r));
   assert.equal(ws.protocol, "bearer", "server selects the 'bearer' subprotocol, never echoing the token");
   const reply = new Promise<Record<string, unknown>>((r) => ws.once("message", (d) => r(JSON.parse(String(d)))));
   ws.send(JSON.stringify({ id: "p1", method: "events.subscribe" }));
   assert.deepEqual(await reply, { id: "p1", result: { subscribed: true } });
-  const bad = new WebSocket(`ws://127.0.0.1:${handle.port}/parent/ws`, ["bearer", "wrong"]);
+  const bad = new WebSocket(`ws://127.0.0.1:${handle.port}/events`, ["bearer", "wrong"]);
   const err = await new Promise<Error>((r) => bad.once("error", r));
   assert.match(err.message, /401/);
   ws.close();
@@ -74,7 +74,7 @@ test("server pings keep idle client sockets alive through intermediaries", async
     projectionDir: tmpDir(),
     wsPingMs: 60,
   }))!;
-  const ws = new WebSocket(`ws://127.0.0.1:${handle.port}/parent/ws?token=tok`);
+  const ws = new WebSocket(`ws://127.0.0.1:${handle.port}/events?token=tok`);
   await new Promise((r) => ws.once("open", r));
   let pings = 0;
   ws.on("ping", () => pings++);
@@ -87,7 +87,7 @@ test("server pings keep idle client sockets alive through intermediaries", async
 
 test("kick closes the kicked token's live WS sockets and revokes the token", async () => {
   const { fake, handle } = await boot();
-  const ws = new WebSocket(`ws://127.0.0.1:${handle.port}/parent/ws?token=tok`);
+  const ws = new WebSocket(`ws://127.0.0.1:${handle.port}/events?token=tok`);
   await new Promise((r) => ws.once("open", r));
   const closed = new Promise<void>((r) => ws.once("close", () => r()));
 
@@ -101,7 +101,7 @@ test("kick closes the kicked token's live WS sockets and revokes the token", asy
   assert.equal(out.sockets_closed, 1);
   await closed;
 
-  const reconnect = new WebSocket(`ws://127.0.0.1:${handle.port}/parent/ws?token=tok`);
+  const reconnect = new WebSocket(`ws://127.0.0.1:${handle.port}/events?token=tok`);
   const err = await new Promise<Error>((r) => reconnect.once("error", r));
   assert.match(err.message, /401/, "the revoked token cannot reconnect");
   await handle.close();
@@ -110,7 +110,7 @@ test("kick closes the kicked token's live WS sockets and revokes the token", asy
 
 test("rpc over ws round-trips; events.subscribe acks; events stream unsolicited", async () => {
   const { fake, handle } = await boot();
-  const ws = new WebSocket(`ws://127.0.0.1:${handle.port}/parent/ws`, {
+  const ws = new WebSocket(`ws://127.0.0.1:${handle.port}/events`, {
     headers: { authorization: "Bearer tok" },
   });
   await new Promise((r) => ws.once("open", r));
@@ -156,9 +156,9 @@ test("rpc over ws round-trips; events.subscribe acks; events stream unsolicited"
   await fake.close();
 });
 
-test("a malformed frame on an authed /parent/ws gets an error reply, not a crash — a fresh rpc still round-trips", async () => {
+test("a malformed frame on an authed /events gets an error reply, not a crash — a fresh rpc still round-trips", async () => {
   const { fake, handle } = await boot();
-  const ws = new WebSocket(`ws://127.0.0.1:${handle.port}/parent/ws`, {
+  const ws = new WebSocket(`ws://127.0.0.1:${handle.port}/events`, {
     headers: { authorization: "Bearer tok" },
   });
   await new Promise((r) => ws.once("open", r));
@@ -184,7 +184,7 @@ test("a malformed frame on an authed /parent/ws gets an error reply, not a crash
 
 test("handle.close() does not hang on a lingering client WebSocket", async () => {
   const { fake, handle } = await boot();
-  const ws = new WebSocket(`ws://127.0.0.1:${handle.port}/parent/ws`, {
+  const ws = new WebSocket(`ws://127.0.0.1:${handle.port}/events`, {
     headers: { authorization: "Bearer tok" },
   });
   await new Promise((r) => ws.once("open", r));

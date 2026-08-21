@@ -21,7 +21,7 @@ export interface EventChannelOpts {
   fetchFn?: typeof fetch;
 }
 
-/** WS /parent/ws: unsolicited status events plus duplex rpc frames on one
+/** WS /events: unsolicited status events plus duplex rpc frames on one
  * socket. Auth rides the ["bearer", <token>] subprotocols (never the URL);
  * unclean closes reconnect with jittered exponential backoff. */
 export class EventChannel {
@@ -75,7 +75,7 @@ export class EventChannel {
   }
 
   #open(): void {
-    const url = this.#opts.origin.replace(/^http/, "ws") + "/parent/ws";
+    const url = this.#opts.origin.replace(/^http/, "ws") + "/events";
     const factory = this.#opts.wsFactory ?? ((u: string, p: string[]) => new WebSocket(u, p));
     const ws = factory(url, ["bearer", this.#opts.token()]);
     this.#ws = ws;
@@ -100,7 +100,7 @@ export class EventChannel {
    * outage is not an eviction). */
   async #maybeReconnect(): Promise<void> {
     try {
-      const res = await (this.#opts.fetchFn ?? fetch)(this.#opts.origin + "/parent", {
+      const res = await (this.#opts.fetchFn ?? fetch)(this.#opts.origin + "/instances", {
         headers: { authorization: `Bearer ${this.#opts.token()}` },
       });
       if (res.status === 401) {

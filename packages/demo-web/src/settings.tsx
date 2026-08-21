@@ -12,7 +12,7 @@ export interface Settings {
   /** the shared interaction model — one client, token kept in sync */
   broker: BrokerClient;
   set(key: "bearer" | "admin" | "instance" | "session", value: string): void;
-  /** re-pulls /parent and /parent/{i} to feed the instance/session pickers */
+  /** re-pulls /instances and /instances/{i} to feed the instance/session pickers */
   refresh(): Promise<void>;
 }
 
@@ -48,11 +48,11 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
   }, [bearer, admin, instance, session]);
 
   const refresh = useCallback(async () => {
-    const list = await send({ method: "GET", path: "/parent", auth: "bearer" }, { bearer });
+    const list = await send({ method: "GET", path: "/instances", auth: "bearer" }, { bearer });
     const rollup = (list.body as { instances?: { instance: string }[] })?.instances;
     if (Array.isArray(rollup)) setInstances(rollup.map((r) => r.instance));
     const detail = await send(
-      { method: "GET", path: `/parent/${encodeURIComponent(instance)}`, auth: "bearer" },
+      { method: "GET", path: `/instances/${encodeURIComponent(instance)}`, auth: "bearer" },
       { bearer },
     );
     const names = (detail.body as { sessions?: string[] })?.sessions;

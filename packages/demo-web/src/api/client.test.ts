@@ -5,7 +5,7 @@ const get = (path: string): EndpointRequest => ({ method: "GET", path, auth: "be
 
 describe("buildUrl", () => {
   test("bare path passes through", () => {
-    expect(buildUrl(get("/parent"))).toBe("/parent");
+    expect(buildUrl(get("/instances"))).toBe("/instances");
   });
 
   test("query params are appended encoded", () => {
@@ -31,7 +31,7 @@ describe("send", () => {
 
   test("bearer auth sets the authorization header", async () => {
     const { calls, fetchFn } = capture();
-    await send(get("/parent"), { bearer: "tok-1" }, fetchFn);
+    await send(get("/instances"), { bearer: "tok-1" }, fetchFn);
     expect((calls[0].init.headers as Record<string, string>).authorization).toBe("Bearer tok-1");
   });
 
@@ -52,7 +52,7 @@ describe("send", () => {
 
   test("parses json replies and reports status", async () => {
     const { fetchFn } = capture(404, '{"code":"unknown_instance"}');
-    const res = await send(get("/parent/nope"), {}, fetchFn);
+    const res = await send(get("/instances/nope"), {}, fetchFn);
     expect(res.status).toBe(404);
     expect(res.ok).toBe(false);
     expect(res.body).toEqual({ code: "unknown_instance" });
@@ -67,8 +67,8 @@ describe("send", () => {
 
 describe("toCurl", () => {
   test("GET with bearer", () => {
-    const cmd = toCurl(get("/parent"), { bearer: "tok" }, "http://127.0.0.1:7591");
-    expect(cmd).toBe("curl -H 'Authorization: Bearer tok' http://127.0.0.1:7591/parent");
+    const cmd = toCurl(get("/instances"), { bearer: "tok" }, "http://127.0.0.1:7591");
+    expect(cmd).toBe("curl -H 'Authorization: Bearer tok' http://127.0.0.1:7591/instances");
   });
 
   test("POST with body single-quotes the json", () => {
@@ -90,11 +90,11 @@ describe("toCurl", () => {
 describe("wsUrl", () => {
   test("http origin becomes ws with encoded token", () => {
     expect(wsUrl("a/b c", { protocol: "http:", host: "localhost:5173" })).toBe(
-      "ws://localhost:5173/parent/ws?token=a%2Fb%20c",
+      "ws://localhost:5173/events?token=a%2Fb%20c",
     );
   });
 
   test("https origin becomes wss", () => {
-    expect(wsUrl("t", { protocol: "https:", host: "h" })).toBe("wss://h/parent/ws?token=t");
+    expect(wsUrl("t", { protocol: "https:", host: "h" })).toBe("wss://h/events?token=t");
   });
 });

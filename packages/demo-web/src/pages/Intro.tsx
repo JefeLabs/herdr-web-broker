@@ -6,7 +6,7 @@ const WIRE = String.raw`
    │    │                      │  WSS   │    │                               │
    │  broker plugin ───────────┼────────┼──▶ tunnel hub                      │
    │  (dials out, NAT-safe)    │        │    │                               │
-   └───────────────────────────┘        │  REST /parent/…   WS /parent/ws    │
+   └───────────────────────────┘        │  REST /instances/…   WS /events    │
                                         └────┼───────────────────────────────┘
                                              │ bearer token
                                    you · curl · this console
@@ -48,7 +48,7 @@ export function Intro() {
           <h3>Federated by design</h3>
           <p>
             Children dial out and hold the tunnel, so roaming laptops stay reachable behind NAT. One parent, one
-            token, every machine's sessions under /parent/&#123;instance&#125;.
+            token, every machine's sessions under /instances/&#123;instance&#125;.
           </p>
         </div>
         <div className="feature">
@@ -97,7 +97,7 @@ export function Intro() {
         <pre className="wire">{`$ curl ${BROKER_ORIGIN}/health
 {"ok":true,"name":"herdr-web-broker","version":"0.1.0","pid":…}
 
-$ curl -H "Authorization: Bearer $TOKEN" ${BROKER_ORIGIN}/parent
+$ curl -H "Authorization: Bearer $TOKEN" ${BROKER_ORIGIN}/instances
 {"instances":[{"instance":"runtime","online":true,…}]}`}</pre>
       </section>
     </div>

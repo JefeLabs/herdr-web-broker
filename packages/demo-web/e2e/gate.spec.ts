@@ -18,7 +18,7 @@ test.describe("auth gate", () => {
     await expect(page.getByRole("heading", { name: "Authentication required" })).toBeVisible();
   });
 
-  test("the right token unlocks, and identity lands in /parent presence", async ({ page }) => {
+  test("the right token unlocks, and identity lands in /instances presence", async ({ page }) => {
     await page.goto("/#/console");
     await page.getByLabel("bearer token").fill("demo-token");
     await page.getByLabel("your name").fill("E2E Runner");
@@ -26,7 +26,7 @@ test.describe("auth gate", () => {
     await page.getByRole("button", { name: "authenticate" }).click();
     await expect(page.getByRole("heading", { name: "Authentication required" })).toBeHidden();
 
-    const parent = await brokerFetch("/parent");
+    const parent = await brokerFetch("/instances");
     expect(parent.status).toBe(200);
     const inUse = (parent.body as { in_use_by: { name?: string; email?: string }[] }).in_use_by;
     expect(inUse.some((u) => u.name === "E2E Runner" && u.email === "e2e@example.com")).toBe(true);
@@ -63,7 +63,7 @@ test.describe("auth gate", () => {
     expect(tokenA).toBeTruthy();
     await page.getByRole("button", { name: "log off" }).click();
     await expect(page.getByRole("heading", { name: "Authentication required" })).toBeVisible();
-    expect((await brokerFetch("/parent", { token: tokenA })).status).toBe(200);
+    expect((await brokerFetch("/instances", { token: tokenA })).status).toBe(200);
 
     // KICK OUT: revoked at the broker — dead everywhere, gate returns
     await page.getByRole("button", { name: "get a demo token" }).click();
@@ -71,7 +71,7 @@ test.describe("auth gate", () => {
     const tokenB = await readToken();
     await page.getByRole("button", { name: "kick out" }).click();
     await expect(page.getByRole("heading", { name: "Authentication required" })).toBeVisible();
-    expect((await brokerFetch("/parent", { token: tokenB })).status).toBe(401);
+    expect((await brokerFetch("/instances", { token: tokenB })).status).toBe(401);
   });
 
   test("a stored token is re-verified on mount — possession is not authentication", async ({ page }) => {

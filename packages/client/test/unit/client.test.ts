@@ -19,18 +19,18 @@ describe("BrokerClient", () => {
     await session.workspaces();
     await broker.instance("runtime").models("claude");
     expect(calls.map((c) => c.url)).toEqual([
-      "http://b/parent/my%20box/sessions/default/agents?fresh=1",
-      "http://b/parent/my%20box/sessions/default/workspaces",
-      "http://b/parent/runtime/models?kind=claude",
+      "http://b/instances/my%20box/sessions/default/agents?fresh=1",
+      "http://b/instances/my%20box/sessions/default/workspaces",
+      "http://b/instances/runtime/models?kind=claude",
     ]);
   });
 
-  test("signOut() self-evicts via DELETE /parent/auth with the presented bearer", async () => {
+  test("signOut() self-evicts via DELETE /auth with the presented bearer", async () => {
     const { calls, fetchFn } = fake(200, '{"signed_out":"me","token_revoked":true,"sockets_closed":1}');
     const out = await new BrokerClient({ origin: "http://b", token: "mine", fetchFn }).signOut();
     expect(out.signed_out).toBe("me");
     expect(out.token_revoked).toBe(true);
-    expect(calls[0].url).toBe("http://b/parent/auth");
+    expect(calls[0].url).toBe("http://b/auth");
     expect(calls[0].init.method).toBe("DELETE");
     expect((calls[0].init.headers as Record<string, string>).authorization).toBe("Bearer mine");
   });
@@ -40,7 +40,7 @@ describe("BrokerClient", () => {
     const session = new BrokerClient({ origin: "", token: "t", fetchFn }).instance("runtime").session("default");
     const out = await session.closeWorkspace("w2");
     expect(out.closed).toBe(true);
-    expect(calls[0].url).toBe("/parent/runtime/sessions/default/workspaces/w2");
+    expect(calls[0].url).toBe("/instances/runtime/sessions/default/workspaces/w2");
     expect(calls[0].init.method).toBe("DELETE");
   });
 
@@ -73,8 +73,8 @@ describe("BrokerClient", () => {
     const session = new BrokerClient({ origin: "", token: "t", fetchFn }).instance("runtime").session("default");
     await session.repo("w1", ".").tree();
     await session.repo("w1", ".").file("notes.md");
-    expect(calls[0].url).toBe("/parent/runtime/sessions/default/workspaces/w1/repos/-/tree");
-    expect(calls[1].url).toBe("/parent/runtime/sessions/default/workspaces/w1/repos/-/file?path=notes.md");
+    expect(calls[0].url).toBe("/instances/runtime/sessions/default/workspaces/w1/repos/-/tree");
+    expect(calls[1].url).toBe("/instances/runtime/sessions/default/workspaces/w1/repos/-/file?path=notes.md");
   });
 
   test("git verbs: commit/log/push/checkout hit their routes with the right shapes", async () => {
@@ -85,10 +85,10 @@ describe("BrokerClient", () => {
     await repo.push();
     await repo.checkout("feat/x", { create: true });
     expect(calls.map((c) => c.url)).toEqual([
-      "/parent/runtime/sessions/default/workspaces/w1/repos/-/git/commit",
-      "/parent/runtime/sessions/default/workspaces/w1/repos/-/git/log?limit=5",
-      "/parent/runtime/sessions/default/workspaces/w1/repos/-/git/push",
-      "/parent/runtime/sessions/default/workspaces/w1/repos/-/git/checkout",
+      "/instances/runtime/sessions/default/workspaces/w1/repos/-/git/commit",
+      "/instances/runtime/sessions/default/workspaces/w1/repos/-/git/log?limit=5",
+      "/instances/runtime/sessions/default/workspaces/w1/repos/-/git/push",
+      "/instances/runtime/sessions/default/workspaces/w1/repos/-/git/checkout",
     ]);
     expect(JSON.parse(String(calls[0].init.body))).toEqual({ message: "vibe: keep it" });
     expect(JSON.parse(String(calls[3].init.body))).toEqual({ ref: "feat/x", create: true });
@@ -113,7 +113,7 @@ describe("BrokerClient", () => {
 
     const up = await ctx.upload("spec.pdf", new Uint8Array([1, 2, 3, 4]), { contentType: "application/pdf" });
     expect(up.name).toBe("spec.pdf");
-    expect(calls[0].url).toBe("/parent/runtime/sessions/default/workspaces/w1/context/spec.pdf");
+    expect(calls[0].url).toBe("/instances/runtime/sessions/default/workspaces/w1/context/spec.pdf");
     expect(calls[0].init.method).toBe("PUT");
     expect((calls[0].init.headers as Record<string, string>)["content-type"]).toBe("application/pdf");
 

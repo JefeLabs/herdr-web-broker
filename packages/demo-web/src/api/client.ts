@@ -74,5 +74,5 @@ export function toCurl(req: EndpointRequest, tokens: Tokens, origin: string): st
  * proxy lifts this ?token= into the bearer header at upgrade time. */
 export function wsUrl(token: string, loc: { protocol: string; host: string }): string {
   const scheme = loc.protocol === "https:" ? "wss" : "ws";
-  return `${scheme}://${loc.host}/parent/ws?token=${encodeURIComponent(token)}`;
+  return `${scheme}://${loc.host}/events?token=${encodeURIComponent(token)}`;
 }
