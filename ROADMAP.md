@@ -123,10 +123,17 @@ map!), `pane.close`, `agent.wait`, and `agent.prompt`'s
 
 ## Release & ecosystem
 
-11. **The name.** `herdr-web-broker` vs `herdr-agent-api` /
-    `herdr-workbench` — undecided, and the rename cost rises the moment
-    anything is published (plugin ids bake into users' herdr config paths).
-    Decide before item 12.
+11. ~~**The name.**~~ Decided 2026-08-22: **`herdr-web-broker` stands.**
+    The call was made against the actual marketplace shelf (the
+    `herdr-plugin` GitHub topic self-indexes it): the remote-access
+    cluster reads as consumer apps (`herdr-remote`, `herdr-mobile-relay`,
+    dashboards), so an infrastructure-sounding name IS the positioning;
+    "broker" is accurate to the trust role (tokens, audit, federation,
+    and now brokering users onto owned herdrs); nobody else uses it; the
+    npm family (`@jefelabs/herdr-broker-*`) already coheres; zero rename
+    churn. Runner-up `herdr-gateway` (parses faster for API-infra folks)
+    recorded here in case publication feedback ever reopens it — the
+    cost only rises from now on.
 12. **Publication.** Marketplace listing for the plugin; npm publishing +
     versioning for `@jefelabs/herdr-broker-client`, `-react`, and `-ui`.
     Packaging plan: events + models already live in `-client` — expose
@@ -159,9 +166,8 @@ map!), `pane.close`, `agent.wait`, and `agent.prompt`'s
 
 ## Suggested order
 
-Two items remain: the **name (11)** then **publication (12)** —
-renaming is cheap until something is published, so the decision waits
-until the code is done moving. In flight, pending credentialed spikes: per-user
+One item remains: **publication (12)** — the name is decided
+(`herdr-web-broker` stands), so nothing blocks it but the act itself. In flight, pending credentialed spikes: per-user
 model discovery (probe-on-spawn keyed by credential context, `auto`
 until a list is recorded — ACP body vs pane body undecided until the
 wire truth lands).
