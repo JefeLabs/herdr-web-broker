@@ -124,6 +124,16 @@ drives the laptop with the stock CLI.
 
 ## Client SDK
 
+```bash
+npm install @jefelabs/herdr-broker-client        # SDK: handles, events, types
+npm install @jefelabs/herdr-broker-react         # + headless React hooks
+npm install @jefelabs/herdr-broker-ui            # + default plain-CSS components
+```
+
+Subpath exports keep consumers lean: `@jefelabs/herdr-broker-client/events`
+(the EventChannel alone) and `.../client/types` (wire types only — for
+type-imports without any runtime code).
+
 [packages/client](packages/client) is `@jefelabs/herdr-broker-client` — a
 zero-dependency TypeScript SDK (browser + Node ≥ 20) exposing the API as
 handles: `broker.instance().session().spawn()` → `agent.prompt/ask/slash/

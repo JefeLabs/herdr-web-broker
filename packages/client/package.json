@@ -1,10 +1,25 @@
 {
   "name": "@jefelabs/herdr-broker-client",
   "version": "0.1.0",
+  "description": "Zero-dependency TypeScript SDK for herdr-web-broker: spawn and steer coding agents, browse repos, stream events — browser and Node ≥ 20",
+  "keywords": ["herdr", "agents", "sdk", "websocket", "coding-agents"],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/JefeLabs/herdr-web-broker.git",
+    "directory": "packages/client"
+  },
+  "homepage": "https://github.com/JefeLabs/herdr-web-broker#readme",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
-  "files": ["dist"],
+  "exports": {
+    ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" },
+    "./events": { "types": "./dist/events.d.ts", "default": "./dist/events.js" },
+    "./types": { "types": "./dist/types.d.ts", "default": "./dist/types.js" }
+  },
+  "sideEffects": false,
+  "files": ["dist", "LICENSE"],
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "test": "vitest run test/unit",

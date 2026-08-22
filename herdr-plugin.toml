@@ -2,7 +2,8 @@ id = "jefelabs.web-broker"
 name = "Web Broker"
 version = "0.1.0"
 min_herdr_version = "0.8.0"
-description = "REST/WS gateway and parent↔child federation for herdr instances"
+description = "Self-hosted REST/WS API for herdr: tokens, multi-user session ownership, git verbs, event streaming, parent↔child federation — with TypeScript SDK and React packages"
+platforms = ["macos", "linux"]
 
 [[build]]
 command = ["npm", "install", "--include=dev"]

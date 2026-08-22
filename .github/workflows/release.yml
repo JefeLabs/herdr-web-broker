@@ -1,0 +1,53 @@
+# Publication (roadmap 12): pushing a v* tag publishes the three library
+# packages to npm — suite-gated, dependency-ordered, with npm provenance.
+# One-time setup: add an npm automation token as the NPM_TOKEN secret.
+# Releasing is then: git tag v0.1.0 && git push --tags
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+  id-token: write # npm provenance
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+
+      - run: npm ci
+
+      - name: broker unit suite (node:test)
+        run: npm test
+
+      - name: client SDK suite
+        run: npm run build -w packages/client && npm test -w packages/client
+
+      - name: headless react suite
+        run: npm run build -w packages/react && npm test -w packages/react
+
+      - name: ui suite
+        run: npm run build -w packages/ui && npm test -w packages/ui
+
+      # dependency order: client → react → ui (each is already built above)
+      - name: publish @jefelabs/herdr-broker-client
+        run: npm publish -w packages/client --access public --provenance
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: publish @jefelabs/herdr-broker-react
+        run: npm publish -w packages/react --access public --provenance
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: publish @jefelabs/herdr-broker-ui
+        run: npm publish -w packages/ui --access public --provenance
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

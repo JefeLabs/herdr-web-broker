@@ -134,12 +134,17 @@ map!), `pane.close`, `agent.wait`, and `agent.prompt`'s
     churn. Runner-up `herdr-gateway` (parses faster for API-infra folks)
     recorded here in case publication feedback ever reopens it — the
     cost only rises from now on.
-12. **Publication.** Marketplace listing for the plugin; npm publishing +
-    versioning for `@jefelabs/herdr-broker-client`, `-react`, and `-ui`.
-    Packaging plan: events + models already live in `-client` — expose
-    them as subpath exports (`/events`, `/types`) rather than a separate
-    `-sdk` package; revisit the split only if a consumer needs the wire
-    types without the client (e.g. a server-side schema sharer). The
+12. ~~**Publication.**~~ Done up to the release act itself (2026-08-22):
+    the marketplace listing is LIVE (the `herdr-plugin` topic self-indexes
+    it; manifest declares `platforms = ["macos", "linux"]` — warning
+    wire-verified gone — and the repo description/homepage are set for the
+    shelf). npm readiness: all three packages carry full metadata, MIT
+    LICENSE, pinned internal deps (`^0.1.0`), and `-client` ships the
+    planned subpath exports (`/events` resolves live; `/types` serves
+    pure type declarations) — pack dry-runs are lean (8–17kB). Releasing
+    is two acts only the maintainer can do: add the `NPM_TOKEN` secret,
+    then `git tag v0.1.0 && git push --tags` — release.yml runs every
+    suite and publishes client → react → ui with npm provenance. The
     headless/skin split is done: `-react` carries every behavior hook
     (zero markup) and `-ui` is the default plain-CSS skin over it —
     design-system skins (`-ui-heroui`, `-ui-bootstrap` as npm packages;
@@ -166,8 +171,11 @@ map!), `pane.close`, `agent.wait`, and `agent.prompt`'s
 
 ## Suggested order
 
-One item remains: **publication (12)** — the name is decided
-(`herdr-web-broker` stands), so nothing blocks it but the act itself. In flight, pending credentialed spikes: per-user
+The numbered roadmap is COMPLETE — 23 of 23. What remains is the
+maintainer's release act (NPM_TOKEN secret + v0.1.0 tag) and the
+demand-driven tails recorded in the strike notes (skins, framework
+adapters, federated multi-user, PDF extraction, quotas) plus the
+in-flight model-discovery spikes. In flight, pending credentialed spikes: per-user
 model discovery (probe-on-spawn keyed by credential context, `auto`
 until a list is recorded — ACP body vs pane body undecided until the
 wire truth lands).
