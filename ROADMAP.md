@@ -132,7 +132,11 @@ map!), `pane.close`, `agent.wait`, and `agent.prompt`'s
     design-system skins (`-ui-heroui`, `-ui-bootstrap` as npm packages;
     a shadcn flavor ships as a copy-in registry, that ecosystem's
     distribution model) depend on `-react` alone and arrive as demand
-    shows up.
+    shows up. Framework adapters (`-svelte`, `-vue`) follow the same
+    rule: never a hand-port of the hooks — first extract the
+    framework-free behavior cores (log models, subscription parsing,
+    mint/browse flows) down into `-client`, then ship thin adapters over
+    them, so frameworks can never drift apart.
 13. ~~**Federation validation.**~~ Done: `scripts/federation-test.sh` boots
     two real containers (parent + child dialing out over a docker network)
     and drives the child entirely through the parent — enrollment, herdr
