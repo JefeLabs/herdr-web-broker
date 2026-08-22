@@ -255,11 +255,67 @@ if (process.env.BROKER_ADMIN_TOKEN) {
   mkdirSync(join(root, "state"), { recursive: true });
   writeFileSync(join(root, "state", "admin-token"), process.env.BROKER_ADMIN_TOKEN, { mode: 0o600 });
 }
+// Session ownership (spec 2026-08-22): each demo email provisions its own
+// simulated herdr — a compact sim with just enough verbs for the spawn and
+// teardown flows. The shared "default" sim above stays the richer showcase.
+const userSims = new Map();
+function makeUserSim(name) {
+  const sim = new FakeHerdr(join(root, `${name}.sock`));
+  let nextUserWs = 1;
+  const wss = new Map();
+  sim.handlers.set("workspace.list", () => ({
+    type: "workspace_list",
+    workspaces: [...wss.entries()].map(([workspace_id, w]) => ({ workspace_id, ...w })),
+  }));
+  sim.handlers.set("workspace.create", (p) => {
+    const id = `w${nextUserWs++}`;
+    wss.set(id, { cwd: p?.cwd ?? work, ...(p?.label ? { label: p.label } : {}) });
+    sim.emitEvent("workspace_created", { workspace: { workspace_id: id } });
+    return { type: "workspace_created", workspace_id: id, root_pane: { pane_id: `${id}:p1` } };
+  });
+  sim.handlers.set("workspace.close", (p) => {
+    wss.delete(String(p?.workspace_id));
+    sim.agents = sim.agents.filter((a) => a.workspace_id !== p?.workspace_id);
+    return { type: "workspace_closed" };
+  });
+  sim.handlers.set("agent.start", (p) => {
+    sim.agents.push({
+      pane_id: p.pane_id,
+      workspace_id: String(p.pane_id).split(":")[0],
+      agent: p.kind,
+      name: p.name ?? p.kind,
+      agent_status: "idle",
+      interactive_ready: true,
+      launch_pending: false,
+    });
+    return { type: "agent_started" };
+  });
+  sim.handlers.set("pane.send_input", () => ({ type: "ok" }));
+  sim.handlers.set("pane.read", () => ({
+    type: "pane_read",
+    read: { text: `user@${name}:~/work % _` },
+  }));
+  return sim;
+}
+const provisioner = {
+  async start(name) {
+    const sim = makeUserSim(name);
+    await sim.listen();
+    userSims.set(name, sim);
+    return { session: name, socketPath: sim.socketPath };
+  },
+  async stop(name) {
+    await userSims.get(name)?.close();
+    userSims.delete(name);
+  },
+};
+
 const handle = await startDaemon({
   configDir: join(root, "config"),
   stateDir: join(root, "state"),
   projectionDir: join(root, "remotes"),
   herdrVersion: "0.8.0-sim",
+  provisioner,
   localEndpoints: [{ session: "default", socketPath: fake.socketPath }],
   configOverrides: {
     listen: LISTEN,

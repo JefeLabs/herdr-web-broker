@@ -156,3 +156,34 @@ describe("BrokerClient", () => {
     expect((calls[0].init.headers as Record<string, string>).authorization).toBe("Bearer new");
   });
 });
+
+describe("session ownership", () => {
+  test("identify() surfaces the owned session the broker provisioned", async () => {
+    const { calls, fetchFn } = fake(
+      200,
+      '{"token":"t","email":"kathia@example.com","since":"s","last_seen":"s","session":"u-kathia-abc123","provisioned":true}',
+    );
+    const out = await new BrokerClient({ origin: "http://b", token: "t", fetchFn }).identify({
+      email: "kathia@example.com",
+    });
+    expect(out.session).toBe("u-kathia-abc123");
+    expect(out.provisioned).toBe(true);
+    expect(calls[0].url).toBe("http://b/auth");
+    expect(calls[0].init.method).toBe("POST");
+  });
+
+  test("session.teardown() DELETEs the session and reports the demolition", async () => {
+    const { calls, fetchFn } = fake(
+      200,
+      '{"torn_down":"u-kathia-abc123","email":"kathia@example.com","workspaces_closed":2}',
+    );
+    const out = await new BrokerClient({ origin: "http://b", token: "t", fetchFn })
+      .instance("runtime")
+      .session("u-kathia-abc123")
+      .teardown();
+    expect(out.torn_down).toBe("u-kathia-abc123");
+    expect(out.workspaces_closed).toBe(2);
+    expect(calls[0].url).toBe("http://b/instances/runtime/sessions/u-kathia-abc123");
+    expect(calls[0].init.method).toBe("DELETE");
+  });
+});

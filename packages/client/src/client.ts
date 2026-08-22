@@ -14,7 +14,9 @@ import type {
   InstanceRollup,
   LogEntry,
   ModelInfo,
+  IdentifyResult,
   PresenceEntry,
+  TeardownResult,
   PushResult,
   SessionSummary,
   SpawnOpts,
@@ -70,7 +72,7 @@ export class BrokerClient {
 
   /** Opt-in identity: tell others who is using this instance. Rides the
    * presented token; shows up in /instances's in_use_by until kicked/expired. */
-  identify(id: { name?: string; email?: string } = {}): Promise<PresenceEntry> {
+  identify(id: { name?: string; email?: string } = {}): Promise<IdentifyResult> {
     return request(this.cfg, "POST", "/auth", { body: id });
   }
 
@@ -168,6 +170,13 @@ export class SessionHandle {
   async workspaces(): Promise<Workspace[]> {
     const r = await request<{ workspaces: Workspace[] }>(this.cfg, "GET", `${this.base()}/workspaces`);
     return r.workspaces;
+  }
+
+  /** Logout-with-teardown (owner or admin): closes every workspace in this
+   * session, stops its herdr, and frees the email binding. The primary
+   * herdr hosting the broker always refuses this. */
+  teardown(): Promise<TeardownResult> {
+    return request(this.cfg, "DELETE", this.base());
   }
 
   /** Close a workspace and every pane in it (herdr workspace.close) — the

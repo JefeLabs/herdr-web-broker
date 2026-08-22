@@ -271,3 +271,76 @@ test("subscribe validation: unknown types refused; per-socket group cap enforced
     await fake.close();
   }
 });
+
+test("ownership over WS: an owned session is a ghost for other bearers — rpc and subscriptions alike", async () => {
+  const { OwnerRegistry } = await import("../src/owners.js");
+  const stateDir = tmpDir();
+  const ownedName = OwnerRegistry.sessionNameFor("kathia@example.com");
+  new OwnerRegistry(stateDir).bind("kathia@example.com", "t"); // bound to token NAME "t"
+
+  const fake = new FakeHerdr(join(tmpDir(), "h.sock"));
+  const fakeOwned = new FakeHerdr(join(tmpDir(), "o.sock"));
+  await fake.listen();
+  await fakeOwned.listen();
+  const handle = (await startDaemon({
+    configDir: tmpDir(),
+    stateDir,
+    configOverrides: {
+      listen: "127.0.0.1:0",
+      client_tokens: [
+        { name: "t", token: "tok" },
+        { name: "t2", token: "tok2" },
+      ],
+    },
+    localEndpoints: [
+      { session: "default", socketPath: fake.socketPath },
+      { session: ownedName, socketPath: fakeOwned.socketPath },
+    ],
+    herdrVersion: "0.8.0-test",
+    projectionDir: tmpDir(),
+  }))!;
+  const rpcOn = async (ws: WebSocket, id: string, session: string, method: string, params: object = {}) => {
+    const reply = new Promise<Record<string, unknown>>((resolve) => {
+      const onMsg = (d: unknown) => {
+        const f = JSON.parse(String(d)) as Record<string, unknown>;
+        if (f.id === id) {
+          ws.off("message", onMsg);
+          resolve(f);
+        }
+      };
+      ws.on("message", onMsg);
+    });
+    ws.send(JSON.stringify({ id, instance: "runtime", session, method, params }));
+    return reply;
+  };
+  const other = new WebSocket(`ws://127.0.0.1:${handle.port}/events?token=tok2`);
+  const owner = new WebSocket(`ws://127.0.0.1:${handle.port}/events?token=tok`);
+  try {
+    await Promise.all([
+      new Promise((r) => other.once("open", r)),
+      new Promise((r) => owner.once("open", r)),
+    ]);
+
+    // a non-owner's rpc into the owned session: same error as a ghost session
+    const denied = await rpcOn(other, "r1", ownedName, "agent.list");
+    assert.equal((denied.error as { code?: string })?.code, "unknown_session", JSON.stringify(denied));
+    // ...and their event subscription is refused identically
+    const sub = await rpcOn(other, "s1", ownedName, "broker.events.subscribe", {
+      subscriptions: [{ type: "pane.created" }],
+    });
+    assert.equal((sub.error as { code?: string })?.code, "unknown_session", JSON.stringify(sub));
+    // the shared default stays reachable for everyone
+    const shared = await rpcOn(other, "r2", "default", "agent.list");
+    assert.ok(shared.result, JSON.stringify(shared));
+
+    // the owner reaches their session over the same machinery
+    const mine = await rpcOn(owner, "r3", ownedName, "agent.list");
+    assert.ok(mine.result, JSON.stringify(mine));
+  } finally {
+    other.close();
+    owner.close();
+    await handle.close();
+    await fake.close();
+    await fakeOwned.close();
+  }
+});

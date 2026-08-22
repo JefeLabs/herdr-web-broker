@@ -305,3 +305,25 @@ test("an unrecognized streamed status coerces to idle rather than corrupting cou
   local.stop();
   await fake.close();
 });
+
+test("forgetSession actively retires a session: roster shrinks, rpc refuses, registry told", async () => {
+  const t = await setup();
+  try {
+    const removed: string[] = [];
+    t.registry.on("session_removed", ({ session }: { session: string }) => removed.push(session));
+    assert.deepEqual(t.local.sessions(), ["default"]);
+
+    t.local.forgetSession("default");
+    assert.deepEqual(t.local.sessions(), [], "the roster no longer lists it");
+    assert.deepEqual(removed, ["default"], "the registry heard session_removed");
+    await assert.rejects(
+      () => t.local.request("default", "ping", {}),
+      (e: BrokerError) => e.code === "unknown_session",
+    );
+    // forgetting an unknown session is a no-op, not a crash
+    assert.doesNotThrow(() => t.local.forgetSession("ghost"));
+  } finally {
+    t.local.stop();
+    await t.fake.close();
+  }
+});

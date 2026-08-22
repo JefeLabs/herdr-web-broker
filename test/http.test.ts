@@ -8,6 +8,7 @@ import { hashSecret } from "../src/auth.js";
 import { AuthLimiter } from "../src/auth-limit.js";
 import { Audit } from "../src/audit.js";
 import { EnvRegistry } from "../src/env-registry.js";
+import { OwnerRegistry } from "../src/owners.js";
 import { Presence } from "../src/presence.js";
 import { ModelRegistry } from "../src/model-registry.js";
 import { Registry } from "../src/registry.js";
@@ -21,7 +22,7 @@ import type { OpsDeps } from "../src/workspace-ops.js";
 import { FakeHerdr } from "./fake-herdr.js";
 import { scratchRepo, sh, tmpDir } from "./util.js";
 
-async function setup(opts: { limiter?: AuthLimiter } = {}) {
+async function setup(opts: { limiter?: AuthLimiter; ownership?: boolean } = {}) {
   const fake = new FakeHerdr(join(tmpDir(), "h.sock"));
   fake.agents = [{ pane_id: "w1:p1", name: "claude", agent_status: "working" }];
   await fake.listen();
@@ -33,7 +34,27 @@ async function setup(opts: { limiter?: AuthLimiter } = {}) {
   });
   await local.start();
   const config = loadConfig(tmpDir());
-  config.client_tokens = [{ name: "t", token: "tok" }];
+  config.client_tokens = [
+    { name: "t", token: "tok" },
+    { name: "t2", token: "tok2" },
+  ];
+  // ownership mode: an OwnerRegistry plus a provisioner whose "herdr" is a
+  // fresh FakeHerdr per session — start() returns the endpoint like the
+  // real exec-based provisioner does
+  const provisionedFakes = new Map<string, FakeHerdr>();
+  const owners = new OwnerRegistry(tmpDir());
+  const provisioner = {
+    async start(name: string) {
+      const fh = new FakeHerdr(join(tmpDir(), `${name}.sock`));
+      await fh.listen();
+      provisionedFakes.set(name, fh);
+      return { session: name, socketPath: fh.socketPath };
+    },
+    async stop(name: string) {
+      await provisionedFakes.get(name)?.close();
+      provisionedFakes.delete(name);
+    },
+  };
   const children = new ChildrenStore(tmpDir());
   const ops: OpsDeps = {
     local,
@@ -64,6 +85,7 @@ async function setup(opts: { limiter?: AuthLimiter } = {}) {
         return 2;
       },
       ...(opts.limiter ? { limiter: opts.limiter } : {}),
+      ...(opts.ownership ? { owners, provisioner } : {}),
       audit,
     }),
   );
@@ -71,7 +93,12 @@ async function setup(opts: { limiter?: AuthLimiter } = {}) {
   const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   const authed = (path: string, init: RequestInit = {}) =>
     fetch(base + path, { ...init, headers: { authorization: "Bearer tok", ...init.headers } });
-  return { fake, registry, local, children, server, base, authed, ops, config, persisted, presence, kicked };
+  const authed2 = (path: string, init: RequestInit = {}) =>
+    fetch(base + path, { ...init, headers: { authorization: "Bearer tok2", ...init.headers } });
+  return {
+    fake, registry, local, children, server, base, authed, authed2, ops, config, persisted, presence, kicked,
+    owners, provisioner, provisionedFakes,
+  };
 }
 
 async function teardown(t: { server: import("node:http").Server; local: LocalHerdr; fake: FakeHerdr }) {
@@ -424,9 +451,7 @@ test("POST .../agents/{pane}/ask returns the parsed answer", async () => {
 test("admin: token revocation takes effect immediately and persists via the callback", async () => {
   const t = await setup();
   try {
-    // second token so revocation of one leaves the other working
-    t.config.client_tokens.push({ name: "second", token: "tok2" });
-
+    // the fixture's second token (t2/tok2) keeps working after t is revoked
     assert.equal((await t.authed("/instances")).status, 200, "primary token works before revocation");
 
     const gone = await fetch(t.base + "/admin/tokens/t", {
@@ -995,5 +1020,179 @@ test("env routes: bad name 400, unauthenticated 401, disabled 403", async () => 
     assert.equal(off.status, 403);
   } finally {
     await teardown(t);
+  }
+});
+
+test("ownership: /auth with email provisions an owned herdr; binding is sticky; another token gets 409", async () => {
+  const t = await setup({ ownership: true });
+  try {
+    const first = await t.authed("/auth", { method: "POST", body: JSON.stringify({ email: "kathia@example.com" }) });
+    assert.equal(first.status, 200);
+    const b1 = (await first.json()) as { session?: string; provisioned?: boolean };
+    assert.ok(b1.session?.startsWith("u-"), `owned session provisioned, got ${JSON.stringify(b1)}`);
+    assert.equal(b1.provisioned, true);
+    assert.ok(t.local.sessions().includes(b1.session!), "the broker serves the new session immediately");
+
+    // same token identifying again: same session, not re-provisioned
+    const again = await t.authed("/auth", { method: "POST", body: JSON.stringify({ email: "kathia@example.com" }) });
+    const b2 = (await again.json()) as { session?: string; provisioned?: boolean };
+    assert.equal(b2.session, b1.session);
+    assert.equal(b2.provisioned, false);
+
+    // sticky: a different token claiming the email is refused
+    const conflict = await t.authed2("/auth", { method: "POST", body: JSON.stringify({ email: "kathia@example.com" }) });
+    assert.equal(conflict.status, 409);
+    assert.equal(((await conflict.json()) as { code: string }).code, "email_taken");
+
+    // email-less identify stays pure presence, as before
+    const plain = await t.authed2("/auth", { method: "POST", body: JSON.stringify({ name: "visitor" }) });
+    assert.equal(plain.status, 200);
+    assert.equal(((await plain.json()) as { session?: string }).session, undefined);
+  } finally {
+    await teardown(t);
+    for (const fh of t.provisionedFakes.values()) await fh.close();
+  }
+});
+
+test("ownership: an owned session is invisible to other bearers — 404 like a ghost, hidden from lists", async () => {
+  const t = await setup({ ownership: true });
+  try {
+    const auth = await t.authed("/auth", { method: "POST", body: JSON.stringify({ email: "kathia@example.com" }) });
+    const { session } = (await auth.json()) as { session: string };
+
+    // the owner reaches it
+    const mine = await t.authed(`/instances/runtime/sessions/${session}/agents`);
+    assert.equal(mine.status, 200);
+
+    // another bearer gets EXACTLY what a nonexistent session yields — no oracle
+    const theirs = await t.authed2(`/instances/runtime/sessions/${session}/agents`);
+    const ghost = await t.authed2(`/instances/runtime/sessions/no-such-session/agents`);
+    assert.equal(theirs.status, 404);
+    assert.equal(ghost.status, 404);
+    assert.equal(
+      ((await theirs.json()) as { code: string }).code,
+      ((await ghost.json()) as { code: string }).code,
+    );
+
+    // lists hide it from non-owners, show it to the owner; default stays shared
+    const rosterOther = (await (await t.authed2("/instances/runtime")).json()) as { sessions: string[] };
+    assert.ok(!rosterOther.sessions.includes(session));
+    assert.ok(rosterOther.sessions.includes("default"));
+    const rosterOwner = (await (await t.authed("/instances/runtime")).json()) as { sessions: string[] };
+    assert.ok(rosterOwner.sessions.includes(session));
+
+    const listOther = (await (await t.authed2("/instances/runtime/sessions")).json()) as {
+      sessions: { name: string }[];
+    };
+    assert.ok(!listOther.sessions.some((s) => s.name === session));
+  } finally {
+    await teardown(t);
+    for (const fh of t.provisionedFakes.values()) await fh.close();
+  }
+});
+
+test("ownership teardown: closes workspaces, stops the herdr, prunes the roster, frees the binding — default is untouchable", async () => {
+  const t = await setup({ ownership: true });
+  try {
+    const auth = await t.authed("/auth", { method: "POST", body: JSON.stringify({ email: "kathia@example.com" }) });
+    const { session } = (await auth.json()) as { session: string };
+    const owned = t.provisionedFakes.get(session)!;
+    const closedIds: string[] = [];
+    owned.handlers.set("workspace.list", () => ({ type: "workspace_list", workspaces: [{ workspace_id: "w9" }] }));
+    owned.handlers.set("workspace.close", (p) => {
+      closedIds.push(String((p as { workspace_id?: string })?.workspace_id));
+      return { type: "workspace_closed" };
+    });
+
+    // a non-owner cannot even see the session to tear it down
+    const denied = await t.authed2(`/instances/runtime/sessions/${session}`, { method: "DELETE" });
+    assert.equal(denied.status, 404);
+
+    // the INVARIANT: the primary herdr hosting the API can never be stopped
+    const primary = await t.authed(`/instances/runtime/sessions/default`, { method: "DELETE" });
+    assert.equal(primary.status, 400);
+    assert.ok(t.local.sessions().includes("default"));
+
+    const down = await t.authed(`/instances/runtime/sessions/${session}`, { method: "DELETE" });
+    assert.equal(down.status, 200);
+    const body = (await down.json()) as { torn_down: string; workspaces_closed: number };
+    assert.equal(body.torn_down, session);
+    assert.equal(body.workspaces_closed, 1);
+    assert.deepEqual(closedIds, ["w9"], "agents died with their workspaces");
+    assert.ok(!t.local.sessions().includes(session), "actively deregistered, not left to rot");
+    assert.equal(t.provisionedFakes.has(session), false, "the herdr process was stopped");
+
+    // the binding is freed: the same email provisions FRESH next time
+    const rebirth = await t.authed("/auth", { method: "POST", body: JSON.stringify({ email: "kathia@example.com" }) });
+    const b = (await rebirth.json()) as { session: string; provisioned: boolean };
+    assert.equal(b.provisioned, true);
+    assert.equal(b.session, session, "deterministic name survives the cycle");
+  } finally {
+    await teardown(t);
+    for (const fh of t.provisionedFakes.values()) await fh.close();
+  }
+});
+
+test("ownership admin: GET /admin/owners lists bindings; rebind moves an email to a new token", async () => {
+  const t = await setup({ ownership: true });
+  try {
+    await t.authed("/auth", { method: "POST", body: JSON.stringify({ email: "kathia@example.com" }) });
+    const admin = (path: string, init: RequestInit = {}) =>
+      fetch(t.base + path, { ...init, headers: { "x-admin-token": "admin-tok", ...init.headers } });
+
+    const list = await admin("/admin/owners");
+    assert.equal(list.status, 200);
+    const owners = (await list.json()) as { owners: { email: string; session: string; token: string }[] };
+    assert.equal(owners.owners[0]?.email, "kathia@example.com");
+
+    // rebind: t2 takes over the email (lost device); t2 now reaches the session
+    const re = await admin("/admin/owners/kathia%40example.com", {
+      method: "POST",
+      body: JSON.stringify({ token: "t2" }),
+    });
+    assert.equal(re.status, 200);
+    const session = owners.owners[0].session;
+    assert.equal((await t.authed2(`/instances/runtime/sessions/${session}/agents`)).status, 200);
+    assert.equal((await t.authed(`/instances/runtime/sessions/${session}/agents`)).status, 404);
+  } finally {
+    await teardown(t);
+    for (const fh of t.provisionedFakes.values()) await fh.close();
+  }
+});
+
+test("ownership admin kill: DELETE /admin/owners/{email} ends the user's herdr — never the primary", async () => {
+  const t = await setup({ ownership: true });
+  try {
+    const auth = await t.authed("/auth", { method: "POST", body: JSON.stringify({ email: "kathia@example.com" }) });
+    const { session } = (await auth.json()) as { session: string };
+    const owned = t.provisionedFakes.get(session)!;
+    const closedIds: string[] = [];
+    owned.handlers.set("workspace.list", () => ({ type: "workspace_list", workspaces: [{ workspace_id: "w3" }] }));
+    owned.handlers.set("workspace.close", (p) => {
+      closedIds.push(String((p as { workspace_id?: string })?.workspace_id));
+      return { type: "workspace_closed" };
+    });
+    const admin = (path: string, init: RequestInit = {}) =>
+      fetch(t.base + path, { ...init, headers: { "x-admin-token": "admin-tok", ...init.headers } });
+
+    // an unknown email is a 404, not a silent success
+    assert.equal((await admin("/admin/owners/ghost%40example.com", { method: "DELETE" })).status, 404);
+
+    const kill = await admin("/admin/owners/kathia%40example.com", { method: "DELETE" });
+    assert.equal(kill.status, 200);
+    const body = (await kill.json()) as { torn_down: string; workspaces_closed: number; token_revoked: boolean };
+    assert.equal(body.torn_down, session);
+    assert.equal(body.token_revoked, true, "kill invalidates the bound access token");
+    assert.deepEqual(closedIds, ["w3"]);
+    assert.ok(!t.local.sessions().includes(session), "herdr eliminated");
+    assert.ok(t.local.sessions().includes("default"), "the primary keeps serving — the invariant holds");
+    assert.equal(t.provisionedFakes.has(session), false);
+    assert.deepEqual(t.kicked, ["t"], "the killed user's live sockets were closed");
+    // the token is dead everywhere, and the binding is freed
+    assert.equal((await t.authed("/instances")).status, 401);
+    assert.equal(t.owners.byEmail("kathia@example.com"), undefined);
+  } finally {
+    await teardown(t);
+    for (const fh of t.provisionedFakes.values()) await fh.close();
   }
 });

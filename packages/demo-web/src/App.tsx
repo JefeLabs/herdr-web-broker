@@ -34,7 +34,14 @@ function Gated({ children }: { children: React.ReactNode }) {
       broker={s.broker}
       token={s.bearer}
       onTokenChange={(t) => s.set("bearer", t)}
-      onIdentify={(id) => s.broker.identify(id)}
+      onIdentify={async (id) => {
+        const out = await s.broker.identify(id);
+        // session ownership: the broker provisioned (or recalled) the
+        // caller's own herdr — target it for everything that follows
+        if (out.session) s.set("session", out.session);
+        return out;
+      }}
+      requireEmail
       onRequestToken={async () => {
         // dev-only self-serve: the site server holds the admin secret and
         // forwards to POST /admin/tokens — see demoMint() in vite.config.ts
@@ -56,7 +63,25 @@ function Gated({ children }: { children: React.ReactNode }) {
 function TopbarSession() {
   const s = useSettings();
   if (!s.bearer) return null;
-  return <SessionBar broker={s.broker} token={s.bearer} onLoggedOff={() => s.set("bearer", "")} />;
+  const owned = s.session.startsWith("u-");
+  return (
+    <SessionBar
+      broker={s.broker}
+      token={s.bearer}
+      onLoggedOff={() => s.set("bearer", "")}
+      {...(owned
+        ? {
+            onTeardown: async () => {
+              // logout-with-teardown: MY herdr and its agents die; the
+              // shared broker (and everyone else's herdr) keeps running
+              await s.broker.instance(s.instance).session(s.session).teardown();
+              s.set("session", "default");
+              s.set("bearer", "");
+            },
+          }
+        : {})}
+    />
+  );
 }
 
 function useBrokerHealth(): boolean | null {

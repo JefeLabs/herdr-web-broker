@@ -6,7 +6,8 @@ import type { Audit } from "./audit.js";
 import type { Presence } from "./presence.js";
 import type { BrokerConfig } from "./config.js";
 import { BrokerError, httpStatus } from "./errors.js";
-import { LocalHerdr, mapAgentList } from "./local-attach.js";
+import { LocalHerdr, mapAgentList, type HerdrEndpoint } from "./local-attach.js";
+import type { OwnerRegistry } from "./owners.js";
 import { methodDenied } from "./policy.js";
 import type { Registry } from "./registry.js";
 import type { ChildrenStore } from "./state.js";
@@ -35,6 +36,11 @@ export interface HttpDeps {
   limiter?: AuthLimiter;
   /** append-only trail of privileged actions (admin ops + env writes) */
   audit?: Audit;
+  /** session ownership (spec 2026-08-22): one email owns one herdr session */
+  owners?: OwnerRegistry;
+  /** starts/stops per-user herdr sessions; start resolves once the socket
+   * answers and returns the endpoint to attach */
+  provisioner?: { start(name: string): Promise<HerdrEndpoint>; stop(name: string): Promise<void> };
 }
 
 export function makeCallInstance(deps: {
@@ -125,6 +131,32 @@ async function readBody(req: IncomingMessage): Promise<Record<string, unknown>> 
 
 export function createHttpHandler(deps: HttpDeps) {
   const limiter = deps.limiter ?? new AuthLimiter();
+  // one provisioning flight per email at a time (spec 2026-08-22)
+  const provisionLocks = new Map<string, Promise<unknown>>();
+  // shared demolition: close every workspace, stop the herdr, deregister,
+  // free the binding — used by the owner's DELETE and the admin kill.
+  // INVARIANT: bindings never name 'default', so the primary is unreachable.
+  async function demolishOwned(binding: { email: string; session: string }): Promise<{
+    torn_down: string;
+    email: string;
+    workspaces_closed: number;
+  }> {
+    const listed = (await deps.local
+      .request(binding.session, "workspace.list", {}, 15_000)
+      .catch(() => ({}))) as { workspaces?: Array<{ workspace_id?: string }> };
+    let closed = 0;
+    for (const w of listed.workspaces ?? []) {
+      if (!w.workspace_id) continue;
+      await deps.local
+        .request(binding.session, "workspace.close", { workspace_id: w.workspace_id }, 15_000)
+        .then(() => closed++)
+        .catch(() => undefined); // a dead pane must not abort the teardown
+    }
+    await deps.provisioner!.stop(binding.session);
+    deps.local.forgetSession(binding.session);
+    deps.owners!.remove(binding.email);
+    return { torn_down: binding.session, email: binding.email, workspaces_closed: closed };
+  }
   const callInstance = makeCallInstance({
     registry: deps.registry,
     local: deps.local,
@@ -188,6 +220,8 @@ export function createHttpHandler(deps: HttpDeps) {
 
     // POST /auth — opt-in identity: who is using this instance. Top-level
     // by design: it is about the presented TOKEN, not about any instance.
+    // With ownership configured, an email also binds (sticky) and
+    // provisions the caller's own herdr session (spec 2026-08-22).
     if (parts.length === 1 && parts[0] === "auth" && req.method === "POST") {
       const body = await readBody(req);
       const name = typeof body.name === "string" ? body.name.trim().slice(0, 64) : undefined;
@@ -195,7 +229,55 @@ export function createHttpHandler(deps: HttpDeps) {
       if (email !== undefined && email !== "" && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
         throw new BrokerError("bad_request", "'email' must look like an email address");
       }
-      json(res, 200, deps.presence.identify(tokenName, { ...(name ? { name } : {}), ...(email ? { email } : {}) }));
+      const identity = deps.presence.identify(tokenName, { ...(name ? { name } : {}), ...(email ? { email } : {}) });
+      let ownership: { session?: string; provisioned?: boolean } = {};
+      if (email && deps.owners && deps.provisioner) {
+        // concurrent identifies for one email serialize on an in-flight lock
+        while (provisionLocks.has(email)) await provisionLocks.get(email)!.catch(() => undefined);
+        const existing = deps.owners.byEmail(email);
+        if (existing) {
+          if (existing.token !== tokenName) {
+            throw new BrokerError("email_taken", `'${email}' is bound to another token — ask an admin to rebind`);
+          }
+          ownership = { session: existing.session, provisioned: false };
+        } else {
+          const work = (async () => {
+            const binding = deps.owners!.bind(email, tokenName);
+            try {
+              const ep = await deps.provisioner!.start(binding.session);
+              // a real herdr's socket can exist before it answers pings —
+              // retry the attach briefly rather than failing the first probe
+              const deadline = Date.now() + 10_000;
+              await deps.local.addEndpoint(ep);
+              while (!deps.local.sessions().includes(binding.session) && Date.now() < deadline) {
+                await new Promise((r) => setTimeout(r, 300));
+                await deps.local.addEndpoint(ep);
+              }
+              if (!deps.local.sessions().includes(binding.session)) {
+                throw new BrokerError("provision_failed", `session '${binding.session}' never became reachable`);
+              }
+            } catch (e) {
+              // an unprovisioned binding must not squat the email
+              deps.owners!.remove(email);
+              throw e;
+            }
+            deps.audit?.record({
+              action: "owner.bind",
+              actor: tokenName,
+              target: email,
+              remote: req.socket.remoteAddress ?? undefined,
+            });
+            return binding.session;
+          })();
+          provisionLocks.set(email, work.catch(() => undefined));
+          try {
+            ownership = { session: await work, provisioned: true };
+          } finally {
+            provisionLocks.delete(email);
+          }
+        }
+      }
+      json(res, 200, { ...identity, ...ownership });
       return;
     }
 
@@ -235,6 +317,14 @@ export function createHttpHandler(deps: HttpDeps) {
     const entry = deps.registry.get(instance);
     if (!entry) throw new BrokerError("unknown_instance", `no instance '${instance}'`);
 
+    // Ownership (spec 2026-08-22): an OWNED session is private — for any
+    // other bearer it is indistinguishable from a nonexistent one. Unowned
+    // sessions (default, children, manually started) stay shared space.
+    const ownedByOther = (s: string): boolean => {
+      const binding = deps.owners?.bySession(s);
+      return binding !== undefined && binding.token !== tokenName;
+    };
+
     // GET /instances/{i}
     if (parts.length === 2 && req.method === "GET") {
       json(res, 200, {
@@ -244,7 +334,7 @@ export function createHttpHandler(deps: HttpDeps) {
         platform: entry.platform,
         herdr_version: entry.herdr_version,
         counts: deps.registry.counts(instance),
-        sessions: Object.keys(entry.sessions),
+        sessions: Object.keys(entry.sessions).filter((s) => !ownedByOther(s)),
       });
       return;
     }
@@ -302,18 +392,47 @@ export function createHttpHandler(deps: HttpDeps) {
 
     // GET /instances/{i}/sessions
     if (parts.length === 3 && parts[2] === "sessions" && req.method === "GET") {
-      const sessions = Object.entries(entry.sessions).map(([name, sess]) => {
-        const counts = { working: 0, blocked: 0, idle: 0 };
-        for (const agent of sess.agents) counts[agent.status] += 1;
-        return { name, counts };
-      });
+      const sessions = Object.entries(entry.sessions)
+        .filter(([name]) => !ownedByOther(name))
+        .map(([name, sess]) => {
+          const counts = { working: 0, blocked: 0, idle: 0 };
+          for (const agent of sess.agents) counts[agent.status] += 1;
+          return { name, counts };
+        });
       json(res, 200, { sessions });
       return;
     }
 
     const session = decodeURIComponent(parts[3] ?? "");
-    if (parts[2] !== "sessions" || !(session in entry.sessions)) {
+    if (parts[2] !== "sessions" || !(session in entry.sessions) || ownedByOther(session)) {
+      // the ownedByOther arm answers EXACTLY like a nonexistent session —
+      // hard isolation with no existence oracle (spec 2026-08-22)
       throw new BrokerError("unknown_session", `'${instance}' has no session '${session}'`);
+    }
+
+    // DELETE /instances/{i}/sessions/{s} — teardown (spec 2026-08-22):
+    // close every workspace, stop the herdr, deregister, free the binding.
+    // INVARIANT: the primary herdr hosting this API is never stopped.
+    if (parts.length === 4 && req.method === "DELETE") {
+      if (instance !== "runtime") {
+        throw new BrokerError("bad_request", "session teardown is runtime-scoped — owned sessions live there");
+      }
+      if (session === "default") {
+        throw new BrokerError("bad_request", "the primary herdr hosts the broker — it cannot be torn down");
+      }
+      const binding = deps.owners?.bySession(session);
+      if (!binding || !deps.provisioner) {
+        throw new BrokerError("bad_request", "only owned sessions can be torn down via the API");
+      }
+      const result = await demolishOwned(binding);
+      deps.audit?.record({
+        action: "session.teardown",
+        actor: tokenName,
+        target: session,
+        remote: req.socket.remoteAddress ?? undefined,
+      });
+      json(res, 200, result);
+      return;
     }
 
     // GET /instances/{i}/sessions/{s}/agents
@@ -724,6 +843,50 @@ export function createHttpHandler(deps: HttpDeps) {
     if (req.method === "GET" && parts[1] === "audit" && parts.length === 2) {
       const limit = Math.min(Math.max(Number(url.searchParams.get("limit")) || 100, 1), 1000);
       json(res, 200, { entries: deps.audit?.tail(limit) ?? [] });
+      return;
+    }
+    // GET /admin/owners — the email→session bindings (spec 2026-08-22)
+    if (req.method === "GET" && parts[1] === "owners" && parts.length === 2) {
+      json(res, 200, { owners: deps.owners?.list() ?? [] });
+      return;
+    }
+    // POST /admin/owners/{email} {token} — rebind to a new token (lost
+    // device); the session and its agents are untouched
+    if (req.method === "POST" && parts[1] === "owners" && parts.length === 3) {
+      if (!deps.owners) throw new BrokerError("bad_request", "ownership is not enabled on this broker");
+      const email = decodeURIComponent(parts[2]);
+      const body = await readBody(req);
+      if (typeof body.token !== "string" || !body.token) {
+        throw new BrokerError("bad_request", "'token' must be the client token NAME to bind to");
+      }
+      const binding = deps.owners.rebind(email, body.token);
+      note("owner.rebind", email);
+      json(res, 200, { rebound: binding.email, session: binding.session, token: binding.token });
+      return;
+    }
+    // DELETE /admin/owners/{email} — the admin kill: end the user's herdr
+    // (never the primary) AND invalidate their access token everywhere
+    if (req.method === "DELETE" && parts[1] === "owners" && parts.length === 3) {
+      if (!deps.owners || !deps.provisioner) {
+        throw new BrokerError("bad_request", "ownership is not enabled on this broker");
+      }
+      const email = decodeURIComponent(parts[2]);
+      const binding = deps.owners.byEmail(email);
+      if (!binding) throw new BrokerError("unknown_email", `no binding for '${email}'`);
+      if (binding.session === "default") {
+        throw new BrokerError("bad_request", "the primary herdr hosts the broker — it cannot be torn down");
+      }
+      const result = await demolishOwned(binding);
+      const remaining = deps.config.client_tokens.filter((tk) => tk.name !== binding.token);
+      const tokenRevoked = remaining.length !== deps.config.client_tokens.length;
+      if (tokenRevoked) {
+        deps.config.client_tokens = remaining;
+        deps.onTokensChanged?.();
+      }
+      const socketsClosed = deps.onKickSockets?.(binding.token) ?? 0;
+      deps.presence.remove(binding.token);
+      note("owner.kill", email);
+      json(res, 200, { ...result, token_revoked: tokenRevoked, sockets_closed: socketsClosed });
       return;
     }
     if (req.method === "POST" && parts[1] === "reload") {

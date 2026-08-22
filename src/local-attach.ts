@@ -331,6 +331,32 @@ export class LocalHerdr {
     return [...this.#sessions.keys()];
   }
 
+  /** Session provisioning (spec 2026-08-22): attach a just-started herdr
+   * without waiting for the next rescan. With a fixed endpoint list the
+   * endpoint is added to it so future rescans keep maintaining presence. */
+  async addEndpoint(ep: HerdrEndpoint): Promise<void> {
+    if (this.opts.endpoints && !this.opts.endpoints.some((e) => e.session === ep.session)) {
+      this.opts.endpoints.push(ep);
+    }
+    await this.#rescan();
+  }
+
+  /** Active deregistration for session teardown (spec 2026-08-22): the
+   * rescan's presence logic is deliberately conservative and would keep a
+   * stopped session listed until an rpc failed — when the broker ITSELF
+   * stops a session it retires the entry immediately instead. */
+  forgetSession(name: string): void {
+    if (this.opts.endpoints) {
+      // drop the endpoint too, or the next rescan would resurrect it
+      this.opts.endpoints = this.opts.endpoints.filter((e) => e.session !== name);
+    }
+    const tracked = this.#sessions.get(name);
+    if (!tracked) return;
+    tracked.events?.close();
+    this.#sessions.delete(name);
+    this.opts.registry.applySessionRemoved("runtime", name);
+  }
+
   /** Event passthrough (spec 2026-08-21): a DEDICATED events.subscribe
    * connection per subscription group — herdr accepts exactly one
    * subscribe per connection, so isolation is free and teardown is

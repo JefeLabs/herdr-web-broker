@@ -298,3 +298,49 @@ describe("EventsPanel subscriptions", () => {
     await screen.findByText(/child disconnected/);
   });
 });
+
+describe("AuthGate requireEmail", () => {
+  test("authenticate stays disabled until a plausible email is supplied", async () => {
+    const broker = {
+      setToken: vi.fn(),
+      verify: vi.fn(async () => ({ ok: false, error: { message: "nope" } })),
+    } as unknown as BrokerClient;
+    render(
+      <AuthGate broker={broker} token="tok" onTokenChange={() => undefined} requireEmail>
+        <div>inner</div>
+      </AuthGate>,
+    );
+    await waitFor(() => expect(screen.getByText("authenticate")).toBeTruthy());
+    const attempts = (broker.verify as ReturnType<typeof vi.fn>).mock.calls.length;
+
+    const button = screen.getByText("authenticate") as HTMLButtonElement;
+    expect(button.disabled).toBe(true);
+
+    fireEvent.change(screen.getByPlaceholderText("you@example.com"), { target: { value: "not-an-email" } });
+    expect((screen.getByText("authenticate") as HTMLButtonElement).disabled).toBe(true);
+
+    fireEvent.change(screen.getByPlaceholderText("you@example.com"), { target: { value: "kathia@example.com" } });
+    expect((screen.getByText("authenticate") as HTMLButtonElement).disabled).toBe(false);
+    fireEvent.click(screen.getByText("authenticate"));
+    await waitFor(() =>
+      expect((broker.verify as ReturnType<typeof vi.fn>).mock.calls.length).toBeGreaterThan(attempts),
+    );
+  });
+});
+
+describe("SessionBar teardown", () => {
+  test("the tear-down action runs the destructive callback; without it the button is absent", async () => {
+    const broker = { signOut: vi.fn() } as unknown as BrokerClient;
+    const onTeardown = vi.fn(async () => undefined);
+    const view = render(
+      <SessionBar broker={broker} token="tok-abcd" onLoggedOff={() => undefined} onTeardown={onTeardown} />,
+    );
+    fireEvent.click(screen.getByText(/tear down/i));
+    await waitFor(() => expect(onTeardown).toHaveBeenCalled());
+    expect(broker.signOut).not.toHaveBeenCalled();
+
+    view.unmount();
+    render(<SessionBar broker={broker} token="tok-abcd" onLoggedOff={() => undefined} />);
+    expect(screen.queryByText(/tear down/i)).toBeNull();
+  });
+});

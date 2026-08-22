@@ -13,6 +13,8 @@ import { EnvRegistry } from "./env-registry.js";
 import { createHttpHandler, makeCallInstance } from "./http.js";
 import { LocalHerdr, type HerdrEndpoint } from "./local-attach.js";
 import { ModelRegistry } from "./model-registry.js";
+import { OwnerRegistry } from "./owners.js";
+import { HerdrProvisioner, type SessionProvisioner } from "./provisioner.js";
 import { Presence } from "./presence.js";
 import { Projection } from "./projection.js";
 import { Registry } from "./registry.js";
@@ -31,6 +33,9 @@ export interface DaemonOptions {
   projectionDir?: string;
   /** client-WS keepalive ping interval (test override) */
   wsPingMs?: number;
+  /** session-ownership provisioner override (tests, devstack); the real
+   * exec-based one is used only when running against real herdr */
+  provisioner?: SessionProvisioner;
 }
 
 export interface DaemonHandle {
@@ -93,6 +98,17 @@ export async function startDaemon(opts: DaemonOptions): Promise<DaemonHandle | u
   const hub = new TunnelHub();
   // One failed-auth limiter across HTTP and the WS upgrade path.
   const limiter = new AuthLimiter();
+  // Session ownership (spec 2026-08-22): bindings always load; the real
+  // exec-based provisioner only exists when running against real herdr.
+  const owners = new OwnerRegistry(opts.stateDir);
+  const provisioner =
+    opts.provisioner ??
+    (opts.localEndpoints
+      ? undefined
+      : new HerdrProvisioner({
+          sessionsDir: join(homedir(), ".config/herdr/sessions"),
+          logDir: opts.stateDir,
+        }));
   const audit = new Audit(join(opts.stateDir, "audit.log"));
   let link: ParentLink | undefined;
   const startLink = (cfg: BrokerConfig) => {
@@ -126,6 +142,8 @@ export async function startDaemon(opts: DaemonOptions): Promise<DaemonHandle | u
     onKickSockets: (tokenName) => upgrade?.closeToken(tokenName) ?? 0,
     limiter,
     audit,
+    owners,
+    ...(provisioner ? { provisioner } : {}),
   });
 
   const lastColon = config.listen.lastIndexOf(":");
@@ -150,6 +168,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<DaemonHandle | u
       pingIntervalMs: opts.wsPingMs,
       limiter,
       local,
+      owners,
     });
     await new Promise<void>((resolve, reject) => {
       server.once("error", reject);

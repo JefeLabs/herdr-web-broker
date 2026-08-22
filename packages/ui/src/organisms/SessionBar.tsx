@@ -9,6 +9,10 @@ export interface SessionBarProps {
   who?: string;
   /** clear the locally-stored token — the host owns storage */
   onLoggedOff: () => void;
+  /** session ownership: logout-with-teardown — closes the caller's herdr
+   * and every agent in it (DELETE .../sessions/{s}); rendered as a
+   * clearly-destructive action only when the host provides it */
+  onTeardown?: () => void | Promise<void>;
 }
 
 /** Post-login session controls: the bearer rides every request, so the bar
@@ -16,7 +20,7 @@ export interface SessionBarProps {
  * "log off" forgets it locally (still valid elsewhere), "kick out"
  * self-evicts at the broker and then forgets it. Behavior lives in
  * useSessionBar; this is the default skin. */
-export function SessionBar({ broker, token, who, onLoggedOff }: SessionBarProps) {
+export function SessionBar({ broker, token, who, onLoggedOff, onTeardown }: SessionBarProps) {
   const { busy, logOff, kickOut } = useSessionBar({ onLoggedOff }, broker);
   return (
     <div className="session-bar">
@@ -35,6 +39,15 @@ export function SessionBar({ broker, token, who, onLoggedOff }: SessionBarProps)
       >
         kick out
       </button>
+      {onTeardown && (
+        <button
+          className="btn danger small"
+          title="logout + teardown: close every agent in YOUR herdr session and stop it — the shared broker keeps running"
+          onClick={() => void onTeardown()}
+        >
+          tear down my herdr
+        </button>
+      )}
     </div>
   );
 }

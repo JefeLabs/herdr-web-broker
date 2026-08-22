@@ -195,6 +195,19 @@ send `Escape` first.
 - **`pane.read`** over rpc — the same screen as a one-shot, when you
   don't need the long-poll discipline.
 
+## 5b. Ownership — whose herdr is it?
+
+With session ownership enabled, `POST /auth` with an email provisions the
+caller's OWN herdr (`herdr server --session u-…`, sticky binding, other
+tokens get 409) and the response's `session` is where their spawns
+belong. The verbs then split honestly: **detach** (kick, disconnect,
+`DELETE /auth`) ends the token but the herdr and its agents keep
+working; **teardown** (`DELETE .../sessions/{s}` as owner, or the admin
+kill `DELETE /admin/owners/{email}`, which also invalidates the token)
+closes every workspace and stops the herdr. Owned sessions are invisible
+to other bearers — 404, indistinguishable from nonexistent. The primary
+herdr hosting this plugin refuses teardown always.
+
 ## 6. Death — and its current honesty gaps
 
 Agents die when their process exits or their pane closes; herdr keeps the

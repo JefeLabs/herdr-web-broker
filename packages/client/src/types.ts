@@ -209,6 +209,21 @@ export interface PresenceEntry {
   last_seen: string;
 }
 
+/** identify() result: presence plus session ownership when the broker has
+ * it enabled — one email owns one herdr session; `provisioned` marks a
+ * fresh herdr started for this identify. */
+export interface IdentifyResult extends PresenceEntry {
+  /** the caller's owned herdr session — spawn and browse there */
+  session?: string;
+  provisioned?: boolean;
+}
+
+export interface TeardownResult {
+  torn_down: string;
+  email: string;
+  workspaces_closed: number;
+}
+
 export interface ContextEntry {
   name: string;
   size: number;

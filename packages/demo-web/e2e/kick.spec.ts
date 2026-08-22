@@ -12,6 +12,7 @@ test("kick revokes the token and the gate refuses it on reload", async ({ page }
 
   await page.goto("/#/console");
   await page.getByLabel("bearer token").fill(token);
+  await page.getByLabel("your email").fill("victim@e2e.local");
   await page.getByRole("button", { name: "authenticate" }).click();
   await expect(page.getByRole("heading", { name: "Authentication required" })).toBeHidden();
 

@@ -6,6 +6,7 @@ import type { AuthLimiter } from "./auth-limit.js";
 import type { BrokerConfig } from "./config.js";
 import { BrokerError } from "./errors.js";
 import type { LocalHerdr } from "./local-attach.js";
+import type { OwnerRegistry } from "./owners.js";
 import type { Registry } from "./registry.js";
 import type { ChildrenStore } from "./state.js";
 import { PROTO_VERSION, TunnelHub, type TunnelFrame } from "./tunnel.js";
@@ -32,6 +33,8 @@ export interface WsDeps {
   limiter?: AuthLimiter;
   /** event passthrough: taps for runtime subscriptions (spec 2026-08-21) */
   local?: LocalHerdr;
+  /** session ownership (spec 2026-08-22): owned sessions are private */
+  owners?: OwnerRegistry;
 }
 
 /** The 27 wire-verified herdr subscription types (schema, protocol 19). */
@@ -157,7 +160,7 @@ export function attachUpgradeHandling(server: Server, deps: WsDeps): UpgradeHand
         alive.set(ws, true);
         socketToken.set(ws, tokenName);
         ws.on("pong", () => alive.set(ws, true));
-        acceptClient(deps, ws);
+        acceptClient(deps, ws, tokenName);
       });
     } else {
       socket.write("HTTP/1.1 404 Not Found\r\n\r\n");
@@ -215,7 +218,13 @@ function acceptChild(deps: WsDeps, name: string, ws: WebSocket): void {
   });
 }
 
-function acceptClient(deps: WsDeps, ws: WebSocket): void {
+function acceptClient(deps: WsDeps, ws: WebSocket, tokenName?: string): void {
+  // ownership guard: a session owned by another token is indistinguishable
+  // from a nonexistent one (spec 2026-08-22)
+  const ownedByOther = (session: string): boolean => {
+    const binding = deps.owners?.bySession(session);
+    return binding !== undefined && binding.token !== tokenName;
+  };
   const push = (event: Record<string, unknown>) => {
     if (ws.readyState === ws.OPEN) ws.send(JSON.stringify({ event }));
   };
@@ -241,6 +250,9 @@ function acceptClient(deps: WsDeps, ws: WebSocket): void {
     const instance = String(frame.instance ?? "");
     const session = String(frame.session ?? "");
     if (!instance || !session) throw new BrokerError("bad_request", "subscribe needs 'instance' and 'session'");
+    if (ownedByOther(session)) {
+      throw new BrokerError("unknown_session", `'${instance}' has no session '${session}'`);
+    }
     const subscriptions = sanitizeSubscriptions((frame.params as { subscriptions?: unknown })?.subscriptions);
     if (taps.size >= MAX_SUB_GROUPS) {
       throw new BrokerError("bad_request", `at most ${MAX_SUB_GROUPS} live subscription groups per socket`);
@@ -314,6 +326,9 @@ function acceptClient(deps: WsDeps, ws: WebSocket): void {
           return;
         }
         if (!deps.callInstance) throw new BrokerError("bad_request", "rpc unavailable");
+        if (ownedByOther(String(frame.session ?? ""))) {
+          throw new BrokerError("unknown_session", `'${String(frame.instance ?? "")}' has no session '${String(frame.session ?? "")}'`);
+        }
         const result = await deps.callInstance(
           String(frame.instance ?? ""),
           String(frame.session ?? ""),

@@ -293,6 +293,36 @@ export const RESPONSES: Record<string, Schema> = {
     },
     required: ["models"],
   },
+  "admin-owners": {
+    type: "object",
+    properties: {
+      owners: {
+        type: "array",
+        items: {
+          type: "object",
+          properties: { email: str, session: str, token: str, created_at: str },
+          required: ["email", "session", "token", "created_at"],
+        },
+      },
+    },
+    required: ["owners"],
+  },
+  "admin-owner-rebind": {
+    type: "object",
+    properties: { rebound: str, session: str, token: str },
+    required: ["rebound", "session", "token"],
+  },
+  "admin-owner-kill": {
+    type: "object",
+    properties: {
+      torn_down: str,
+      email: str,
+      workspaces_closed: { type: "number" },
+      token_revoked: { type: "boolean" },
+      sockets_closed: { type: "number" },
+    },
+    required: ["torn_down", "email", "workspaces_closed", "token_revoked", "sockets_closed"],
+  },
   "admin-status": {
     type: "object",
     properties: {

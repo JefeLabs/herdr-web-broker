@@ -62,9 +62,17 @@ map!), `pane.close`, `agent.wait`, and `agent.prompt`'s
 4. **Git: `pull`, `discard`/`restore`, `stash`.** Pull needs a
    merge-conflict UX design; discard is destructive and needs a
    confirmation model. Scoped out of the vibe-coding v1 on purpose.
-5. **Agent ownership.** Kick logs out ALL matching-kind agents because
-   agents aren't tagged by the token that spawned them. Multi-user
-   isolation needs that ownership model.
+5. ~~**Agent ownership.**~~ Done as SESSION ownership (spec 2026-08-22):
+   one email owns one herdr session — auto-provisioned on `/auth`
+   (`herdr server --session u-…`, sticky binding, 409 for another token),
+   hard isolation (owned sessions are 404-invisible to other bearers, no
+   oracle; unowned stay shared), detach vs teardown semantics
+   (kick/disconnect leave the herdr working; `DELETE .../sessions/{s}`
+   demolishes it), admin surface (list/rebind/kill — kill also
+   invalidates the token), and the INVARIANT that the primary herdr
+   hosting this plugin can never be stopped. Proven live in Docker: a
+   real `/auth` provisioned a real second herdr and teardown left the
+   primary serving.
 6. ~~**Token minting endpoint**~~ Done: `POST /admin/tokens`, dev-gated via
    `[token_mint] enabled = true` (off by default; the demo stack enables it).
 7. ~~**Context: inject file contents.**~~ Done: per-attachment `inline`
@@ -141,9 +149,11 @@ map!), `pane.close`, `agent.wait`, and `agent.prompt`'s
 
 ## Suggested order
 
-The herdr-surface priorities (20–22) are done; **event passthrough (23)**
-rides whenever item 8's push plumbing happens. From here: the deferred
-features (**4, 7, 8**) as demand dictates, then the **React hooks layer
-(14)**, then **agent ownership (5)**. The **name (11) comes second to
-last** and **publication (12) last** — renaming is cheap until something
-is published, so the decision waits until the code is done moving.
+Three items remain. **Git pull/discard/stash (4)** stays parked until
+its conflict/confirmation UX is designed (demand-driven). The **name
+(11) comes second to last** and **publication (12) last** — renaming is
+cheap until something is published, so the decision waits until the
+code is done moving. In flight, pending credentialed spikes: per-user
+model discovery (probe-on-spawn keyed by credential context, `auto`
+until a list is recorded — ACP body vs pane body undecided until the
+wire truth lands).

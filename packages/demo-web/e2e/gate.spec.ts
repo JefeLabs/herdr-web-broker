@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { authenticate, brokerFetch } from "./helpers";
+import { authenticate, BEARER, brokerFetch } from "./helpers";
 
 test.describe("auth gate", () => {
   test("console and workspace are unreachable without a verified token", async ({ page }) => {
@@ -13,6 +13,7 @@ test.describe("auth gate", () => {
   test("a wrong token shows the broker's live rejection, not a cached pass", async ({ page }) => {
     await page.goto("/#/console");
     await page.getByLabel("bearer token").fill("not-the-token");
+    await page.getByLabel("your email").fill("wrong@e2e.local");
     await page.getByRole("button", { name: "authenticate" }).click();
     await expect(page.locator(".card-error")).toBeVisible();
     await expect(page.getByRole("heading", { name: "Authentication required" })).toBeVisible();
@@ -35,6 +36,7 @@ test.describe("auth gate", () => {
   test("self-serve: 'get a demo token' mints through the site server and unlocks without typing", async ({ page }) => {
     await page.goto("/#/console");
     await expect(page.getByRole("heading", { name: "Authentication required" })).toBeVisible();
+    await page.getByLabel("your email").fill("selfserve@e2e.local");
     await page.getByRole("button", { name: "get a demo token" }).click();
     await expect(page.getByRole("heading", { name: "Authentication required" })).toBeHidden();
     await expect(page.locator("article#health")).toBeVisible();
@@ -43,6 +45,7 @@ test.describe("auth gate", () => {
   test("session bar: log off keeps the token valid; kick out revokes it everywhere", async ({ page }) => {
     // in via self-serve mint — the bar appears in the topbar
     await page.goto("/#/console");
+    await page.getByLabel("your email").fill("bar-flow@e2e.local");
     await page.getByRole("button", { name: "get a demo token" }).click();
     await expect(page.getByRole("heading", { name: "Authentication required" })).toBeHidden();
     await expect(page.getByRole("button", { name: "kick out" })).toBeVisible();
@@ -66,6 +69,7 @@ test.describe("auth gate", () => {
     expect((await brokerFetch("/instances", { token: tokenA })).status).toBe(200);
 
     // KICK OUT: revoked at the broker — dead everywhere, gate returns
+    await page.getByLabel("your email").fill("bar-flow-2@e2e.local");
     await page.getByRole("button", { name: "get a demo token" }).click();
     await expect(page.getByRole("heading", { name: "Authentication required" })).toBeHidden();
     const tokenB = await readToken();
@@ -83,5 +87,29 @@ test.describe("auth gate", () => {
     });
     await page.reload();
     await expect(page.getByRole("heading", { name: "Authentication required" })).toBeVisible();
+  });
+});
+
+test.describe("session ownership", () => {
+  test("email provisions MY herdr; teardown demolishes it and the shared broker survives", async ({ page }) => {
+    // keepSession: null — stay in the owned session this flow is about
+    await authenticate(page, "console", BEARER, { email: "owner-e2e@e2e.local", keepSession: null });
+
+    // the broker provisioned a real (simulated) herdr for this email
+    const roster = await brokerFetch("/instances/runtime");
+    const sessions = (roster.body as { sessions: string[] }).sessions;
+    const owned = sessions.find((s) => s.startsWith("u-owner-e2e-"));
+    expect(owned).toBeTruthy();
+
+    // the topbar knows this session is mine: the destructive exit exists
+    await expect(page.getByRole("button", { name: "tear down my herdr" })).toBeVisible();
+    await page.getByRole("button", { name: "tear down my herdr" }).click();
+
+    // teardown logs out: back at the gate…
+    await expect(page.getByRole("heading", { name: "Authentication required" })).toBeVisible();
+    // …and the herdr is gone from the roster while the shared broker lives on
+    const after = await brokerFetch("/instances/runtime");
+    expect((after.body as { sessions: string[] }).sessions).not.toContain(owned);
+    expect((after.body as { sessions: string[] }).sessions).toContain("default");
   });
 });

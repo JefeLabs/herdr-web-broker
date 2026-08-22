@@ -14,6 +14,9 @@ export interface AuthGateProps {
    * a token (however the host obtains one), fills it, and verifies — the
    * one-click way into a demo instance */
   onRequestToken?: () => Promise<string>;
+  /** session-ownership deployments: the email keys the caller's own herdr,
+   * so entry is blocked until a plausible one is supplied */
+  requireEmail?: boolean;
   children: ReactNode;
 }
 
@@ -21,13 +24,15 @@ export interface AuthGateProps {
  * verified against the broker (broker.verify()). A stored token is
  * re-verified on mount — possession of storage is not authentication.
  * All behavior lives in useAuthGate; this is the default skin. */
-export function AuthGate({ broker, token, onTokenChange, onIdentify, onRequestToken, children }: AuthGateProps) {
+export function AuthGate({ broker, token, onTokenChange, onIdentify, onRequestToken, requireEmail, children }: AuthGateProps) {
   const { state, error, attempt, requestToken } = useAuthGate(
     { token, onTokenChange, onIdentify, onRequestToken },
     broker,
   );
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
+  const emailOk = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+  const blocked = state === "checking" || (requireEmail === true && !emailOk);
 
   if (state === "ok") return <>{children}</>;
 
@@ -49,9 +54,13 @@ export function AuthGate({ broker, token, onTokenChange, onIdentify, onRequestTo
             onKeyDown={(e) => e.key === "Enter" && void attempt(token, { name, email })}
           />
         </label>
-        {onIdentify && (
+        {(onIdentify || requireEmail) && (
           <>
-            <p className="note">Optional — let others see who is using this instance:</p>
+            <p className="note">
+              {requireEmail
+                ? "Required — your email keys your own herdr session on this broker:"
+                : "Optional — let others see who is using this instance:"}
+            </p>
             <label className="field">
               <span>your name</span>
               <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Kathia" />
@@ -65,7 +74,7 @@ export function AuthGate({ broker, token, onTokenChange, onIdentify, onRequestTo
         <div className="card-actions">
           <button
             className="btn"
-            disabled={state === "checking"}
+            disabled={blocked}
             onClick={() => void attempt(token, { name, email })}
           >
             {state === "checking" ? "verifying…" : "authenticate"}
@@ -73,7 +82,7 @@ export function AuthGate({ broker, token, onTokenChange, onIdentify, onRequestTo
           {onRequestToken && (
             <button
               className="btn ghost"
-              disabled={state === "checking"}
+              disabled={blocked}
               onClick={() => void requestToken({ name, email })}
             >
               get a demo token

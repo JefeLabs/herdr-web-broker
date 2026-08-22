@@ -64,7 +64,11 @@ the local machine; anything else is an enrolled child.
 | `GET .../workspaces/{w}/context[/{name}]` | list attachments / download one |
 | `POST .../workspaces/{w}/context/{name}` | toggle `{active, inline}` — drop a file from prompts, or embed its content instead of its path |
 | `DELETE .../workspaces/{w}/context/{name}` | remove an attachment |
-| `DELETE /auth` | self-eviction: the presented token revokes itself — sockets closed, presence cleared, dead everywhere |
+| `DELETE /auth` | self-eviction (detach): the presented token revokes itself — sockets closed, presence cleared, dead everywhere; the caller's herdr and agents KEEP WORKING |
+| `DELETE /instances/runtime/sessions/{s}` | logout-with-teardown (owner only): every workspace closed, the herdr stopped and deregistered, the email binding freed — the primary herdr hosting the broker always refuses this |
+| `GET /admin/owners` | the email→session ownership bindings |
+| `POST /admin/owners/{email}` | rebind an email to a new token name (lost device) — the herdr is untouched |
+| `DELETE /admin/owners/{email}` | admin kill: teardown of the user's herdr AND their token invalidated everywhere (kick detaches; kill demolishes) |
 | `POST .../agents/{pane}/ask` | structured JSON answer from a TUI agent (file-drop) |
 | `POST .../agents/{pane}/prompt` | fire-and-forget steering: `{text}` to the same agent — spawn once, keep prompting the pane |
 | `POST .../agents/{pane}/model` | switch a running agent's model: `{model}` typed as the CLI's own `/model` command |
@@ -80,7 +84,7 @@ the local machine; anything else is an enrolled child.
 | `POST /instances/{instance}/env` | store an env var for agent spawns: `{name, value, kind?, session?}` — write-only |
 | `GET /instances/{instance}/env` | stored names + scopes + source (`manual`/`hook`) — never values |
 | `DELETE /instances/{instance}/env/{name}` | remove an entry (`?kind=&session=` select the scope) |
-| `POST /auth` | opt-in identity: `{name?, email?}` — shows in `/instances`'s `in_use_by` so others see the instance is occupied (10min TTL, refreshed by activity) |
+| `POST /auth` | opt-in identity: `{name?, email?}` — shows in `/instances`'s `in_use_by` (10min TTL). With an email, **session ownership**: one email owns one herdr — the broker starts `herdr server --session u-…` for a new email (sticky binding, another token gets 409) and answers `{session, provisioned}`; owned sessions are invisible to other bearers (404, no oracle) while unowned ones stay shared |
 | `POST /admin/tokens` | mint a bearer token by name — dev-only, off unless `[token_mint] enabled = true`; minted tokens persist and revoke like any other |
 | `POST /admin/kick/{token}` | full eviction: revoke the token, terminate their WS sockets, `/logout` matching agent panes (`{kinds?, logout_agents?}`), clear presence |
 | `DELETE /admin/tokens/{name}` | revoke a client token: immediate for new requests/WS upgrades, persisted to config.toml (admin-gated) |

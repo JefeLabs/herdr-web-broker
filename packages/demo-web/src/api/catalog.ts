@@ -1084,6 +1084,58 @@ export const CATALOG: EndpointSpec[] = [
     build: () => ({ method: "GET", path: "/admin/status", auth: "admin" }),
   },
   {
+    id: "admin-owners",
+    group: "Admin",
+    title: "List users",
+    summary: "The email→session ownership bindings: who owns which herdr, bound to which token, since when.",
+    docs:
+      "One email owns one herdr session (sticky — the first token to identify claims it). Rebind an email to a " +
+      "new token with POST /admin/owners/{email} {token} after a lost device; DELETE .../sessions/{s} as the " +
+      "owner tears the herdr down. The primary session hosting the broker can never be torn down.",
+    method: "GET",
+    pathTemplate: "/admin/owners",
+    auth: "admin",
+    fields: [],
+    build: () => ({ method: "GET", path: "/admin/owners", auth: "admin" }),
+  },
+  {
+    id: "admin-owner-kill",
+    group: "Admin",
+    title: "Kill user",
+    summary: "End a user's herdr by email: every workspace closed, the herdr stopped, the binding freed — AND their access token invalidated everywhere.",
+    docs:
+      "Kick detaches (token dies, herdr keeps working); kill demolishes (herdr and agents die too). The primary " +
+      "session hosting the broker is structurally unreachable — bindings can never name it.",
+    method: "DELETE",
+    pathTemplate: "/admin/owners/{email}",
+    auth: "admin",
+    fields: [{ key: "email", label: "email", kind: "text", required: true, placeholder: "kathia@example.com" }],
+    build: (v) => ({
+      method: "DELETE",
+      path: `/admin/owners/${enc(need(v, "email"))}`,
+      auth: "admin",
+    }),
+  },
+  {
+    id: "admin-owner-rebind",
+    group: "Admin",
+    title: "Rebind user",
+    summary: "Move an email's ownership binding to a new client token (lost device) — the herdr and its agents are untouched.",
+    method: "POST",
+    pathTemplate: "/admin/owners/{email}",
+    auth: "admin",
+    fields: [
+      { key: "email", label: "email", kind: "text", required: true, placeholder: "kathia@example.com" },
+      { key: "token", label: "token NAME to bind", kind: "text", required: true, placeholder: "t2" },
+    ],
+    build: (v) => ({
+      method: "POST",
+      path: `/admin/owners/${enc(need(v, "email"))}`,
+      auth: "admin",
+      body: { token: need(v, "token") },
+    }),
+  },
+  {
     id: "admin-audit",
     group: "Admin",
     title: "Audit trail",
