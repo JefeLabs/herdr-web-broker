@@ -1,5 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { statSync } from "node:fs";
+import { join } from "node:path";
 import { OwnerRegistry } from "../src/owners.js";
 import { BrokerError } from "../src/errors.js";
 import { tmpDir } from "./util.js";
@@ -63,4 +65,10 @@ test("session names are safe slugs: weird locals sanitize, distinct emails never
   // same local part, different domain — the hash disambiguates
   const other = owners.bind("some.käthia+work@other.org", "t2");
   assert.notEqual(other.session, odd.session);
+});
+
+test("owners.json is owner-only (0600) — emails are PII, and state files keep the repo's posture", () => {
+  const dir = tmpDir();
+  new OwnerRegistry(dir).bind("kathia@example.com", "tok-a");
+  assert.equal(statSync(join(dir, "owners.json")).mode & 0o777, 0o600);
 });

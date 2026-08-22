@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { BrokerError } from "./errors.js";
 
@@ -33,7 +33,11 @@ export class OwnerRegistry {
   }
 
   #write(data: Record<string, OwnerBinding>): void {
-    writeFileSync(this.#path, JSON.stringify(data, null, 2) + "\n");
+    // owner-only: emails are PII (the token field is a NAME, never a
+    // secret). mode only applies on creation, so chmod covers files that
+    // predate this policy.
+    writeFileSync(this.#path, JSON.stringify(data, null, 2) + "\n", { mode: 0o600 });
+    chmodSync(this.#path, 0o600);
   }
 
   static sessionNameFor(email: string): string {
