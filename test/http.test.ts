@@ -1196,3 +1196,52 @@ test("ownership admin kill: DELETE /admin/owners/{email} ends the user's herdr �
     for (const fh of t.provisionedFakes.values()) await fh.close();
   }
 });
+
+test("git verbs over HTTP: pull fast-forwards, stash round-trips, discard needs its preview hash and audits", async () => {
+  const t = await setup();
+  try {
+    // a clone with a real origin so pull has something to fetch
+    const origin = scratchRepo();
+    const parent = tmpDir();
+    sh(parent, ["clone", "-q", origin, "w"]);
+    const cwd = join(parent, "w");
+    sh(cwd, ["config", "user.email", "t@test"]);
+    sh(cwd, ["config", "user.name", "t"]);
+    t.ops.index.set("default", "w1", { cwd });
+    const base = "/instances/runtime/sessions/default/workspaces/w1/repos/-";
+
+    // pull: origin advanced, the clone fast-forwards through the API
+    writeFileSync(join(origin, "b.txt"), "upstream\n");
+    sh(origin, ["add", "."]);
+    sh(origin, ["commit", "-qm", "upstream"]);
+    const pull = await t.authed(`${base}/git/pull`, { method: "POST", body: "{}" });
+    assert.equal(pull.status, 200);
+    assert.equal(((await pull.json()) as { pulled: boolean }).pulled, true);
+
+    // stash: push → list → pop
+    writeFileSync(join(cwd, "a.txt"), "wip\n");
+    const st = await t.authed(`${base}/git/stash`, { method: "POST", body: JSON.stringify({ message: "wip" }) });
+    assert.equal(((await st.json()) as { stashed: boolean }).stashed, true);
+    const list = (await (await t.authed(`${base}/git/stash`)).json()) as { stashes: { subject: string }[] };
+    assert.equal(list.stashes.length, 1);
+    const pop = await t.authed(`${base}/git/stash/pop`, { method: "POST", body: "{}" });
+    assert.equal(((await pop.json()) as { popped: boolean }).popped, true);
+
+    // discard: preview → confirm; the executed discard lands in the audit
+    const prev = (await (
+      await t.authed(`${base}/git/discard`, { method: "POST", body: JSON.stringify({ all: true }) })
+    ).json()) as { would_discard: string[]; confirm: string };
+    assert.deepEqual(prev.would_discard, ["a.txt"]);
+    const done = await t.authed(`${base}/git/discard`, {
+      method: "POST",
+      body: JSON.stringify({ all: true, confirm: prev.confirm }),
+    });
+    assert.equal(((await done.json()) as { discarded: boolean }).discarded, true);
+    const audit = (await (
+      await fetch(t.base + "/admin/audit", { headers: { "x-admin-token": "admin-tok" } })
+    ).json()) as { entries: { action: string; actor: string }[] };
+    assert.ok(audit.entries.some((e) => e.action === "git.discard" && e.actor === "t"), "executed discard audited");
+  } finally {
+    await teardown(t);
+  }
+});

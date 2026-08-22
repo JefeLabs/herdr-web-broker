@@ -60,6 +60,9 @@ the local machine; anything else is an enrolled child.
 | `GET .../repos/{r}/git/log?limit=` | recent commits: `{sha, subject, author, when}` |
 | `POST .../repos/{r}/git/push` | push (default origin/current branch); failures carry git stderr |
 | `POST .../repos/{r}/git/checkout` | switch or create a branch: `{ref, create?}` |
+| `POST .../repos/{r}/git/pull` | fetch + merge (`rebase?: true` to rebase); a conflict auto-aborts — no half-merged repo ever survives — and answers `{pulled:false, conflicts}` (resolving is agent work) |
+| `POST .../repos/{r}/git/discard` | preview-then-confirm: without `confirm` it's a dry run answering `{would_discard, confirm}` (hash bound to HEAD + the file set); resend with the hash to execute — a changed tree answers 409 `stale_confirm`; executed discards are audited |
+| `POST .../repos/{r}/git/stash` `GET .../git/stash` `POST .../git/stash/pop` | set work aside / list / bring it back; a conflicted pop undoes itself (the stash survives) and answers `{popped:false, conflicts}` |
 | `PUT .../workspaces/{w}/context/{name}?inline=` | upload a context attachment (raw body, 8MB cap) — stored in `.herdr/context/`, never part of the repos; active files auto-list in every prompt/ask/spec text, and `inline=1` embeds small TEXT files whole (12KB/file, 20KB total; binary/oversized fall back to path, never truncated) |
 | `GET .../workspaces/{w}/context[/{name}]` | list attachments / download one |
 | `POST .../workspaces/{w}/context/{name}` | toggle `{active, inline}` — drop a file from prompts, or embed its content instead of its path |

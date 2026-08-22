@@ -614,6 +614,136 @@ export const CATALOG: EndpointSpec[] = [
     }),
   },
   {
+    id: "git-pull",
+    group: "Git",
+    title: "Pull",
+    summary: "Fetch + merge (or rebase). Conflicts NEVER leave a half-merged repo: the broker aborts and answers {pulled:false, conflicts} — resolving is agent work.",
+    docs:
+      "Clean and fast-forward pulls just work. On conflict the merge/rebase is aborted immediately and the tree " +
+      "returns to its pre-pull state; prompt the pane's agent to pull and resolve instead. Other failures " +
+      "(network, dirty-tree refusal) carry git's own stderr.",
+    method: "POST",
+    pathTemplate: "/instances/{instance}/sessions/{session}/workspaces/{workspace_id}/repos/{repo}/git/pull",
+    auth: "bearer",
+    fields: [
+      { key: "workspace_id", label: "workspace_id", kind: "text", required: true, placeholder: "w1" },
+      { key: "repo", label: "repo", kind: "text", required: true, placeholder: "-" },
+      { key: "remote", label: "remote", kind: "text", placeholder: "origin" },
+      { key: "branch", label: "branch", kind: "text", placeholder: "current branch" },
+      { key: "rebase", label: "rebase instead of merge", kind: "toggle" },
+    ],
+    build: (v, ctx) => {
+      const body: Record<string, unknown> = {};
+      if (v.remote?.trim()) body.remote = v.remote.trim();
+      if (v.branch?.trim()) body.branch = v.branch.trim();
+      if (v.rebase === "1") body.rebase = true;
+      return {
+        method: "POST",
+        path: `${sess(ctx)}/workspaces/${enc(need(v, "workspace_id"))}/repos/${enc(need(v, "repo"))}/git/pull`,
+        auth: "bearer",
+        body,
+      };
+    },
+  },
+  {
+    id: "git-discard",
+    group: "Git",
+    title: "Discard changes",
+    summary: "Preview-then-confirm: without a confirm hash this is a DRY RUN answering {would_discard, confirm}; resend with the hash to execute.",
+    docs:
+      "The hash binds HEAD + the exact previewed file set — if the tree changes before you confirm, the request " +
+      "answers 409 stale_confirm instead of discarding work nobody looked at. Tracked files restore to HEAD; " +
+      "staged-new files unstage; untracked files are only DELETED with the explicit untracked toggle. Executed " +
+      "discards land in the audit trail.",
+    method: "POST",
+    pathTemplate: "/instances/{instance}/sessions/{session}/workspaces/{workspace_id}/repos/{repo}/git/discard",
+    auth: "bearer",
+    fields: [
+      { key: "workspace_id", label: "workspace_id", kind: "text", required: true, placeholder: "w1" },
+      { key: "repo", label: "repo", kind: "text", required: true, placeholder: "-" },
+      { key: "paths", label: "paths (JSON array; empty = use all)", kind: "json", placeholder: '["src/a.ts"]' },
+      { key: "all", label: "all tracked changes", kind: "toggle" },
+      { key: "untracked", label: "untracked too (deletes files)", kind: "toggle" },
+      { key: "confirm", label: "confirm hash (from the preview)", kind: "text", placeholder: "leave empty to preview" },
+    ],
+    build: (v, ctx) => {
+      const body: Record<string, unknown> = {};
+      if (v.paths?.trim()) body.paths = JSON.parse(v.paths);
+      if (v.all === "1") body.all = true;
+      if (v.untracked === "1") body.untracked = true;
+      if (v.confirm?.trim()) body.confirm = v.confirm.trim();
+      return {
+        method: "POST",
+        path: `${sess(ctx)}/workspaces/${enc(need(v, "workspace_id"))}/repos/${enc(need(v, "repo"))}/git/discard`,
+        auth: "bearer",
+        body,
+      };
+    },
+  },
+  {
+    id: "git-stash",
+    group: "Git",
+    title: "Stash",
+    summary: "Set work aside (git stash push). A clean tree answers {stashed:false, clean:true} instead of erroring.",
+    method: "POST",
+    pathTemplate: "/instances/{instance}/sessions/{session}/workspaces/{workspace_id}/repos/{repo}/git/stash",
+    auth: "bearer",
+    fields: [
+      { key: "workspace_id", label: "workspace_id", kind: "text", required: true, placeholder: "w1" },
+      { key: "repo", label: "repo", kind: "text", required: true, placeholder: "-" },
+      { key: "message", label: "message", kind: "text", placeholder: "wip before pull" },
+      { key: "untracked", label: "include untracked", kind: "toggle" },
+    ],
+    build: (v, ctx) => {
+      const body: Record<string, unknown> = {};
+      if (v.message?.trim()) body.message = v.message.trim();
+      if (v.untracked === "1") body.untracked = true;
+      return {
+        method: "POST",
+        path: `${sess(ctx)}/workspaces/${enc(need(v, "workspace_id"))}/repos/${enc(need(v, "repo"))}/git/stash`,
+        auth: "bearer",
+        body,
+      };
+    },
+  },
+  {
+    id: "git-stash-list",
+    group: "Git",
+    title: "Stash list",
+    summary: "The repo's stash entries: ref + subject.",
+    method: "GET",
+    pathTemplate: "/instances/{instance}/sessions/{session}/workspaces/{workspace_id}/repos/{repo}/git/stash",
+    auth: "bearer",
+    fields: [
+      { key: "workspace_id", label: "workspace_id", kind: "text", required: true, placeholder: "w1" },
+      { key: "repo", label: "repo", kind: "text", required: true, placeholder: "-" },
+    ],
+    build: (v, ctx) => ({
+      method: "GET",
+      path: `${sess(ctx)}/workspaces/${enc(need(v, "workspace_id"))}/repos/${enc(need(v, "repo"))}/git/stash`,
+      auth: "bearer",
+    }),
+  },
+  {
+    id: "git-stash-pop",
+    group: "Git",
+    title: "Stash pop",
+    summary: "Bring the latest stash back (apply + drop). A conflicted pop undoes itself — the stash SURVIVES — and answers {popped:false, conflicts}.",
+    method: "POST",
+    pathTemplate: "/instances/{instance}/sessions/{session}/workspaces/{workspace_id}/repos/{repo}/git/stash/pop",
+    auth: "bearer",
+    fields: [
+      { key: "workspace_id", label: "workspace_id", kind: "text", required: true, placeholder: "w1" },
+      { key: "repo", label: "repo", kind: "text", required: true, placeholder: "-" },
+    ],
+    build: (v, ctx) => ({
+      method: "POST",
+      path: `${sess(ctx)}/workspaces/${enc(need(v, "workspace_id"))}/repos/${enc(need(v, "repo"))}/git/stash/pop`,
+      auth: "bearer",
+      body: {},
+    }),
+  },
+  {
     id: "git-push",
     group: "Git",
     title: "Push",

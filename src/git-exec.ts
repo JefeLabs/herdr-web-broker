@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import { createHash } from "node:crypto";
 import { existsSync, realpathSync, readdirSync } from "node:fs";
 import { basename, join, sep } from "node:path";
 import { BrokerError } from "./errors.js";
@@ -249,4 +250,166 @@ export async function repoCheckout(
   validateRef(opts.ref);
   await git(repoDir, opts.create ? ["checkout", "-b", opts.ref] : ["checkout", opts.ref]);
   return { branch: (await git(repoDir, ["rev-parse", "--abbrev-ref", "HEAD"])).trim() };
+}
+
+/* ── pull / discard / stash (spec: item 4, approved 2026-08-22) ────────── */
+
+export interface PullResult {
+  pulled: boolean;
+  commit?: string;
+  branch?: string;
+  /** conflict files when pulled:false — the merge/rebase was auto-aborted,
+   * the tree is back to its pre-pull state; resolving is agent work */
+  conflicts?: string[];
+}
+
+async function unmergedFiles(repoDir: string): Promise<string[]> {
+  const out = await git(repoDir, ["diff", "--name-only", "--diff-filter=U"]).catch(() => "");
+  return out.split("\n").filter(Boolean);
+}
+
+/** Fetch + merge (or rebase). Clean and fast-forward pulls just work; a
+ * conflict is aborted IMMEDIATELY — no half-merged repo ever survives an
+ * API call — and the conflicting files ride the branchable 200. Any other
+ * failure (network, dirty-tree refusal) surfaces git's own stderr. */
+export async function repoPull(
+  repoDir: string,
+  opts: { remote?: string; branch?: string; rebase?: boolean },
+): Promise<PullResult> {
+  const remote = opts.remote?.trim() || "origin";
+  validateRef(remote);
+  const branch = opts.branch?.trim() || (await git(repoDir, ["rev-parse", "--abbrev-ref", "HEAD"])).trim();
+  validateRef(branch);
+  await git(repoDir, ["fetch", remote, branch], 60_000);
+  try {
+    await git(repoDir, opts.rebase ? ["rebase", "FETCH_HEAD"] : ["merge", "--no-edit", "FETCH_HEAD"]);
+  } catch (e) {
+    const conflicts = await unmergedFiles(repoDir);
+    if (conflicts.length > 0) {
+      await git(repoDir, opts.rebase ? ["rebase", "--abort"] : ["merge", "--abort"]).catch(() => undefined);
+      return { pulled: false, conflicts };
+    }
+    throw e;
+  }
+  return {
+    pulled: true,
+    commit: (await git(repoDir, ["rev-parse", "HEAD"])).trim(),
+    branch,
+  };
+}
+
+export interface DiscardResult {
+  /** preview shape (no confirm sent): nothing was touched */
+  would_discard?: string[];
+  confirm?: string;
+  /** execute shape */
+  discarded?: boolean;
+  files?: string[];
+}
+
+function discardSelection(porcelain: string, opts: { paths?: string[]; untracked?: boolean }) {
+  const tracked: string[] = [];
+  const untracked: string[] = [];
+  const tokens = porcelain.split("\0").filter(Boolean);
+  for (let i = 0; i < tokens.length; i++) {
+    const xy = tokens[i].slice(0, 2);
+    const path = tokens[i].slice(3);
+    if (xy[0] === "R" || xy[0] === "C") i++; // skip the ORIGINAL-path field
+    (xy === "??" ? untracked : tracked).push(path);
+  }
+  const inScope = (file: string) =>
+    !opts.paths || opts.paths.some((p) => file === p || file.startsWith(p.replace(/\/?$/, "/")));
+  return {
+    tracked: tracked.filter(inScope).sort(),
+    untracked: (opts.untracked ? untracked.filter(inScope) : []).sort(),
+  };
+}
+
+/** Preview-then-confirm discard. Without `confirm` this is a dry run:
+ * `{would_discard, confirm}` where the hash binds HEAD + the exact file
+ * set — if the tree changes before the confirming call, the hash no
+ * longer matches and the request refuses (stale_confirm) instead of
+ * discarding work nobody looked at. Stateless by construction. */
+export async function repoDiscard(
+  repoDir: string,
+  opts: { paths?: string[]; all?: boolean; untracked?: boolean; confirm?: string },
+): Promise<DiscardResult> {
+  if (!opts.all && (!opts.paths || opts.paths.length === 0)) {
+    throw new BrokerError("bad_request", "pass 'paths' or 'all: true' — there is no implicit discard-everything");
+  }
+  for (const p of opts.paths ?? []) {
+    if (p.startsWith("-") || p.startsWith("/") || p.split("/").includes("..")) {
+      throw new BrokerError("bad_request", "'paths' must be plain repo-relative paths");
+    }
+  }
+  const head = (await git(repoDir, ["rev-parse", "HEAD"])).trim();
+  const porcelain = await git(repoDir, ["status", "--porcelain=v1", "-z"]);
+  const { tracked, untracked } = discardSelection(porcelain, opts);
+  const files = [...tracked, ...untracked].sort();
+  const confirm = createHash("sha256").update(`${head}\0${files.join("\0")}`).digest("hex").slice(0, 16);
+  if (!opts.confirm) return { would_discard: files, confirm };
+  if (opts.confirm !== confirm) {
+    throw new BrokerError("stale_confirm", "the tree changed since the preview — re-preview and confirm again");
+  }
+  if (tracked.length > 0) {
+    // files present in HEAD restore whole; staged-new files (not in HEAD)
+    // unstage — they become untracked and are only DELETED via `untracked`
+    const inHead = new Set((await git(repoDir, ["ls-tree", "-r", "--name-only", "HEAD"])).split("\n").filter(Boolean));
+    const restorable = tracked.filter((f) => inHead.has(f));
+    const staged = tracked.filter((f) => !inHead.has(f));
+    if (restorable.length > 0) await git(repoDir, ["checkout", "HEAD", "--", ...restorable]);
+    if (staged.length > 0) await git(repoDir, ["rm", "--cached", "-q", "--", ...staged]);
+  }
+  if (untracked.length > 0) await git(repoDir, ["clean", "-f", "--", ...untracked]);
+  return { discarded: true, files };
+}
+
+export interface StashEntry {
+  ref: string;
+  subject: string;
+}
+
+/** `git stash push` — a clean tree answers `{stashed:false, clean:true}`
+ * rather than erroring, matching repoCommit's manner. */
+export async function repoStash(
+  repoDir: string,
+  opts: { message?: string; untracked?: boolean },
+): Promise<{ stashed: boolean; clean?: boolean }> {
+  const before = (await repoStashList(repoDir)).length;
+  const args = ["stash", "push"];
+  if (opts.untracked) args.push("-u");
+  if (opts.message?.trim()) args.push("-m", opts.message.trim());
+  await git(repoDir, args);
+  const after = (await repoStashList(repoDir)).length;
+  return after > before ? { stashed: true } : { stashed: false, clean: true };
+}
+
+export async function repoStashList(repoDir: string): Promise<StashEntry[]> {
+  const out = await git(repoDir, ["stash", "list", "--format=%gd%x1f%gs"]).catch(() => "");
+  return out
+    .split("\n")
+    .filter(Boolean)
+    .map((line) => {
+      const [ref, subject] = line.split("\x1f");
+      return { ref, subject: subject ?? "" };
+    });
+}
+
+/** `git stash pop`, mirroring repoPull's conflict manner: a conflicted pop
+ * is undone with `git reset --merge` (the stash entry SURVIVES) and the
+ * conflicting files ride the branchable 200. */
+export async function repoStashPop(
+  repoDir: string,
+): Promise<{ popped: boolean; conflicts?: string[] }> {
+  try {
+    await git(repoDir, ["stash", "pop"]);
+    return { popped: true };
+  } catch (e) {
+    const conflicts = await unmergedFiles(repoDir);
+    if (conflicts.length > 0) {
+      await git(repoDir, ["reset", "--merge"]).catch(() => undefined);
+      return { popped: false, conflicts };
+    }
+    throw e;
+  }
 }

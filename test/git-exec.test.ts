@@ -1,9 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdirSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { BrokerError } from "../src/errors.js";
-import { discoverRepos, foldTree, git, repoCheckout, repoCommit, repoDiff, repoLog, repoPush, repoTree, resolveRepo, validateRef } from "../src/git-exec.js";
+import { discoverRepos, foldTree, git, repoCheckout, repoCommit, repoDiff, repoDiscard, repoLog, repoPull, repoPush, repoStash, repoStashList, repoStashPop, repoTree, resolveRepo, validateRef } from "../src/git-exec.js";
 import { scratchRepo, sh, tmpDir } from "./util.js";
 
 test("git() returns stdout and maps failures to git_error", async () => {
@@ -211,4 +211,117 @@ test("repoCheckout switches and creates branches; option smuggling is rejected",
   assert.deepEqual(await repoCheckout(repo, { ref: "feat/x", create: true }), { branch: "feat/x" });
   assert.deepEqual(await repoCheckout(repo, { ref: "main" }), { branch: "main" });
   await assert.rejects(repoCheckout(repo, { ref: "-rf" }), (e: BrokerError) => e.code === "bad_request");
+});
+
+test("repoPull: fast-forward pulls cleanly; merge and rebase conflicts auto-abort and report files", async () => {
+  const origin = scratchRepo();
+  const parent = tmpDir();
+  sh(parent, ["clone", "-q", origin, "w"]);
+  const repo = join(parent, "w");
+  sh(repo, ["config", "user.email", "c@test"]);
+  sh(repo, ["config", "user.name", "c"]);
+
+  // fast-forward: origin gains a commit, the clone pulls it
+  writeFileSync(join(origin, "b.txt"), "new\n");
+  sh(origin, ["add", "."]);
+  sh(origin, ["commit", "-qm", "add b"]);
+  const ff = await repoPull(repo, {});
+  assert.equal(ff.pulled, true);
+  assert.ok(readFileSync(join(repo, "b.txt"), "utf8").includes("new"));
+
+  // divergence on a.txt: pull conflicts, auto-aborts, reports — the tree
+  // returns to its pre-pull state (conflicts are agent work, spec choice)
+  writeFileSync(join(origin, "a.txt"), "origin change\n");
+  sh(origin, ["add", "."]);
+  sh(origin, ["commit", "-qm", "origin a"]);
+  writeFileSync(join(repo, "a.txt"), "local change\n");
+  sh(repo, ["add", "."]);
+  sh(repo, ["commit", "-qm", "local a"]);
+  const conflicted = await repoPull(repo, {});
+  assert.equal(conflicted.pulled, false);
+  assert.deepEqual(conflicted.conflicts, ["a.txt"]);
+  assert.equal(sh(repo, ["status", "--porcelain"]).trim(), "", "merge aborted — no half-merged state survives");
+  assert.equal(readFileSync(join(repo, "a.txt"), "utf8"), "local change\n");
+
+  // the rebase flavor conflicts and aborts the same way
+  const rebased = await repoPull(repo, { rebase: true });
+  assert.equal(rebased.pulled, false);
+  assert.deepEqual(rebased.conflicts, ["a.txt"]);
+  assert.equal(sh(repo, ["status", "--porcelain"]).trim(), "");
+});
+
+test("repoDiscard: preview-then-confirm — the hash binds to the exact previewed state", async () => {
+  const repo = scratchRepo();
+  writeFileSync(join(repo, "a.txt"), "dirty\n");
+  writeFileSync(join(repo, "u.txt"), "untracked\n");
+
+  // preview touches nothing; untracked needs the explicit flag
+  const preview = await repoDiscard(repo, { all: true });
+  assert.deepEqual(preview.would_discard, ["a.txt"]);
+  assert.ok(preview.confirm, "a confirm hash rides the preview");
+  const withU = await repoDiscard(repo, { all: true, untracked: true });
+  assert.deepEqual(withU.would_discard?.sort(), ["a.txt", "u.txt"]);
+  assert.equal(readFileSync(join(repo, "a.txt"), "utf8"), "dirty\n", "preview never touches the tree");
+
+  // selection is mandatory — no implicit discard-everything
+  await assert.rejects(
+    () => repoDiscard(repo, {}),
+    (e: BrokerError) => e.code === "bad_request",
+  );
+
+  // a stale confirm (tree changed since preview) refuses instead of guessing
+  writeFileSync(join(repo, "second.txt"), "x\n");
+  sh(repo, ["add", "second.txt"]);
+  await assert.rejects(
+    () => repoDiscard(repo, { all: true, confirm: preview.confirm }),
+    (e: BrokerError) => e.code === "stale_confirm",
+  );
+
+  // a fresh confirm executes: tracked restored, staged-new unstaged, untracked kept
+  const fresh = await repoDiscard(repo, { all: true });
+  const done = await repoDiscard(repo, { all: true, confirm: fresh.confirm });
+  assert.equal(done.discarded, true);
+  assert.deepEqual(done.files?.sort(), ["a.txt", "second.txt"]);
+  assert.equal(readFileSync(join(repo, "a.txt"), "utf8"), "one\n");
+  assert.equal(sh(repo, ["status", "--porcelain"]).includes("second.txt"), true, "unstaged, not deleted");
+  assert.ok(readFileSync(join(repo, "u.txt"), "utf8"), "untracked survives without the flag");
+
+  // path-scoped discard leaves the rest alone
+  writeFileSync(join(repo, "a.txt"), "dirty again\n");
+  const scoped = await repoDiscard(repo, { paths: ["a.txt"] });
+  const scopedDone = await repoDiscard(repo, { paths: ["a.txt"], confirm: scoped.confirm });
+  assert.deepEqual(scopedDone.files, ["a.txt"]);
+  assert.equal(readFileSync(join(repo, "a.txt"), "utf8"), "one\n");
+});
+
+test("repoStash: push/list/pop round-trip; a conflicted pop undoes itself and keeps the stash", async () => {
+  const repo = scratchRepo();
+  // a clean tree answers honestly instead of erroring
+  const clean = await repoStash(repo, {});
+  assert.deepEqual(clean, { stashed: false, clean: true });
+
+  writeFileSync(join(repo, "a.txt"), "wip\n");
+  const pushed = await repoStash(repo, { message: "my wip" });
+  assert.equal(pushed.stashed, true);
+  assert.equal(sh(repo, ["status", "--porcelain"]).trim(), "", "tree clean after stash");
+  const listed = await repoStashList(repo);
+  assert.equal(listed.length, 1);
+  assert.ok(listed[0].subject.includes("my wip"));
+
+  const popped = await repoStashPop(repo);
+  assert.equal(popped.popped, true);
+  assert.equal(readFileSync(join(repo, "a.txt"), "utf8"), "wip\n");
+  assert.equal((await repoStashList(repo)).length, 0);
+
+  // conflict: stash the change, land a competing commit, pop
+  const again = await repoStash(repo, { message: "wip2" });
+  assert.equal(again.stashed, true);
+  writeFileSync(join(repo, "a.txt"), "committed elsewhere\n");
+  sh(repo, ["add", "."]);
+  sh(repo, ["commit", "-qm", "competing"]);
+  const conflicted = await repoStashPop(repo);
+  assert.equal(conflicted.popped, false);
+  assert.deepEqual(conflicted.conflicts, ["a.txt"]);
+  assert.equal(sh(repo, ["status", "--porcelain"]).trim(), "", "reset --merge undid the conflicted apply");
+  assert.equal((await repoStashList(repo)).length, 1, "the stash survives a failed pop");
 });

@@ -17,9 +17,14 @@ import {
   discoverRepos,
   repoCheckout,
   repoCommit,
+  repoDiscard,
   repoDiff,
   repoLog,
+  repoPull,
   repoPush,
+  repoStash,
+  repoStashList,
+  repoStashPop,
   repoTree,
   resolveRepo,
 } from "./git-exec.js";
@@ -212,6 +217,52 @@ export async function runBrokerMethod(
       const cwd = await resolveCwd(deps, session, str(p.workspace_id, "workspace_id"));
       deleteContext(cwd, str(p.name, "name"));
       return { status: "deleted" };
+    }
+    case "broker.repo.pull": {
+      const workspaceId = str(p.workspace_id, "workspace_id");
+      const repo = str(p.repo, "repo");
+      const cwd = await resolveCwd(deps, session, workspaceId);
+      const result = await repoPull(resolveRepo(cwd, repo), {
+        ...(typeof p.remote === "string" ? { remote: p.remote } : {}),
+        ...(typeof p.branch === "string" ? { branch: p.branch } : {}),
+        ...(p.rebase === true ? { rebase: true } : {}),
+      });
+      return { workspace_id: workspaceId, repo, ...result };
+    }
+    case "broker.repo.discard": {
+      const workspaceId = str(p.workspace_id, "workspace_id");
+      const repo = str(p.repo, "repo");
+      const cwd = await resolveCwd(deps, session, workspaceId);
+      const result = await repoDiscard(resolveRepo(cwd, repo), {
+        ...(Array.isArray(p.paths) ? { paths: p.paths.map(String) } : {}),
+        ...(p.all === true ? { all: true } : {}),
+        ...(p.untracked === true ? { untracked: true } : {}),
+        ...(typeof p.confirm === "string" ? { confirm: p.confirm } : {}),
+      });
+      return { workspace_id: workspaceId, repo, ...result };
+    }
+    case "broker.repo.stash": {
+      const workspaceId = str(p.workspace_id, "workspace_id");
+      const repo = str(p.repo, "repo");
+      const cwd = await resolveCwd(deps, session, workspaceId);
+      const result = await repoStash(resolveRepo(cwd, repo), {
+        ...(typeof p.message === "string" ? { message: p.message } : {}),
+        ...(p.untracked === true ? { untracked: true } : {}),
+      });
+      return { workspace_id: workspaceId, repo, ...result };
+    }
+    case "broker.repo.stash_list": {
+      const workspaceId = str(p.workspace_id, "workspace_id");
+      const repo = str(p.repo, "repo");
+      const cwd = await resolveCwd(deps, session, workspaceId);
+      return { workspace_id: workspaceId, repo, stashes: await repoStashList(resolveRepo(cwd, repo)) };
+    }
+    case "broker.repo.stash_pop": {
+      const workspaceId = str(p.workspace_id, "workspace_id");
+      const repo = str(p.repo, "repo");
+      const cwd = await resolveCwd(deps, session, workspaceId);
+      const result = await repoStashPop(resolveRepo(cwd, repo));
+      return { workspace_id: workspaceId, repo, ...result };
     }
     case "broker.repo.checkout": {
       const workspaceId = str(p.workspace_id, "workspace_id");

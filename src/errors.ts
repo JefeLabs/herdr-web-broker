@@ -19,6 +19,7 @@ const STATUS: Record<string, number> = {
   unknown_bundle: 404,
   pane_busy: 409,
   email_taken: 409,
+  stale_confirm: 409,
   unknown_email: 404,
   provision_failed: 502,
   rate_limited: 429,

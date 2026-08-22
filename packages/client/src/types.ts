@@ -192,6 +192,29 @@ export interface LogEntry {
   when: string;
 }
 
+export interface PullResult {
+  pulled: boolean;
+  commit?: string;
+  branch?: string;
+  /** conflicts auto-aborted the merge/rebase — the tree is back to its
+   * pre-pull state; resolving is agent work */
+  conflicts?: string[];
+}
+
+export interface DiscardResult {
+  /** preview shape: nothing touched */
+  would_discard?: string[];
+  confirm?: string;
+  /** execute shape */
+  discarded?: boolean;
+  files?: string[];
+}
+
+export interface StashEntry {
+  ref: string;
+  subject: string;
+}
+
 export interface PushResult {
   workspace_id?: string;
   repo?: string;

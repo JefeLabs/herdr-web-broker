@@ -59,9 +59,15 @@ map!), `pane.close`, `agent.wait`, and `agent.prompt`'s
 
 ## Product features, deferred deliberately
 
-4. **Git: `pull`, `discard`/`restore`, `stash`.** Pull needs a
-   merge-conflict UX design; discard is destructive and needs a
-   confirmation model. Scoped out of the vibe-coding v1 on purpose.
+4. ~~**Git: `pull`, `discard`/`restore`, `stash`.**~~ Done — the two
+   parked questions got answers: pull conflicts AUTO-ABORT and report
+   files (no half-merged repo ever survives an API call; resolving is
+   agent work), and discard is preview-then-confirm with a stateless
+   hash bound to HEAD + the exact file set (a changed tree answers 409
+   stale_confirm; executed discards are audited). Stash push/list/pop
+   completes the set-aside loop — a conflicted pop undoes itself via
+   `git reset --merge` and the stash survives. SDK RepoHandle verbs +
+   five console cards ride along.
 5. ~~**Agent ownership.**~~ Done as SESSION ownership (spec 2026-08-22):
    one email owns one herdr session — auto-provisioned on `/auth`
    (`herdr server --session u-…`, sticky binding, 409 for another token),
@@ -153,11 +159,9 @@ map!), `pane.close`, `agent.wait`, and `agent.prompt`'s
 
 ## Suggested order
 
-Three items remain. **Git pull/discard/stash (4)** stays parked until
-its conflict/confirmation UX is designed (demand-driven). The **name
-(11) comes second to last** and **publication (12) last** — renaming is
-cheap until something is published, so the decision waits until the
-code is done moving. In flight, pending credentialed spikes: per-user
+Two items remain: the **name (11)** then **publication (12)** —
+renaming is cheap until something is published, so the decision waits
+until the code is done moving. In flight, pending credentialed spikes: per-user
 model discovery (probe-on-spawn keyed by credential context, `auto`
 until a list is recorded — ACP body vs pane body undecided until the
 wire truth lands).

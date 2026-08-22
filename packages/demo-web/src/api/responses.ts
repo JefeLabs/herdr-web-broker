@@ -293,6 +293,52 @@ export const RESPONSES: Record<string, Schema> = {
     },
     required: ["models"],
   },
+  "git-pull": {
+    type: "object",
+    properties: {
+      workspace_id: str,
+      repo: str,
+      pulled: { type: "boolean" },
+      commit: str,
+      branch: str,
+      conflicts: strArr,
+    },
+    required: ["workspace_id", "repo", "pulled"],
+  },
+  "git-discard": {
+    type: "object",
+    properties: {
+      workspace_id: str,
+      repo: str,
+      would_discard: strArr,
+      confirm: str,
+      discarded: { type: "boolean" },
+      files: strArr,
+    },
+    required: ["workspace_id", "repo"],
+  },
+  "git-stash": {
+    type: "object",
+    properties: { workspace_id: str, repo: str, stashed: { type: "boolean" }, clean: { type: "boolean" } },
+    required: ["workspace_id", "repo", "stashed"],
+  },
+  "git-stash-list": {
+    type: "object",
+    properties: {
+      workspace_id: str,
+      repo: str,
+      stashes: {
+        type: "array",
+        items: { type: "object", properties: { ref: str, subject: str }, required: ["ref", "subject"] },
+      },
+    },
+    required: ["workspace_id", "repo", "stashes"],
+  },
+  "git-stash-pop": {
+    type: "object",
+    properties: { workspace_id: str, repo: str, popped: { type: "boolean" }, conflicts: strArr },
+    required: ["workspace_id", "repo", "popped"],
+  },
   "admin-owners": {
     type: "object",
     properties: {

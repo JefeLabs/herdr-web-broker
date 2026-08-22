@@ -600,11 +600,51 @@ export function createHttpHandler(deps: HttpDeps) {
         json(res, 200, await callInstance(instance, session, "broker.repo.log", params));
         return;
       }
-      if ((verb === "commit" || verb === "push" || verb === "checkout") && req.method === "POST") {
+      if ((verb === "commit" || verb === "push" || verb === "checkout" || verb === "pull") && req.method === "POST") {
         const body = await readBody(req);
         json(res, 200, await callInstance(instance, session, `broker.repo.${verb}`, { ...body, ...base }, 90_000));
         return;
       }
+      // discard executes only with a preview-bound confirm hash; executed
+      // discards are destructive enough for the audit trail
+      if (verb === "discard" && req.method === "POST") {
+        const body = await readBody(req);
+        const result = await callInstance(instance, session, "broker.repo.discard", { ...body, ...base }, 90_000);
+        if (typeof body.confirm === "string") {
+          deps.audit?.record({
+            action: "git.discard",
+            actor: tokenName,
+            target: `${base.workspace_id}/${base.repo}`,
+            remote: req.socket.remoteAddress ?? undefined,
+          });
+        }
+        json(res, 200, result);
+        return;
+      }
+      if (verb === "stash" && req.method === "GET") {
+        json(res, 200, await callInstance(instance, session, "broker.repo.stash_list", base));
+        return;
+      }
+      if (verb === "stash" && req.method === "POST") {
+        const body = await readBody(req);
+        json(res, 200, await callInstance(instance, session, "broker.repo.stash", { ...body, ...base }, 90_000));
+        return;
+      }
+    }
+    // POST .../git/stash/pop — apply-and-drop; a conflicted pop undoes
+    // itself and answers {popped:false, conflicts} (stash survives)
+    if (
+      parts.length === 11 &&
+      parts[4] === "workspaces" &&
+      parts[6] === "repos" &&
+      parts[8] === "git" &&
+      parts[9] === "stash" &&
+      parts[10] === "pop" &&
+      req.method === "POST"
+    ) {
+      const base = { workspace_id: decodeURIComponent(parts[5]), repo: decodeURIComponent(parts[7]) };
+      json(res, 200, await callInstance(instance, session, "broker.repo.stash_pop", base, 90_000));
+      return;
     }
 
     // POST .../agents/{pane}/ask — structured answer via file-drop (spec §2.5)

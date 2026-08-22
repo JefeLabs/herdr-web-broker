@@ -187,3 +187,47 @@ describe("session ownership", () => {
     expect(calls[0].init.method).toBe("DELETE");
   });
 });
+
+describe("git pull/discard/stash verbs", () => {
+  const repoOf = (fetchFn: typeof fetch) =>
+    new BrokerClient({ origin: "http://b", token: "t", fetchFn }).instance("runtime").session("default").repo("w1", ".");
+
+  test("pull posts to git/pull and surfaces the conflict shape", async () => {
+    const { calls, fetchFn } = fake(200, '{"pulled":false,"conflicts":["a.txt"]}');
+    const out = await repoOf(fetchFn).pull({ rebase: true });
+    expect(out.pulled).toBe(false);
+    expect(out.conflicts).toEqual(["a.txt"]);
+    expect(calls[0].url).toBe("http://b/instances/runtime/sessions/default/workspaces/w1/repos/-/git/pull");
+    expect(JSON.parse(String(calls[0].init.body))).toEqual({ rebase: true });
+  });
+
+  test("discard previews without confirm and executes with it", async () => {
+    const { calls, fetchFn } = fake(200, '{"would_discard":["a.txt"],"confirm":"abc123"}');
+    const prev = await repoOf(fetchFn).discard({ all: true });
+    expect(prev.confirm).toBe("abc123");
+    expect(JSON.parse(String(calls[0].init.body))).toEqual({ all: true });
+
+    const done = fake(200, '{"discarded":true,"files":["a.txt"]}');
+    const out = await repoOf(done.fetchFn).discard({ all: true, confirm: "abc123" });
+    expect(out.discarded).toBe(true);
+    expect(JSON.parse(String(done.calls[0].init.body))).toEqual({ all: true, confirm: "abc123" });
+  });
+
+  test("stash push/list/pop hit the documented paths", async () => {
+    const st = fake(200, '{"stashed":true}');
+    await repoOf(st.fetchFn).stash({ message: "wip", untracked: true });
+    expect(st.calls[0].url).toContain("/git/stash");
+    expect(st.calls[0].init.method).toBe("POST");
+    expect(JSON.parse(String(st.calls[0].init.body))).toEqual({ message: "wip", untracked: true });
+
+    const ls = fake(200, '{"stashes":[{"ref":"stash@{0}","subject":"wip"}]}');
+    const listed = await repoOf(ls.fetchFn).stashList();
+    expect(listed[0].subject).toBe("wip");
+    expect(ls.calls[0].init.method ?? "GET").toBe("GET");
+
+    const pop = fake(200, '{"popped":false,"conflicts":["a.txt"]}');
+    const popped = await repoOf(pop.fetchFn).stashPop();
+    expect(popped.conflicts).toEqual(["a.txt"]);
+    expect(pop.calls[0].url).toContain("/git/stash/pop");
+  });
+});

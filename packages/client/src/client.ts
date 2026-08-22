@@ -14,7 +14,10 @@ import type {
   InstanceRollup,
   LogEntry,
   ModelInfo,
+  DiscardResult,
   IdentifyResult,
+  PullResult,
+  StashEntry,
   PresenceEntry,
   TeardownResult,
   PushResult,
@@ -352,5 +355,39 @@ export class RepoHandle {
       body: { ref, ...(opts.create ? { create: true } : {}) },
       timeoutMs: 60_000,
     });
+  }
+
+  /** Fetch + merge (or rebase). Conflicts never leave a half-merged repo:
+   * the broker aborts and answers {pulled:false, conflicts} — resolving is
+   * agent work (prompt the pane). */
+  pull(opts: { remote?: string; branch?: string; rebase?: boolean } = {}): Promise<PullResult> {
+    return request(this.session.cfg, "POST", `${this.#base()}/git/pull`, { body: opts, timeoutMs: 90_000 });
+  }
+
+  /** Preview-then-confirm discard. Without `confirm` nothing is touched —
+   * the reply carries {would_discard, confirm}; execute by resending with
+   * that hash. A changed tree in between answers 409 stale_confirm. */
+  discard(opts: {
+    paths?: string[];
+    all?: boolean;
+    untracked?: boolean;
+    confirm?: string;
+  }): Promise<DiscardResult> {
+    return request(this.session.cfg, "POST", `${this.#base()}/git/discard`, { body: opts, timeoutMs: 60_000 });
+  }
+
+  stash(opts: { message?: string; untracked?: boolean } = {}): Promise<{ stashed: boolean; clean?: boolean }> {
+    return request(this.session.cfg, "POST", `${this.#base()}/git/stash`, { body: opts, timeoutMs: 60_000 });
+  }
+
+  async stashList(): Promise<StashEntry[]> {
+    const r = await request<{ stashes: StashEntry[] }>(this.session.cfg, "GET", `${this.#base()}/git/stash`);
+    return r.stashes;
+  }
+
+  /** Apply-and-drop; a conflicted pop undoes itself (the stash survives)
+   * and answers {popped:false, conflicts}. */
+  stashPop(): Promise<{ popped: boolean; conflicts?: string[] }> {
+    return request(this.session.cfg, "POST", `${this.#base()}/git/stash/pop`, { body: {}, timeoutMs: 60_000 });
   }
 }
