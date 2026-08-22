@@ -1,14 +1,23 @@
-// hooks — the SDK's read/watch patterns as React primitives
+// hooks — the headless layer, re-exported from @jefelabs/herdr-broker-react
+// so existing consumers keep their imports; new skins should depend on
+// -react directly and skip this package entirely
 export {
   BrokerProvider,
   useAgents,
+  useAuthGate,
   useBroker,
   useEventChannel,
+  useEventsPanel,
+  usePaneViewer,
+  useRepoBrowser,
   useScreen,
+  useSessionBar,
   useVerify,
   useWorkspaces,
+  type AuthGateOpts,
+  type LogLine,
   type VerifyState,
-} from "./hooks/index.js";
+} from "@jefelabs/herdr-broker-react";
 // atoms
 export { AuthBadge, MethodChip } from "./atoms/Chip.js";
 export { CopyButton } from "./atoms/CopyButton.js";

@@ -1,6 +1,6 @@
 import type { BrokerClient } from "@jefelabs/herdr-broker-client";
-import { useCallback, useState, type ReactNode } from "react";
-import { useVerify } from "../hooks/useVerify.js";
+import { useAuthGate } from "@jefelabs/herdr-broker-react";
+import { useState, type ReactNode } from "react";
 
 export interface AuthGateProps {
   broker: BrokerClient;
@@ -19,27 +19,15 @@ export interface AuthGateProps {
 
 /** Live auth gate: children render only after the bearer token has been
  * verified against the broker (broker.verify()). A stored token is
- * re-verified on mount — possession of storage is not authentication. */
+ * re-verified on mount — possession of storage is not authentication.
+ * All behavior lives in useAuthGate; this is the default skin. */
 export function AuthGate({ broker, token, onTokenChange, onIdentify, onRequestToken, children }: AuthGateProps) {
-  // the verify state machine lives in the hook — mount verify, re-lock on
-  // an emptied token, verify() for the buttons
-  const { state, error: verifyError, verify } = useVerify(token, broker);
-  const [localError, setLocalError] = useState<string | null>(null);
+  const { state, error, attempt, requestToken } = useAuthGate(
+    { token, onTokenChange, onIdentify, onRequestToken },
+    broker,
+  );
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
-  const error = localError ?? verifyError;
-
-  const attempt = useCallback(
-    async (candidate: string, identity?: { name?: string; email?: string }) => {
-      setLocalError(null);
-      const ok = await verify(candidate);
-      if (ok && onIdentify && identity && (identity.name || identity.email)) {
-        await onIdentify(identity).catch(() => undefined); // presence is best-effort
-      }
-      return ok;
-    },
-    [verify, onIdentify],
-  );
 
   if (state === "ok") return <>{children}</>;
 
@@ -86,18 +74,7 @@ export function AuthGate({ broker, token, onTokenChange, onIdentify, onRequestTo
             <button
               className="btn ghost"
               disabled={state === "checking"}
-              onClick={() =>
-                void (async () => {
-                  setLocalError(null);
-                  try {
-                    const minted = await onRequestToken();
-                    onTokenChange(minted);
-                    await attempt(minted, { name, email });
-                  } catch (e) {
-                    setLocalError(e instanceof Error ? e.message : String(e));
-                  }
-                })()
-              }
+              onClick={() => void requestToken({ name, email })}
             >
               get a demo token
             </button>

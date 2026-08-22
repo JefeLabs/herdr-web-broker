@@ -1,6 +1,6 @@
 import type { BrokerClient, ScreenSource } from "@jefelabs/herdr-broker-client";
-import { useEffect, useMemo, useRef, useState } from "react";
-import { useScreen } from "../hooks/useScreen.js";
+import { usePaneViewer } from "@jefelabs/herdr-broker-react";
+import { useEffect, useRef } from "react";
 
 export interface PaneViewerProps {
   broker: BrokerClient;
@@ -9,49 +9,21 @@ export interface PaneViewerProps {
   paneId: string;
 }
 
-/** Live terminal view of an agent's pane: the SDK's watchScreen long-poll
- * loop delivers changed frames only, so an idle pane costs one waiting
- * request, not a render storm. The input bar is the write half — text goes
- * through pane.send_input (Enter included), Esc through pane.send_keys —
- * so first-run dialogs can be answered from the same panel. */
+/** Live terminal view of an agent's pane: changed frames only via the
+ * SDK's watchScreen long-poll, plus the write half (send_input text, Esc
+ * interrupt) so first-run dialogs can be answered from the same panel.
+ * All behavior lives in usePaneViewer; this is the default skin. */
 export function PaneViewer({ broker, instance, session, paneId }: PaneViewerProps) {
-  const agent = useMemo(
-    () => broker.instance(instance).session(session).agent(paneId),
-    [broker, instance, session, paneId],
+  const { frame, source, setSource, live, setLive, input, setInput, send, interrupt, error } = usePaneViewer(
+    { instance, session, paneId },
+    broker,
   );
-  const [source, setSource] = useState<ScreenSource>("visible");
-  const [live, setLive] = useState(true);
-  const [actionError, setActionError] = useState<string | null>(null);
-  const [input, setInput] = useState("");
   const screenRef = useRef<HTMLPreElement | null>(null);
-
-  // the watch loop lives in the hook; this organism just renders frames
-  const { frame, error: screenError } = useScreen({ instance, session, paneId, source, live }, broker);
-  const error = actionError ?? screenError;
 
   useEffect(() => {
     const el = screenRef.current;
     if (el) el.scrollTop = el.scrollHeight;
   }, [frame]);
-
-  async function send() {
-    const text = input;
-    if (!text.trim()) return;
-    setInput("");
-    try {
-      await agent.type(text);
-    } catch (e) {
-      setActionError(String(e));
-    }
-  }
-
-  async function esc() {
-    try {
-      await agent.keys(["Escape"]);
-    } catch (e) {
-      setActionError(String(e));
-    }
-  }
 
   return (
     <article className="card pane-viewer">
@@ -59,7 +31,7 @@ export function PaneViewer({ broker, instance, session, paneId }: PaneViewerProp
         <span className="chip get">PANE</span>
         <code className="mono-path">{paneId}</code>
         <span className="spacer" />
-        {(["visible", "recent"] as const).map((s) => (
+        {(["visible", "recent"] as ScreenSource[]).map((s) => (
           <button key={s} className={`btn ghost ${source === s ? "active" : ""}`} onClick={() => setSource(s)}>
             {s}
           </button>
@@ -96,7 +68,7 @@ export function PaneViewer({ broker, instance, session, paneId }: PaneViewerProp
           <button className="btn" onClick={() => void send()}>
             send
           </button>
-          <button className="btn danger" onClick={() => void esc()} title="pane.send_keys [Escape] — the portable interrupt">
+          <button className="btn danger" onClick={() => void interrupt()} title="pane.send_keys [Escape] — the portable interrupt">
             Esc
           </button>
         </div>

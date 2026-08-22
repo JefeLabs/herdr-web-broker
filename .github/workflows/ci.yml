@@ -27,6 +27,9 @@ jobs:
       - name: client SDK suite
         run: npm run build -w packages/client && npm test -w packages/client
 
+      - name: headless react suite
+        run: npm run build -w packages/react && npm test -w packages/react
+
       - name: ui suite
         run: npm run build -w packages/ui && npm test -w packages/ui
 

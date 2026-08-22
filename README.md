@@ -124,12 +124,19 @@ setModel/interrupt`, repo reads, spec-bundle `follow()` long-polling, and a
 WS event channel with subprotocol auth and reconnect. The demo site's
 workspace browser, auth gate, and events panel are built on it.
 
-`@jefelabs/herdr-broker-ui` adds React on top: atomic components
-(AuthGate, PaneViewer, WorkspaceBrowser, EventsPanel, SessionBar) plus a
-**hooks layer** — `BrokerProvider`/`useBroker`, `useVerify`, `useScreen`,
-`useAgents`, `useWorkspaces`, `useEventChannel` — each extracted from the
-organisms' own field-proven effects, and consumed by them, so the two
-never drift.
+[packages/react](packages/react) is `@jefelabs/herdr-broker-react` — the
+**headless React layer**: zero markup, zero styling, every behavior the
+components need. Primitives (`BrokerProvider`/`useBroker`, `useVerify`,
+`useScreen`, `useAgents`, `useWorkspaces`, `useEventChannel`) plus one
+behavior hook per organism (`useAuthGate`, `useSessionBar`,
+`usePaneViewer`, `useRepoBrowser`, `useEventsPanel`), each extracted from
+the organisms' own field-proven effects. Design-system skins
+(HeroUI, shadcn, Bootstrap, …) depend on this package alone.
+
+[packages/ui](packages/ui) is `@jefelabs/herdr-broker-ui` — the **default
+skin**: plain-CSS organisms (AuthGate, PaneViewer, WorkspaceBrowser,
+EventsPanel, SessionBar) that are markup-only consumers of the headless
+hooks, which they also re-export for compatibility.
 
 ## Demo site
 

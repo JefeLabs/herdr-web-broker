@@ -1,5 +1,5 @@
 import type { BrokerClient } from "@jefelabs/herdr-broker-client";
-import { useState } from "react";
+import { useSessionBar } from "@jefelabs/herdr-broker-react";
 import { CopyButton } from "../atoms/CopyButton.js";
 
 export interface SessionBarProps {
@@ -14,35 +14,24 @@ export interface SessionBarProps {
 /** Post-login session controls: the bearer rides every request, so the bar
  * surfaces it (masked, copy for curl/Postman/SDK use) with two exits —
  * "log off" forgets it locally (still valid elsewhere), "kick out"
- * self-evicts at the broker (DELETE /auth: token revoked, sockets
- * closed, presence cleared) and then forgets it. A failed revoke (already
- * dead) still clears locally. */
+ * self-evicts at the broker and then forgets it. Behavior lives in
+ * useSessionBar; this is the default skin. */
 export function SessionBar({ broker, token, who, onLoggedOff }: SessionBarProps) {
-  const [busy, setBusy] = useState(false);
+  const { busy, logOff, kickOut } = useSessionBar({ onLoggedOff }, broker);
   return (
     <div className="session-bar">
       <span className="session-who">
         {who ?? "session"} <code>…{token.slice(-4)}</code>
       </span>
       <CopyButton text={token} title="copy bearer token — use it for your own requests" />
-      <button className="btn ghost small" onClick={onLoggedOff}>
+      <button className="btn ghost small" onClick={logOff}>
         log off
       </button>
       <button
         className="btn danger small"
         disabled={busy}
         title="revoke this token at the broker — dead everywhere"
-        onClick={() =>
-          void (async () => {
-            setBusy(true);
-            try {
-              await broker.signOut();
-            } catch {
-              // token already dead upstream — clearing locally is still right
-            }
-            onLoggedOff();
-          })()
-        }
+        onClick={() => void kickOut()}
       >
         kick out
       </button>

@@ -1,21 +1,19 @@
 {
-  "name": "@jefelabs/herdr-broker-ui",
+  "name": "@jefelabs/herdr-broker-react",
   "version": "0.1.0",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "exports": {
-    ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" },
-    "./styles.css": "./styles.css"
+    ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" }
   },
-  "files": ["dist", "styles.css"],
+  "files": ["dist"],
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "test": "vitest run"
   },
   "dependencies": {
-    "@jefelabs/herdr-broker-client": "*",
-    "@jefelabs/herdr-broker-react": "*"
+    "@jefelabs/herdr-broker-client": "*"
   },
   "peerDependencies": {
     "react": "^19.0.0"

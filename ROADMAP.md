@@ -114,11 +114,17 @@ map!), `pane.close`, `agent.wait`, and `agent.prompt`'s
     anything is published (plugin ids bake into users' herdr config paths).
     Decide before item 12.
 12. **Publication.** Marketplace listing for the plugin; npm publishing +
-    versioning for `@jefelabs/herdr-broker-client` and `-ui`. Packaging
-    plan: events + models already live in `-client` — expose them as
-    subpath exports (`/events`, `/types`) rather than a third `-sdk`
-    package; revisit the split only if a consumer needs the wire types
-    without the client (e.g. a server-side schema sharer).
+    versioning for `@jefelabs/herdr-broker-client`, `-react`, and `-ui`.
+    Packaging plan: events + models already live in `-client` — expose
+    them as subpath exports (`/events`, `/types`) rather than a separate
+    `-sdk` package; revisit the split only if a consumer needs the wire
+    types without the client (e.g. a server-side schema sharer). The
+    headless/skin split is done: `-react` carries every behavior hook
+    (zero markup) and `-ui` is the default plain-CSS skin over it —
+    design-system skins (`-ui-heroui`, `-ui-bootstrap` as npm packages;
+    a shadcn flavor ships as a copy-in registry, that ecosystem's
+    distribution model) depend on `-react` alone and arrive as demand
+    shows up.
 13. ~~**Federation validation.**~~ Done: `scripts/federation-test.sh` boots
     two real containers (parent + child dialing out over a docker network)
     and drives the child entirely through the parent — enrollment, herdr

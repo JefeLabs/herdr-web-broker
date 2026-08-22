@@ -1,11 +1,6 @@
-import {
-  BrokerApiError,
-  type BrokerClient,
-  type DiffResult,
-  type TreeNode,
-} from "@jefelabs/herdr-broker-client";
+import type { BrokerClient, TreeNode } from "@jefelabs/herdr-broker-client";
+import { useRepoBrowser } from "@jefelabs/herdr-broker-react";
 import { useState } from "react";
-import { useWorkspaces } from "../hooks/useLists.js";
 import { DiffView } from "../molecules/DiffView.js";
 
 export interface WorkspaceBrowserProps {
@@ -14,48 +9,12 @@ export interface WorkspaceBrowserProps {
   session: string;
 }
 
-const describe = (e: unknown) =>
-  e instanceof BrokerApiError ? `${e.code}: ${e.message}` : e instanceof Error ? e.message : String(e);
-
 /** Workspace browsing organism: one working set, n repos — roster, file
- * trees from git's index, diffs against any base — all through the SDK's
- * session/repo handles. */
-export function WorkspaceBrowser({ broker, instance, session: sessionName }: WorkspaceBrowserProps) {
-  const session = broker.instance(instance).session(sessionName);
-
-  // the list lives in the hook; this organism loads on demand (auto: false)
-  const { workspaces, error: loadError, loaded, reload } = useWorkspaces(
-    { instance, session: sessionName, auto: false },
-    broker,
-  );
-  const [busy, setBusy] = useState(false);
-  const [selected, setSelected] = useState<{ ws: string; repo: string } | null>(null);
-  const [tree, setTree] = useState<{ tree: TreeNode; truncated: boolean } | null>(null);
-  const [diff, setDiff] = useState<DiffResult | null>(null);
-  const [base, setBase] = useState("");
-  const [paneError, setPaneError] = useState<string | null>(null);
-
-  async function load() {
-    setBusy(true);
-    setSelected(null);
-    setTree(null);
-    setDiff(null);
-    await reload();
-    setBusy(false);
-  }
-
-  async function browse(ws: string, repoPath: string, baseRef = base) {
-    setSelected({ ws, repo: repoPath });
-    setTree(null);
-    setDiff(null);
-    setPaneError(null);
-    const repo = session.repo(ws, repoPath);
-    const [t, d] = await Promise.allSettled([repo.tree(), repo.diff(baseRef.trim() || undefined)]);
-    if (t.status === "fulfilled") setTree(t.value);
-    else setPaneError(describe(t.reason));
-    if (d.status === "fulfilled") setDiff(d.value);
-    else setPaneError((prev) => prev ?? describe(d.reason));
-  }
+ * trees from git's index, diffs against any base. All fetching lives in
+ * useRepoBrowser; this is the default skin. */
+export function WorkspaceBrowser({ broker, instance, session }: WorkspaceBrowserProps) {
+  const { workspaces, loaded, busy, loadError, load, selected, tree, diff, base, setBase, browseError, browse } =
+    useRepoBrowser({ instance, session }, broker);
 
   return (
     <>
@@ -135,9 +94,9 @@ export function WorkspaceBrowser({ broker, instance, session: sessionName }: Wor
                 re-diff{base.trim() ? ` vs ${base}` : ""}
               </button>
             </div>
-            {paneError && (
+            {browseError && (
               <p className="card-error" style={{ padding: "0.6rem" }}>
-                {paneError}
+                {browseError}
               </p>
             )}
             {diff && (

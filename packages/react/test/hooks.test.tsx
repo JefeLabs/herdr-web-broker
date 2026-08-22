@@ -11,7 +11,7 @@ import {
   useScreen,
   useVerify,
   useWorkspaces,
-} from "../src/hooks/index.js";
+} from "../src/index.js";
 
 const wrapperFor = (broker: BrokerClient) =>
   function Wrapper({ children }: { children: React.ReactNode }) {
@@ -158,5 +158,155 @@ describe("useEventChannel", () => {
     expect(channel.connect).toHaveBeenCalled();
     unmount();
     expect(handlers.size).toBe(0);
+  });
+});
+
+describe("useAuthGate", () => {
+  test("requestToken mints, hands the token to the host, and verifies it", async () => {
+    const { useAuthGate } = await import("../src/index.js");
+    const broker = { setToken: vi.fn(), verify: vi.fn(async () => ({ ok: true })) } as unknown as BrokerClient;
+    const onTokenChange = vi.fn();
+    const { result } = renderHook(
+      () => useAuthGate({ token: "", onTokenChange, onRequestToken: async () => "minted-tok" }),
+      { wrapper: wrapperFor(broker) },
+    );
+    await act(async () => result.current.requestToken());
+    expect(onTokenChange).toHaveBeenCalledWith("minted-tok");
+    expect((broker.setToken as ReturnType<typeof vi.fn>).mock.calls.at(-1)?.[0]).toBe("minted-tok");
+    await waitFor(() => expect(result.current.state).toBe("ok"));
+  });
+
+  test("a failed mint surfaces its error without touching the token", async () => {
+    const { useAuthGate } = await import("../src/index.js");
+    const broker = {
+      setToken: vi.fn(),
+      verify: vi.fn(async () => ({ ok: false, error: { message: "nope" } })),
+    } as unknown as BrokerClient;
+    const onTokenChange = vi.fn();
+    const { result } = renderHook(
+      () =>
+        useAuthGate({
+          token: "",
+          onTokenChange,
+          onRequestToken: async () => {
+            throw new Error("mint disabled");
+          },
+        }),
+      { wrapper: wrapperFor(broker) },
+    );
+    await act(async () => result.current.requestToken());
+    expect(result.current.error).toBe("mint disabled");
+    expect(onTokenChange).not.toHaveBeenCalled();
+  });
+});
+
+describe("useSessionBar", () => {
+  test("kickOut revokes at the broker then clears locally — even when the revoke fails", async () => {
+    const { useSessionBar } = await import("../src/index.js");
+    const signOut = vi.fn(async () => {
+      throw new Error("already dead");
+    });
+    const broker = { signOut } as unknown as BrokerClient;
+    const onLoggedOff = vi.fn();
+    const { result } = renderHook(() => useSessionBar({ onLoggedOff }), { wrapper: wrapperFor(broker) });
+    await act(async () => result.current.kickOut());
+    expect(signOut).toHaveBeenCalled();
+    expect(onLoggedOff).toHaveBeenCalled();
+
+    result.current.logOff();
+    expect(onLoggedOff).toHaveBeenCalledTimes(2);
+    expect(signOut).toHaveBeenCalledTimes(1); // log off never touches the broker
+  });
+});
+
+describe("usePaneViewer", () => {
+  test("send types the buffer and clears it; interrupt sends Escape; frames flow", async () => {
+    const { usePaneViewer } = await import("../src/index.js");
+    const agent = {
+      watchScreen: vi.fn((cb: (s: PaneScreen) => void) => {
+        cb({ pane_id: "w1:p1", source: "visible", text: "❯ _", version: "v1", as_of: "now" });
+        return () => undefined;
+      }),
+      type: vi.fn(async () => undefined),
+      keys: vi.fn(async () => undefined),
+    };
+    const broker = { instance: () => ({ session: () => ({ agent: () => agent }) }) } as unknown as BrokerClient;
+    const { result } = renderHook(() => usePaneViewer({ instance: "runtime", session: "default", paneId: "w1:p1" }), {
+      wrapper: wrapperFor(broker),
+    });
+    await waitFor(() => expect(result.current.frame?.version).toBe("v1"));
+
+    act(() => result.current.setInput("y"));
+    await act(async () => result.current.send());
+    expect(agent.type).toHaveBeenCalledWith("y");
+    expect(result.current.input).toBe("");
+
+    await act(async () => result.current.interrupt());
+    expect(agent.keys).toHaveBeenCalledWith(["Escape"]);
+  });
+});
+
+describe("useRepoBrowser", () => {
+  test("load fetches on demand; browse fetches tree and diff for the picked repo", async () => {
+    const { useRepoBrowser } = await import("../src/index.js");
+    const repo = {
+      tree: vi.fn(async () => ({ tree: { name: "app", type: "dir", children: [] }, truncated: false })),
+      diff: vi.fn(async () => ({ branch: "main", status: [], diff: "", truncated: false })),
+    };
+    const session = {
+      workspaces: vi.fn(async () => [{ workspace_id: "w1", cwd: "/work", agents: [], repos: [] }]),
+      repo: vi.fn(() => repo),
+    };
+    const broker = { instance: () => ({ session: () => session }) } as unknown as BrokerClient;
+    const { result } = renderHook(() => useRepoBrowser({ instance: "runtime", session: "default" }), {
+      wrapper: wrapperFor(broker),
+    });
+    expect(session.workspaces).not.toHaveBeenCalled(); // on demand, never auto
+
+    await act(async () => result.current.load());
+    expect(result.current.workspaces.length).toBe(1);
+
+    act(() => result.current.setBase("origin/main"));
+    await act(async () => result.current.browse("w1", "app"));
+    expect(session.repo).toHaveBeenCalledWith("w1", "app");
+    expect(repo.diff).toHaveBeenCalledWith("origin/main");
+    await waitFor(() => expect(result.current.tree).not.toBeNull());
+    expect(result.current.diff?.branch).toBe("main");
+  });
+});
+
+describe("useEventsPanel", () => {
+  test("subscribe parses the csv, streams ⚡ lines into the log, unsubscribe records it", async () => {
+    const { useEventsPanel } = await import("../src/index.js");
+    let captured: { onEvent?: (n: string, d: unknown) => void } = {};
+    const unsub = vi.fn();
+    const events = {
+      on: vi.fn(() => () => undefined),
+      connect: vi.fn(),
+      close: vi.fn(),
+      subscribe: vi.fn(async (_t: unknown, onEvent: (n: string, d: unknown) => void) => {
+        captured = { onEvent };
+        return unsub;
+      }),
+    };
+    const broker = { events } as unknown as BrokerClient;
+    const { result } = renderHook(() => useEventsPanel({ instance: "runtime", session: "default" }), {
+      wrapper: wrapperFor(broker),
+    });
+    await act(async () => result.current.subscribe("workspace.created, pane.created"));
+    expect(events.subscribe.mock.calls[0][0]).toEqual({
+      instance: "runtime",
+      session: "default",
+      subscriptions: [{ type: "workspace.created" }, { type: "pane.created" }],
+    });
+    expect(result.current.subscribed).toBe(true);
+
+    act(() => captured.onEvent!("pane_created", { pane: { pane_id: "w1:p2" } }));
+    expect(result.current.log.some((l) => l.text.startsWith("⚡ pane_created"))).toBe(true);
+
+    act(() => result.current.unsubscribe());
+    expect(unsub).toHaveBeenCalled();
+    expect(result.current.subscribed).toBe(false);
+    expect(result.current.log.at(-1)?.text).toBe("unsubscribed");
   });
 });
