@@ -197,6 +197,57 @@ missing endpoints/SDK/UI, not missing reachability):
     then dies. Two windows, and the shipped one sits on the far side of
     this failure.
 
+28. **Module system — capabilities, not internals.** Spec:
+    `docs/superpowers/specs/2026-08-28-extension-model-design.md`.
+    Operators need to add their own git, file and workspace
+    functionality. Today the only extension points are data rows in
+    config.toml and the `/rpc` passthrough, which reaches herdr but adds
+    no broker-side shaping — neither can add an endpoint.
+    An earlier draft argued config-declared endpoints are unsafe because
+    `git-exec.ts`'s guarantees (execFile NEVER a shell, hard timeout,
+    preview-then-confirm with a hash bound to HEAD AND the exact file
+    set) cannot be expressed in TOML. True, and the wrong lesson: a
+    module is not TOML, it is CODE, and code can call those helpers
+    directly instead of reimplementing them. So safety does not live in a
+    schema constraining what an operator may declare — it lives in WHAT
+    THE BROKER HANDS THE MODULE. The module API is a capability surface,
+    not a pointer to internals; everything else follows from that.
+    Hand a module `api.git.raw(ws, repo, argv[])` and it inherits the
+    no-shell execution, the timeout and the repo-path guard for free;
+    hand it `OpsDeps` and it inherits nothing and every author re-derives
+    the security model badly. `api.files` resolves through the same
+    realpathSync escape guard askInner and execCommand use, so a module
+    physically cannot write outside its workspace even via a committed
+    symlink. `raw` takes an argv ARRAY and rejects a string — no shell to
+    inject into — with an allowlist denying `reset --hard`, `clean -fd`,
+    `push --force`; those must go through the vetted verbs that audit and
+    confirm. Routes mount under `/v1/modules/{id}/...` so core collision
+    is impossible and a URL says which tier it is; the broker
+    authenticates BEFORE dispatch, so a module cannot opt out of auth or
+    see the token.
+    Three deliberate exclusions, each for a reason: spawning agents (the
+    spawn path owns env injection, session-id pinning, prepareWorkspace
+    and the readiness gate — a module reaching around it produces agents
+    the broker cannot track), creating/closing workspaces (those carry
+    item 24-25's reaping and orphan-reporting semantics), and installing
+    a module over the API — CONFIG-ONLY, because a module is in-process
+    code and a bearer token that could install one would be a remote
+    shell. Modules are NOT sandboxed: daemon process, daemon privileges,
+    nothing stops one importing node:fs directly. Installing a module is
+    installing code, same trust as an npm dependency; the capability
+    surface makes the safe path the easy path, it is not a security
+    boundary against a hostile module, and the docs must say so without
+    hedging. The ABI is the real cost — once a third party ships against
+    `abi: 1` it is a compatibility obligation forever, which argues for
+    keeping the v1 surface small. Load failures degrade (that module's
+    routes 404, the broker still boots) rather than taking the whole API
+    down for one optional extension. Open in the spec: `.js`-only vs a TS
+    loader; whether `api.git.raw` is too sharp (enumerating safe
+    subcommands is safer and guarantees this does not meet the stated
+    need); and whether module-emitted events turn the ABI into a message
+    bus. Coupled to item 26 — the ABI wants to ship as a published
+    `packages/module` alongside the SDK, not after it.
+
 ## Blocked on herdr (needs a live schema probe)
 
 The 2026-08-21 schema probe against live herdr (protocol 19, via the demo
