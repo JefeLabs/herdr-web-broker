@@ -1,8 +1,14 @@
 {
   "name": "@jefelabs/herdr-broker-module",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Types for authoring herdr-web-broker modules: capability-scoped git, file, workspace and agent access",
-  "keywords": ["herdr", "broker", "module", "plugin", "types"],
+  "keywords": [
+    "herdr",
+    "broker",
+    "module",
+    "plugin",
+    "types"
+  ],
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -13,9 +19,17 @@
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
-  "exports": { ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" } },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
   "sideEffects": false,
-  "files": ["dist", "LICENSE"],
+  "files": [
+    "dist",
+    "LICENSE"
+  ],
   "scripts": {
     "build": "tsc -p tsconfig.json"
   }
