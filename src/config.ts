@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { parse, stringify } from "smol-toml";
 import { hashSecret } from "./auth.js";
+import type { CliConfig } from "./cli-profiles.js";
 import type { ModelsConfig } from "./model-registry.js";
 import { DEFAULT_REMOTE_DENY } from "./policy.js";
 
@@ -54,6 +55,8 @@ export interface BrokerConfig {
   token_mint: { enabled: boolean };
   /** model catalog rows + switch templates layered over the builtins */
   models?: ModelsConfig;
+  /** per-CLI transcript/pin/prepare profiles layered over the builtins */
+  cli?: CliConfig;
 }
 
 export const DEFAULT_LISTEN = "127.0.0.1:7591";
@@ -72,6 +75,7 @@ export function loadConfig(configDir: string): BrokerConfig {
     env_hooks: (raw.env_hooks as EnvHookConfig[]) ?? [],
     token_mint: { enabled: (raw.token_mint as { enabled?: boolean } | undefined)?.enabled ?? false },
     models: raw.models as ModelsConfig | undefined,
+    cli: raw.cli as CliConfig | undefined,
   };
 }
 
@@ -89,5 +93,6 @@ export function saveConfig(configDir: string, config: BrokerConfig): void {
   if (config.env_hooks.length > 0) out.env_hooks = config.env_hooks;
   if (config.token_mint.enabled) out.token_mint = config.token_mint;
   if (config.models) out.models = config.models;
+  if (config.cli) out.cli = config.cli;
   writeFileSync(join(configDir, "config.toml"), stringify(out) + "\n");
 }
