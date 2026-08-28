@@ -1,5 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { AgentIndex } from "../src/state.js";
 import { tmpDir } from "./util.js";
 
@@ -25,4 +27,12 @@ test("panes are namespaced by session and removable", () => {
 test("unknown lookups are undefined, and a corrupt file self-heals to empty", () => {
   const dir = tmpDir();
   assert.equal(new AgentIndex(dir).get("nope", "w9:p9"), undefined);
+
+  writeFileSync(join(dir, "agents.json"), "not json{");
+  const healed = new AgentIndex(dir);
+  assert.equal(healed.get("nope", "w9:p9"), undefined);
+  // the store still works after reading past the corruption — a write
+  // replaces the unparseable file rather than merging into it
+  healed.set("s1", "w1:p1", { kind: "claude", startedAt: 1 });
+  assert.deepEqual(healed.get("s1", "w1:p1"), { kind: "claude", startedAt: 1 });
 });

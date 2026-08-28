@@ -152,6 +152,63 @@ test("spawn mode A: workspace.create + agent.start, cwd validated and recorded i
   }
 });
 
+test("spawn: a pinnable kind (claude) appends --session-id after the caller's own args", async () => {
+  const t = await setup();
+  try {
+    const cwd = scratchRepo();
+    t.fake.handlers.set("workspace.create", () => ({ root_pane: { pane_id: "w2:p1" } }));
+    t.fake.handlers.set("agent.start", () => ({ type: "agent_started" }));
+    await runBrokerMethod(t.deps, "default", "broker.agent.spawn", {
+      kind: "claude",
+      cwd,
+      args: ["--model", "opus"],
+    });
+    const started = t.fake.received.find((r) => r.method === "agent.start");
+    const args = (started?.params as { args: string[] }).args;
+    assert.deepEqual(args.slice(0, 2), ["--model", "opus"], "the caller's own args stay first, untouched");
+    assert.equal(args[2], "--session-id");
+    assert.match(args[3], /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/, "a real uuid");
+  } finally {
+    await t.teardown();
+  }
+});
+
+test("spawn: the pinned id sent to agent.start is the same id recorded in AgentIndex", async () => {
+  const t = await setup();
+  try {
+    const cwd = scratchRepo();
+    t.fake.handlers.set("workspace.create", () => ({ root_pane: { pane_id: "w2:p1" } }));
+    t.fake.handlers.set("agent.start", () => ({ type: "agent_started" }));
+    await runBrokerMethod(t.deps, "default", "broker.agent.spawn", { kind: "claude", cwd });
+    const started = t.fake.received.find((r) => r.method === "agent.start");
+    const sentId = (started?.params as { args: string[] }).args[1];
+    const meta = t.deps.agents.get("default", "w2:p1");
+    assert.equal(meta?.kind, "claude");
+    assert.equal(typeof meta?.startedAt, "number");
+    assert.equal(meta?.sessionId, sentId, "the recorded id is the id actually sent, not merely a uuid");
+  } finally {
+    await t.teardown();
+  }
+});
+
+test("spawn: an unpinnable kind (copilot) records meta with the sessionId key omitted entirely", async () => {
+  const t = await setup();
+  try {
+    const cwd = scratchRepo();
+    t.fake.handlers.set("workspace.create", () => ({ root_pane: { pane_id: "w2:p1" } }));
+    t.fake.handlers.set("agent.start", () => ({ type: "agent_started" }));
+    await runBrokerMethod(t.deps, "default", "broker.agent.spawn", { kind: "copilot", cwd });
+    const started = t.fake.received.find((r) => r.method === "agent.start");
+    assert.equal((started?.params as { args?: string[] }).args, undefined, "no args were injected");
+    const meta = t.deps.agents.get("default", "w2:p1");
+    assert.equal(meta?.kind, "copilot");
+    assert.equal(typeof meta?.startedAt, "number");
+    assert.equal(meta !== undefined && "sessionId" in meta, false, "the key is omitted, not merely falsy");
+  } finally {
+    await t.teardown();
+  }
+});
+
 test("spawn validation: kind required; exactly one of cwd/workspace_id; cwd must be an absolute existing dir", async () => {
   const t = await setup();
   try {

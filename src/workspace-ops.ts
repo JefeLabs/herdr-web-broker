@@ -535,8 +535,9 @@ async function spawn(deps: OpsDeps, session: string, p: Record<string, unknown>)
   // and guessing which file belongs to which pane. Two of five CLIs have
   // such a flag; the rest are discovered by cwd map + startedAt bound.
   const profile = deps.profiles.get(kind);
-  const pinnedId = profile?.pin ? randomUUID() : undefined;
-  if (profile?.pin && pinnedId) {
+  let pinnedId: string | undefined;
+  if (profile?.pin) {
+    pinnedId = randomUUID();
     args = [...(args ?? []), profile.pin.flag, pinnedId];
   }
   for (let attempt = 0; ; attempt++) {
