@@ -55,7 +55,19 @@ POST .../agents
 ## 2. Readiness — first-run dialogs
 
 Fresh CLIs often block on a trust or login dialog before accepting work.
-The pane is a real PTY, so read it and answer it:
+For a CLI whose profile declares a `prepare` block (`claude`, as of this
+writing) the broker answers this **before launch**: it materializes a
+broker-owned config dir (0700, with a 0600 pre-accepted-trust file inside)
+under its own state dir and points the CLI at it through an env var
+(`CLAUDE_CONFIG_DIR`) injected into the pane's shell alongside the rest of
+spawn's env. The user's real `~/.claude.json` is never opened, and the
+dialog never reaches the screen — scoping acceptance to the broker's own
+spawns keeps the blast radius off the user's other, non-broker runs of the
+same CLI.
+
+CLIs with no such config-dir env var (every kind besides `claude`, until
+their formats are verified) still need the manual path — the pane is a
+real PTY, so read it and answer it:
 
 ```
 POST .../rpc  {"method": "pane.read",      "params": {"pane_id": "w1:p1", "source": "visible"}}
@@ -63,7 +75,14 @@ POST .../rpc  {"method": "pane.send_keys", "params": {"pane_id": "w1:p1", "keys"
 ```
 
 `/agents?fresh=1` reports `interactive_ready` / `launch_pending` per agent
-when you need a machine signal instead of screen text.
+when you need a machine signal instead of screen text. Spawn itself treats
+`interactive_ready` as a **level to hold**, not an edge to catch once: it
+resamples `agent.list` across a settle window (per-profile `settleMs`,
+2500ms by default) after the agent starts, and a CLI that renders its TUI
+and then dies within that window fails the spawn outright (`upstream_error`)
+instead of handing back the pane id of an agent that's already dead. A
+herdr that never reports `interactive_ready` at all is unaffected — spawn
+proceeds exactly as it did before this check existed.
 
 ## 3. Conversation — the same agent, turn after turn
 
@@ -78,7 +97,11 @@ Two channels, same pane, same context:
   to write `{"answer": <payload>}` to a drop file, unwraps the envelope,
   and returns `{"answer": …}` deterministically. An agent that never
   starts working fails fast as `agent_unresponsive` (504) instead of
-  hanging the full budget. **One ask at a time per pane**: a second
+  hanging the full budget — and for `claude`/`agy`/`opencode` (§5a)
+  that error's details carry `"evidence": "transcript"` when the CLI's
+  own session file is what proved it, with a message saying the agent
+  finished its turn but wrote no answer file, rather than the generic
+  "never started working". **One ask at a time per pane**: a second
   concurrent ask answers `409 pane_busy` (two contracts would interleave
   at the agent); steering the pane with `prompt` during an ask remains
   allowed — that's the mid-run redirection feature, not a conflict.
@@ -153,7 +176,10 @@ send `Escape` first.
   `status` — herdr's five states folded to `working | blocked | idle` for
   counts — plus `raw_status`, the unfolded truth. **`unknown` and `done`
   fold to `idle`**, so a dead-but-listed agent looks idle in `status`;
-  `raw_status` is where you see it.
+  `raw_status` is where you see it. This listing is status-tier only —
+  it does not consult a CLI's own transcript, so the fold applies exactly
+  as written here regardless of `kind`. `ask` and `wait` are the two
+  endpoints with transcript-tier evidence; see §5a.
 - **`WS /events`** — unsolicited `agent_status` events the moment an
   agent changes state (`blocked` = waiting on a human, the signal this
   product exists for). Auth: `Authorization` header, `Sec-WebSocket-Protocol:
@@ -188,12 +214,58 @@ send `Escape` first.
   the agent transitions into a target status (`until`, default
   `idle|blocked|done` — "needs me or finished") or until the screen
   matches (`match` + `match_type: substring|regex`). Timeout is a
-  branchable `200 {waited: false, timed_out: true}`, not an error.
+  branchable `200 {waited: false, timed_out: true}`, not an error. A
+  status wait replies `{waited: true, status, raw_status, evidence,
+  pane_id}` — `evidence` is `"transcript"` when the CLI's own session
+  file (§5a) is what settled `status`, `"status"` when herdr's
+  `agent_status` did. An output-match wait replies `{waited: true,
+  matched_line, pane_id}` and carries no `evidence` — that path never
+  touches a transcript.
+
+  **Caveat:** herdr resolves `until` against its own `agent_status`
+  first; the broker checks the transcript only after herdr's wait
+  returns, and — on the transcript tier — that check can outvote the
+  status herdr just resolved on. A `wait` can therefore come back with a
+  `status` that does not satisfy the `until` you asked for: e.g.
+  `until: ["idle"]` resolves because herdr saw the agent go idle, but by
+  the time the broker reads the transcript it already shows a fresh,
+  unanswered `tool_use` — so the reply reports `blocked`. That is the
+  tier's actual design (transcript evidence about *this* wait always
+  wins over a status snapshot), not a bug — but it does mean `until`
+  is a hint to herdr, not a guarantee about the value you get back.
 - **`GET .../agents/{pane}/explain`** — herdr's detection diagnostics
   (rules, evidence, region preview): the answer to "why does this pane
   show the wrong kind or status".
 - **`pane.read`** over rpc — the same screen as a one-shot, when you
   don't need the long-poll discipline.
+
+## 5a. Evidence — proof vs inference
+
+herdr's `agent_status` is a screen-inference: it reads the pane's rendered
+output and guesses. For three CLIs — `claude`, `agy`, `opencode` — the
+broker instead reads the CLI's **own session transcript**: the file (or,
+for `opencode`, SQLite row) the CLI itself writes as it works. A terminal
+record the CLI wrote is proof of what happened; a screen guess is not.
+
+`evidence` on a reply says which one decided: `"transcript"` means a
+session-file record about *this* turn settled it; `"status"` means herdr's
+`agent_status` did — either because the kind has no transcript reader
+(`codex`, `copilot` — see the [wire-test table](../test/wire/README.md)
+for why) or because no fresh-enough transcript record existed yet.
+
+The practical honesty gain: on the transcript tier, a dead agent is
+observable. A live agent keeps writing to its transcript as it works; a
+dead one stops and never emits a terminal stop record. Because
+`decideTurn` treats "no fresh record" as no evidence (falling back to the
+status tier) rather than as proof of anything, and because `ask`'s and
+`wait`'s status-tier fallback still folds `done`/`unknown` to `idle`
+exactly as `GET .../agents` does, a `claude`/`agy`/`opencode` agent that
+dies mid-turn is now distinguishable from one that's merely idle — the
+transcript simply stops advancing while the status tier alone could not
+tell the two apart. `codex` and `copilot` get none of this: they remain
+exactly as honest (and exactly as blind to a dead-but-listed pane) as
+before this feature existed, and `evidence: "status"` on every one of
+their replies is how a caller knows to expect that.
 
 ## 5b. Ownership — whose herdr is it?
 
@@ -208,14 +280,30 @@ closes every workspace and stops the herdr. Owned sessions are invisible
 to other bearers — 404, indistinguishable from nonexistent. The primary
 herdr hosting this plugin refuses teardown always.
 
-## 6. Death — and its current honesty gaps
+## 6. Death — and its remaining honesty gaps
 
 Agents die when their process exits or their pane closes; herdr keeps the
-pane listed, and the fold hides the difference (see `raw_status` above).
-The broker's protections:
+pane listed, and the status-tier fold hides the difference (see
+`raw_status` above). For `claude`/`agy`/`opencode`, §5a's transcript tier
+closes most of that gap: those CLIs stop writing the moment they die and
+never emit a terminal stop record, so `ask` and `wait` can now tell a dead
+agent from an idle one instead of both looking like `idle`. `codex` and
+`copilot` have no transcript reader (WT-4, WT-5 in the [wire-test
+table](../test/wire/README.md) are still open), so they keep exactly the
+honesty gap this section originally described — a dead `codex`/`copilot`
+agent still looks `idle`, and `evidence: "status"` on every reply for
+those kinds says so.
+
+What the transcript tier does NOT give you, for any kind: **why** an agent
+died. It proves an agent stopped advancing; it does not carry an exit code
+or a cause — that would need herdr's own `pane.exited` event to carry one,
+which is unverified (WT-6). The broker's protections against the gap that
+remains:
 
 - `ask` fails fast with `agent_unresponsive` when the agent never starts
   working (default 15s grace) — no more full-budget hangs on a dead pane.
+  On the transcript tier this also fires when the transcript proves the
+  turn finished but no answer file ever appeared (see §3).
 - `prompt`/`ask`/`slash`/`model` all 400 with `no agent in pane` when
   herdr no longer lists an agent there.
 
@@ -229,22 +317,33 @@ Cleanup and remaining limitations:
   (herdr `pane.close`, wire-verified) — the process dies with its PTY,
   the workspace and the rest of the team survive. Restart = stop + spawn
   into the same workspace (mode B).
+- **Orphans**: `GET .../sessions/{s}/orphans` reports live workspaces
+  herdr knows about that this broker instance has no record of (someone
+  else's spawn, or this process's own restart having dropped its index).
+  It only reports — nothing here closes anything. Session teardown
+  (§5b) is the one place an unrecognized workspace does get closed, and
+  even there only because the whole herdr process is being stopped
+  regardless; its response's informational `unrecognized: string[]`
+  lists which of the closed workspaces the broker hadn't indexed.
 
 ## Quick reference
 
 | Phase | Endpoint |
 | --- | --- |
 | Start | `POST .../agents` with `kind`, `cwd` or `workspace_id`, `args?` |
-| First-run dialogs | `pane.read` / `pane.send_keys` via `POST .../rpc` |
+| First-run dialogs | pre-answered before launch (kinds with a `prepare` profile); else `pane.read` / `pane.send_keys` via `POST .../rpc` |
 | Continue conversation | `POST .../agents/{pane}/prompt` `{text}` |
 | Structured turn | `POST .../agents/{pane}/ask` `{prompt}` → `{answer}` |
+| Run a command, get its exit code | `POST .../panes/{pane}/exec` `{command}` → `{pane_id, exit_code, ok}` |
 | Soft steer mid-run | `POST .../agents/{pane}/prompt` (CLIs queue it) |
 | Hard interrupt | `pane.send_keys ["Escape"]`, then prompt |
 | CLI commands | `POST .../agents/{pane}/slash/{command}` |
 | Model switch | `POST .../agents/{pane}/model` `{model}` |
 | Design docs loop | `POST .../agents/{pane}/spec-bundles` + long-poll GET |
 | Status | `GET .../agents?fresh=1` (`status` + `raw_status`) |
+| Wait for a status/output | `POST .../agents/{pane}/wait` (`until` or `match`) → `evidence` on status waits |
 | Watch the terminal | `GET .../panes/{pane}/screen?version=&wait_ms=` (long-poll) |
 | Live events | `WS /events` |
+| Live workspaces the broker doesn't own | `GET .../sessions/{s}/orphans` (reports; never kills) |
 | Stop one agent | `DELETE .../agents/{pane}` (its pane closes; the team survives) |
 | Reap a working set | `DELETE .../workspaces/{w}` (panes + agents die with it) |

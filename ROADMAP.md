@@ -33,6 +33,60 @@ missing endpoints/SDK/UI, not missing reachability):
     reconnect. Proven end to end by the federation probe: a child's
     `workspace_created` crossed child herdr → tunnel → parent → client WS.
 
+## Agent lifecycle determinism (2026-08-27 spec)
+
+24. ~~**Transcript-tier evidence.**~~ Done: for the three CLIs whose
+    session-file formats are verified, the broker reads the CLI's OWN
+    transcript instead of trusting only herdr's screen-inferred
+    `agent_status` — `claude` (`--session-id`-pinned JSONL under
+    `~/.claude/projects/`), `agy` (cwd → conversation-id cache map,
+    since `--conversation` only RESUMES an existing id — WT-2 asks
+    whether it can mint one), and `opencode` (`--session`-pinned,
+    `~/.local/share/opencode/opencode.db` SQLite+WAL, a finished turn
+    keyed off `time.completed` — WT-3 probed and answered live
+    2026-08-27; `opencode export` was rejected as a ~561KB-per-call
+    subprocess, unusable on a 500ms poll). `decideTurn` is the pure
+    tier: transcript evidence wins only when its record is fresher than
+    the current turn's own prompt, so a stale file never masquerades as
+    fresh proof. `POST .../agents/{pane}/wait` returns the result as
+    `evidence: "transcript" | "status"`, and `ask`'s `agent_unresponsive`
+    fast-fail carries the same field in its error details, so a caller
+    can tell proof from inference; `GET .../agents` is unchanged and
+    stays status-tier only. The practical gain: on the transcript tier a
+    dead agent is now distinguishable from an idle one — it stops
+    writing and never emits a terminal stop — closing the worst blind
+    spot in the `done`/`unknown` → `idle` fold for those three kinds.
+    Stayed honest: `codex` and `copilot` remain on the status tier —
+    their transcript formats are still unverified (WT-4, WT-5) — and
+    even on the transcript tier, WHY an agent died stays unreported
+    (WT-6: whether herdr's `pane.exited` carries an exit code is still
+    open); a `wait` can also come back with a `status` that doesn't
+    satisfy the `until` you asked for, when a transcript record written
+    during the wait outvotes the status herdr already resolved against.
+    Shipped alongside: a per-CLI profile registry (`cli-profiles.ts`,
+    builtins + `[[cli.profiles]]` config.toml overrides — same shape as
+    `model-registry.ts`); `POST .../panes/{pane}/exec` runs a command
+    and reports its real exit code (a nonzero exit is a 200-shaped
+    `ok: false`, only a missing exit code within budget 504s);
+    `GET .../sessions/{s}/orphans` reports live workspaces the broker
+    never indexed without ever closing them (`classifySession`'s
+    adopt/forget/orphans split, reused honestly by session teardown,
+    which now also returns an informational `unrecognized` list);
+    `prepareWorkspace` pre-answers first-run trust dialogs via a
+    broker-owned config dir injected through the environment, so the
+    dialog never reaches the screen for kinds with a `prepare` profile
+    (`claude` today); and a readiness settle window that treats
+    `interactive_ready` as a level to HOLD across ~2.5s rather than an
+    edge to catch once, so a CLI that renders and then crashes fails the
+    spawn instead of handing back a dead pane id. `node:sqlite` needing
+    a flag-free runtime pushed `engines.node` to `>=22.13.0`. A live
+    wire-test suite (`test/wire/`, gated on `HERDR_WIRE=1`, excluded
+    from `npm test` because the glob only matches `*.test.js`) records
+    the two still-open questions: WT-1, whether `pane.send_input`
+    brackets multi-line paste (unverified — if it doesn't, every
+    multi-line prompt through the broker is quietly submitting early,
+    which would be a bug fix, not a config row), and WT-2 above.
+
 ## Blocked on herdr (needs a live schema probe)
 
 The 2026-08-21 schema probe against live herdr (protocol 19, via the demo
@@ -171,8 +225,12 @@ map!), `pane.close`, `agent.wait`, and `agent.prompt`'s
 
 ## Suggested order
 
-The numbered roadmap is COMPLETE — 23 of 23. What remains is the
-maintainer's release act (NPM_TOKEN secret + v0.1.0 tag) and the
+The numbered roadmap is COMPLETE — 24 of 24, item 24 (agent lifecycle
+determinism) landing after publication. What remains is the maintainer's
+release act (NPM_TOKEN secret + v0.1.0 tag), the two open wire-truth
+questions item 24 recorded (WT-1 paste bracketing, WT-2 agy id minting —
+`test/wire/`) plus the still-pending `codex`/`copilot` transcript formats
+(WT-4, WT-5) and herdr's `pane.exited` exit code (WT-6), and the
 demand-driven tails recorded in the strike notes (skins, framework
 adapters, federated multi-user, PDF extraction, quotas) plus the
 in-flight model-discovery spikes. In flight, pending credentialed spikes: per-user
