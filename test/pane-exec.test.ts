@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { BrokerError } from "../src/errors.js";
 import { runBrokerMethod } from "../src/workspace-ops.js";
@@ -150,6 +150,30 @@ test("exec: an exits dir that escapes the workspace via a symlink is rejected", 
       runBrokerMethod(t.deps, "default", "broker.pane.exec", { pane_id: "w1:p1", command: "true", timeout_ms: 1000 }),
       (e: BrokerError) => e.code === "unknown_workspace",
     );
+    assert.deepEqual(readdirSync(outside), [], "the escape guard runs before anything is created through it");
+  } finally {
+    await t.teardown();
+  }
+});
+
+// The deeper form of the same escape: .herdr ITSELF is the symlink, not
+// just the leaf under it. `exits` doesn't exist yet at all in this case —
+// a guard that only checks `dir`'s own existence would miss an already-
+// malicious .herdr and let mkdirSync create `exits`, and writeFileSync
+// create `.gitignore`, through it before the escape was ever detected.
+test("exec: .herdr itself symlinked outside the workspace is rejected before anything is created through it", async () => {
+  const t = await setup();
+  try {
+    const cwd = scratchRepo();
+    const outside = tmpDir();
+    symlinkSync(outside, join(cwd, ".herdr"));
+    t.deps.index.set("default", "w1", { cwd });
+    t.fake.handlers.set("pane.send_input", () => ({ type: "ok" }));
+    await assert.rejects(
+      runBrokerMethod(t.deps, "default", "broker.pane.exec", { pane_id: "w1:p1", command: "true", timeout_ms: 1000 }),
+      (e: BrokerError) => e.code === "unknown_workspace",
+    );
+    assert.deepEqual(readdirSync(outside), [], "no 'exits' dir or .gitignore created inside the symlinked .herdr target");
   } finally {
     await t.teardown();
   }

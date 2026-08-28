@@ -1592,6 +1592,30 @@ test("ask: an answers dir that escapes the workspace via a symlink is rejected (
       runBrokerMethod(t.deps, "default", "broker.agent.ask", { pane_id: "w1:p1", prompt: "x", timeout_ms: 1000 }),
       (e: BrokerError) => e.code === "unknown_workspace",
     );
+    assert.deepEqual(readdirSync(outside), [], "the escape guard runs before anything is created through it");
+  } finally {
+    await t.teardown();
+  }
+});
+
+// The deeper form of the same escape: .herdr ITSELF is the symlink, not
+// just the leaf under it. `answers` doesn't exist yet at all in this
+// case — a guard that only checks `dir`'s own existence would miss an
+// already-malicious .herdr and let mkdirSync create `answers` (and any
+// later write) through it before ever resolving the escape.
+test("ask: .herdr itself symlinked outside the workspace is rejected before anything is created through it", async () => {
+  const t = await setup();
+  try {
+    const cwd = scratchRepo();
+    const outside = tmpDir();
+    symlinkSync(outside, join(cwd, ".herdr"));
+    t.deps.index.set("default", "w1", { cwd });
+    t.fake.handlers.set("agent.prompt", () => ({ type: "prompted" }));
+    await assert.rejects(
+      runBrokerMethod(t.deps, "default", "broker.agent.ask", { pane_id: "w1:p1", prompt: "x", timeout_ms: 1000 }),
+      (e: BrokerError) => e.code === "unknown_workspace",
+    );
+    assert.deepEqual(readdirSync(outside), [], "no 'answers' dir created inside the symlinked .herdr target");
   } finally {
     await t.teardown();
   }
@@ -1692,6 +1716,30 @@ test("spawn: send_input failure removes the drop file and fails the spawn", asyn
     );
     assert.ok(!t.fake.received.some((r) => r.method === "agent.start"), "agent must not start unauthenticated");
     assert.deepEqual(readdirSync(join(stateDir, "envdrop")), [], "drop file cleaned up");
+  } finally {
+    await t.teardown();
+  }
+});
+
+test("spawn: prepareWorkspace failing degrades to no injected env rather than failing the spawn", async () => {
+  const t = await setup();
+  try {
+    armSpawnFake(t.fake);
+    const cwd = scratchRepo();
+    // stateDir/cli-config can't become a directory: a FILE already sits
+    // where prepareWorkspace needs to mkdir — same failure shape as a
+    // read-only stateDir or a cli-config/claude the broker doesn't own.
+    // The trust-dialog convenience must never cost a spawn that would
+    // otherwise have succeeded.
+    const blockedState = tmpDir();
+    writeFileSync(join(blockedState, "cli-config"), "not a directory");
+    t.deps.stateDir = blockedState;
+    const out = (await runBrokerMethod(t.deps, "default", "broker.agent.spawn", {
+      kind: "claude",
+      cwd,
+    })) as { workspace_id: string };
+    assert.equal(out.workspace_id, "w9", "the spawn still succeeds");
+    assert.ok(!t.fake.received.some((r) => r.method === "pane.send_input"), "nothing to inject once prepareWorkspace degrades to {}");
   } finally {
     await t.teardown();
   }

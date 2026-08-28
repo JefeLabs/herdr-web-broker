@@ -5,11 +5,14 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { CliProfiles } from "../src/cli-profiles.js";
 import { readTurnState, claudeCwdSlug } from "../src/transcript.js";
+import { prepareWorkspace } from "../src/prepare-workspace.js";
 import { tmpDir } from "./util.js";
 
 const P = new CliProfiles();
 const DONE_LINE =
   '{"type":"assistant","timestamp":"2026-08-27T10:00:09.000Z","message":{"role":"assistant","stop_reason":"end_turn"}}';
+const BLOCKED_LINE =
+  '{"type":"assistant","timestamp":"2026-08-27T09:00:00.000Z","message":{"role":"assistant","stop_reason":"tool_use"}}';
 
 test("claude: a pinned session id resolves to a templated path and parses", () => {
   const home = tmpDir();
@@ -20,6 +23,35 @@ test("claude: a pinned session id resolves to a templated path and parses", () =
 
   const s = readTurnState(P.get("claude")!, { sessionId: "sid-1", kind: "claude", startedAt: 0 }, cwd, home);
   assert.equal(s?.state, "done");
+});
+
+// CLAUDE_CONFIG_DIR (prepareWorkspace, Task 6) relocates Claude Code's
+// WHOLE config dir, projects/ (transcripts) included — not just the
+// trust-dialog file. A broker-made `claude` spawn never writes its
+// transcript under {home}/.claude at all; if readTurnState kept looking
+// there, this tier would silently see nothing and every claude turn would
+// fall back to screen inference, exactly what this branch exists to
+// replace. Proven by writing DIFFERENT states at each location: only
+// resolving under the prepared dir can produce "done" here.
+test("claude: with a prepared config dir, the transcript resolves under it — not under {home}", () => {
+  const home = tmpDir();
+  const stateDir = tmpDir();
+  const cwd = "/work/proj";
+  const profile = P.get("claude")!;
+
+  const configDir = prepareWorkspace(profile, stateDir).CLAUDE_CONFIG_DIR!;
+  const preparedDir = join(configDir, "projects", claudeCwdSlug(cwd));
+  mkdirSync(preparedDir, { recursive: true });
+  writeFileSync(join(preparedDir, "sid-2.jsonl"), DONE_LINE + "\n");
+
+  // Decoy at the OLD, unprepared $HOME location — a dangling tool_use
+  // (blocked), the opposite of the prepared dir's "done".
+  const decoyDir = join(home, ".claude", "projects", claudeCwdSlug(cwd));
+  mkdirSync(decoyDir, { recursive: true });
+  writeFileSync(join(decoyDir, "sid-2.jsonl"), BLOCKED_LINE + "\n");
+
+  const s = readTurnState(profile, { sessionId: "sid-2", kind: "claude", startedAt: 0 }, cwd, home, stateDir);
+  assert.equal(s?.state, "done", "resolved from the prepared dir, not the decoy at $HOME");
 });
 
 test("agy: the cwd->id cache map resolves the transcript without a pin flag", () => {

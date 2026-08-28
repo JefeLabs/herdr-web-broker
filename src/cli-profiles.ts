@@ -34,7 +34,12 @@ const BUILTIN: Array<Omit<CliProfile, "source">> = [
   {
     kind: "claude",
     pin: { flag: "--session-id" },
-    transcript: { via: "path", template: `${HOME}/.claude/projects/{cwdSlug}/{sessionId}.jsonl` },
+    // {configDir} is $CLAUDE_CONFIG_DIR when `prepare` (below) redirected
+    // it for this spawn, else {home}/.claude — readTurnState resolves
+    // which (transcript.ts): CLAUDE_CONFIG_DIR relocates this CLI's WHOLE
+    // config dir, projects/ included, so the transcript has to be looked
+    // for wherever the CLI actually wrote it, not always under {home}.
+    transcript: { via: "path", template: `{configDir}/projects/{cwdSlug}/{sessionId}.jsonl` },
     terminal: {
       done: ["end_turn", "stop_sequence", "max_tokens", "refusal"],
       blocked: ["tool_use"],

@@ -1,7 +1,9 @@
 import { closeSync, existsSync, fstatSync, openSync, readFileSync, readSync } from "node:fs";
 import { createRequire } from "node:module";
 import { homedir } from "node:os";
+import { join } from "node:path";
 import type { CliProfile } from "./cli-profiles.js";
+import { configDirFor } from "./prepare-workspace.js";
 import type { AgentMeta } from "./state.js";
 
 // node:sqlite landed in Node 22.5 behind a flag and only went flag-free
@@ -183,6 +185,17 @@ export function decideTurn(
  * post-hoc trim. */
 const TAIL_BYTES = 256 * 1024;
 
+/** readSync's own return value is the only trustworthy count of what
+ * actually landed in `buf` — a short read (a concurrent truncate racing
+ * this tail read, a network filesystem) leaves the rest of `buf` at
+ * Buffer.alloc's zero-fill. Decoding the whole allocation regardless would
+ * trail those NULs onto real content: trim() doesn't strip U+0000, so the
+ * newest record — the one that decides state — would fail JSON.parse and
+ * get silently dropped by jsonLines. */
+export function decodeBytesRead(buf: Buffer, bytesRead: number): string {
+  return buf.subarray(0, bytesRead).toString("utf8");
+}
+
 function readTail(path: string): string | null {
   if (!existsSync(path)) return null;
   let fd: number | undefined;
@@ -192,8 +205,8 @@ function readTail(path: string): string | null {
     const start = Math.max(0, size - TAIL_BYTES);
     const len = size - start;
     const buf = Buffer.alloc(len);
-    readSync(fd, buf, 0, len, start);
-    return buf.toString("utf8");
+    const bytesRead = readSync(fd, buf, 0, len, start);
+    return decodeBytesRead(buf, bytesRead);
   } catch {
     return null;
   } finally {
@@ -221,12 +234,22 @@ function render(template: string, vars: Record<string, string>): string {
 
 /** Locate and read this pane's transcript. Every failure path is `null` —
  * the caller falls back to agent_status, so a CLI that changed its format
- * degrades the broker to today's behavior rather than breaking it. */
+ * degrades the broker to today's behavior rather than breaking it.
+ *
+ * `stateDir`, when given, is the broker's own — the same value
+ * prepareWorkspace (Task 6) used to redirect a CLI's config dir for THIS
+ * spawn via env (CLAUDE_CONFIG_DIR etc). That redirect moves the CLI's
+ * whole config dir, transcripts included, so a `{configDir}`-templated
+ * profile has to resolve against the SAME prepared dir or it reads
+ * nothing — see configDirFor's doc comment. Omitted (older/direct
+ * callers) or a kind with no `prepare` block: falls back to `{home}/.claude`,
+ * the literal path this template used before {configDir} existed. */
 export function readTurnState(
   profile: CliProfile,
   meta: AgentMeta,
   cwd: string,
   home?: string,
+  stateDir?: string,
 ): TranscriptState | null {
   const src = profile.transcript;
   if (!src) return null;
@@ -239,7 +262,8 @@ export function readTurnState(
     let path: string | undefined;
     if (src.via === "path") {
       if (!meta.sessionId) return null;
-      path = render(src.template, { home, cwdSlug: claudeCwdSlug(cwd), sessionId: meta.sessionId });
+      const configDir = (stateDir && configDirFor(profile, stateDir)) ?? join(home, ".claude");
+      path = render(src.template, { home, configDir, cwdSlug: claudeCwdSlug(cwd), sessionId: meta.sessionId });
     } else if (src.via === "map") {
       // No launch pin: the CLI's own cwd -> id cache is the lookup. It is
       // last-write-wins per cwd, so two agents in one cwd can collide —

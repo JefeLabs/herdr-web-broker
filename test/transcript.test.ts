@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { CliProfiles } from "../src/cli-profiles.js";
-import { parseTranscript, claudeCwdSlug } from "../src/transcript.js";
+import { parseTranscript, claudeCwdSlug, decodeBytesRead } from "../src/transcript.js";
 
 const P = new CliProfiles();
 const fx = (n: string) => readFileSync(join(import.meta.dirname, "..", "..", "test", "fixtures", "transcripts", n), "utf8");
@@ -68,4 +68,21 @@ test("claudeCwdSlug replaces both / and . with -", () => {
   assert.equal(claudeCwdSlug("/Users/e/dev/foo"), "-Users-e-dev-foo");
   // observed live: /a/.claude-worktrees/b -> -a--claude-worktrees-b
   assert.equal(claudeCwdSlug("/a/.claude-worktrees/b"), "-a--claude-worktrees-b");
+});
+
+// readSync's own return value is the only trustworthy count of what
+// landed in the buffer — a short read (a concurrent truncate racing the
+// tail read, a network filesystem) leaves the rest of Buffer.alloc's
+// zero-fill in place, and decoding the whole allocation would trail NULs
+// onto real content: trim() doesn't strip U+0000, so the newest record
+// would fail JSON.parse and get silently dropped by jsonLines.
+test("decodeBytesRead: a short read is decoded to only the bytes actually read, not the whole allocation", () => {
+  const buf = Buffer.alloc(10);
+  buf.write("hi", 0, "utf8");
+  assert.equal(decodeBytesRead(buf, 2), "hi");
+});
+
+test("decodeBytesRead: a full read is unaffected", () => {
+  const buf = Buffer.from("hello", "utf8");
+  assert.equal(decodeBytesRead(buf, buf.length), "hello");
 });

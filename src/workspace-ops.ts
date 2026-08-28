@@ -1,6 +1,6 @@
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { isAbsolute, join, sep } from "node:path";
+import { dirname, isAbsolute, join, sep } from "node:path";
 import {
   activeContextPreamble,
   deleteContext,
@@ -458,7 +458,19 @@ async function spawn(deps: OpsDeps, session: string, p: Record<string, unknown>)
   // workspace or pane behind. prepareWorkspace's vars ride the same
   // injection path, so a trust dialog is answered before the CLI starts
   // rather than screen-scraped after it appears.
-  const prepared = prepareWorkspace(deps.profiles.get(kind) ?? { kind, source: "builtin" }, deps.stateDir);
+  //
+  // prepareWorkspace does local disk I/O (mkdir/chmod/write) that can
+  // throw for reasons entirely outside this spawn's control — a read-only
+  // stateDir, a pre-existing cli-config/<kind> the broker doesn't own
+  // giving EPERM on chmod. A trust-dialog convenience must never fail a
+  // spawn that would otherwise have succeeded: degrade to {} and let the
+  // CLI's own first-run dialog reappear, exactly as before this existed.
+  let prepared: Record<string, string>;
+  try {
+    prepared = prepareWorkspace(deps.profiles.get(kind) ?? { kind, source: "builtin" }, deps.stateDir);
+  } catch {
+    prepared = {};
+  }
   const injected = { ...prepared, ...(await deps.env.resolveForSpawn(session, kind)) };
 
   let paneId: string;
@@ -722,7 +734,7 @@ async function waitAgent(deps: OpsDeps, session: string, p: Record<string, unkno
     const meta = deps.agents.get(session, pane);
     const profile = meta ? deps.profiles.get(meta.kind) : undefined;
     const cwd = deps.index.get(session, pane.split(":")[0])?.cwd;
-    const t = meta && profile && cwd ? readTurnState(profile, meta, cwd) : null;
+    const t = meta && profile && cwd ? readTurnState(profile, meta, cwd, undefined, deps.stateDir) : null;
     const d = decideTurn(t, { status: foldStatus(raw), raw_status: raw }, requestedAt);
     return { waited: true, status: d.status, raw_status: d.raw_status, evidence: d.evidence, pane_id: pane };
   } catch (e) {
@@ -1095,6 +1107,27 @@ async function ask(deps: OpsDeps, session: string, p: Record<string, unknown>): 
   }
 }
 
+/** A repo can commit `.herdr` itself — or a subdir under it, like
+ * `.herdr/answers` — as a symlink pointing outside the workspace. Checked
+ * BEFORE any mkdir/write touches `dir`, not after: whichever path segment
+ * already exists is the one an attacker controls, so that segment is what
+ * has to be resolved and compared. Checking `dir` alone misses an
+ * already-malicious `.herdr` whose child (`answers`/`exits`) is still
+ * missing — mkdirSync would then create that child, and any sibling write
+ * (e.g. execCommand's .gitignore), THROUGH the symlink before an
+ * escape-after-the-fact check ever ran. A `dir` with no existing ancestor
+ * below `cwd` has nothing to escape through yet — mkdirSync creates it
+ * fresh afterward. */
+function assertWithinWorkspace(cwd: string, dir: string, label: string): void {
+  let probe = dir;
+  while (!existsSync(probe)) probe = dirname(probe);
+  const realProbe = realpathSync(probe);
+  const realCwd = realpathSync(cwd);
+  if (realProbe !== realCwd && !realProbe.startsWith(realCwd + sep)) {
+    throw new BrokerError("unknown_workspace", `workspace ${label} dir escapes the workspace`);
+  }
+}
+
 async function askInner(
   deps: OpsDeps,
   session: string,
@@ -1116,15 +1149,9 @@ async function askInner(
 
   const id = randomBytes(8).toString("hex");
   const dir = join(cwd, ".herdr", "answers");
+  // spec §2.5 step 5 — checked before mkdirSync, not after.
+  assertWithinWorkspace(cwd, dir, "answers");
   mkdirSync(dir, { recursive: true });
-  // A repo that commits .herdr/answers as a symlink pointing outside the
-  // workspace must not let us readFileSync/rmSync through it (spec §2.5
-  // step 5) — resolve both sides through symlinks before comparing.
-  const realDir = realpathSync(dir);
-  const realCwd = realpathSync(cwd);
-  if (realDir !== realCwd && !realDir.startsWith(realCwd + sep)) {
-    throw new BrokerError("unknown_workspace", "workspace answers dir escapes the workspace");
-  }
   const file = join(dir, `${id}.json`);
   const contextLine = activeContextPreamble(cwd);
   const text =
@@ -1158,7 +1185,7 @@ async function askInner(
       // possibly mid-write — keep polling; the deadline or the status
       // grace decides when to give up and report parse_error
     }
-    const t = meta && profile ? readTurnState(profile, meta, cwd) : null;
+    const t = meta && profile ? readTurnState(profile, meta, cwd, undefined, deps.stateDir) : null;
     const tierStatus = deps.registry.get("runtime")?.sessions[session]?.agents.find((a) => a.id === pane)?.status;
     const decision = decideTurn(t, { status: tierStatus ?? "idle" }, startedAt);
     const status = decision.status;
@@ -1226,6 +1253,10 @@ async function execCommand(deps: OpsDeps, session: string, p: Record<string, unk
 
   const id = randomBytes(8).toString("hex");
   const dir = join(cwd, ".herdr", "exits");
+  // Same guard as askInner, checked before mkdirSync/writeFileSync touch
+  // anything — a .herdr (or .herdr/exits) symlinked outside the workspace
+  // must not get a directory created or a .gitignore written through it.
+  assertWithinWorkspace(cwd, dir, "exits");
   mkdirSync(dir, { recursive: true });
   // .herdr/.gitignore ("*") is otherwise only written by context-store.ts's
   // ensureDir, and only once a context attachment is created — a fresh
@@ -1233,14 +1264,6 @@ async function execCommand(deps: OpsDeps, session: string, p: Record<string, unk
   // files never show up in the user's git status.
   const ignore = join(cwd, ".herdr", ".gitignore");
   if (!existsSync(ignore)) writeFileSync(ignore, "*\n");
-  // A repo that commits .herdr/exits as a symlink pointing outside the
-  // workspace must not let us readFileSync/rmSync through it — same guard
-  // as askInner: resolve both sides through symlinks before comparing.
-  const realDir = realpathSync(dir);
-  const realCwd = realpathSync(cwd);
-  if (realDir !== realCwd && !realDir.startsWith(realCwd + sep)) {
-    throw new BrokerError("unknown_workspace", "workspace exits dir escapes the workspace");
-  }
   const file = join(dir, id);
   await deps.local.request(
     session,
