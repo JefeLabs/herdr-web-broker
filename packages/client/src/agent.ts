@@ -82,6 +82,10 @@ export class AgentHandle {
     timed_out?: boolean;
     status?: string;
     raw_status?: string;
+    /** which tier decided `status`/`raw_status`: a CLI's own transcript
+     * (proven) or herdr's screen-inferred agent_status (inferred). Present
+     * on a status wait's reply, absent on an output (match) wait's. */
+    evidence?: "transcript" | "status";
     matched_line?: string;
     pane_id: string;
   }> {

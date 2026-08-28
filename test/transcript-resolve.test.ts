@@ -64,10 +64,11 @@ test("missing files and profiles without a transcript source return null", () =>
   assert.equal(readTurnState(P.get("agy")!, { kind: "agy", startedAt: 0 }, "/x", home), null);
 });
 
-// Ruling 1: node:sqlite is not a top-level import in src/transcript.ts (it
-// would throw ERR_UNKNOWN_BUILTIN_MODULE on Node <22.13 and take the whole
-// module down). The sqlite branch must degrade to null like any other
-// missing-file case, not throw, when the database file is simply absent.
+// The sqlite branch's existsSync(dbPath) check short-circuits before
+// node:sqlite is ever require_'d, so this doesn't exercise the lazy load
+// itself (Ruling 1) — it proves the narrower, still-necessary thing: an
+// absent database degrades to null exactly like a missing transcript file,
+// not a different code path that could throw.
 test("opencode: a missing sqlite db degrades to null rather than throwing", () => {
   const home = tmpDir();
   assert.equal(readTurnState(P.get("opencode")!, { kind: "opencode", startedAt: 0 }, "/work/proj", home), null);

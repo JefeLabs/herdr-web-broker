@@ -656,6 +656,13 @@ async function waitAgent(deps: OpsDeps, session: string, p: Record<string, unkno
       }
       until = p.until.map(String);
     }
+    // Freshness is bound to THIS wait's own start, not the agent's spawn
+    // time: herdr resolves agent.wait first and we read the transcript
+    // after, so binding to spawn would let ANY record written since launch
+    // (even a stale one, predating this call) count as evidence about a
+    // status herdr already correctly resolved — silently overwriting a
+    // status that satisfied `until` with one that doesn't.
+    const requestedAt = Date.now();
     const r = (await deps.local.request(
       session,
       "agent.wait",
@@ -667,7 +674,7 @@ async function waitAgent(deps: OpsDeps, session: string, p: Record<string, unkno
     const profile = meta ? deps.profiles.get(meta.kind) : undefined;
     const cwd = deps.index.get(session, pane.split(":")[0])?.cwd;
     const t = meta && profile && cwd ? readTurnState(profile, meta, cwd) : null;
-    const d = decideTurn(t, { status: foldStatus(raw), raw_status: raw }, meta?.startedAt ?? 0);
+    const d = decideTurn(t, { status: foldStatus(raw), raw_status: raw }, requestedAt);
     return { waited: true, status: d.status, raw_status: d.raw_status, evidence: d.evidence, pane_id: pane };
   } catch (e) {
     const err = e instanceof BrokerError ? e : new BrokerError("upstream_error", String(e));
@@ -1085,6 +1092,11 @@ async function askInner(
   const startGraceMs = deps.askStartGraceMs ?? 15_000;
   const startedAt = Date.now();
   const deadline = startedAt + budget;
+  // meta/profile can't change mid-ask — resolved once here, not on every
+  // poll: deps.agents.get() re-reads agents.json from disk each call, and
+  // this loop can run ~1200 times over a full budget.
+  const meta = deps.agents.get(session, pane);
+  const profile = meta ? deps.profiles.get(meta.kind) : undefined;
   let sawWorking = false;
   let idleSince: number | undefined;
   while (Date.now() < deadline) {
@@ -1097,8 +1109,6 @@ async function askInner(
       // possibly mid-write — keep polling; the deadline or the status
       // grace decides when to give up and report parse_error
     }
-    const meta = deps.agents.get(session, pane);
-    const profile = meta ? deps.profiles.get(meta.kind) : undefined;
     const t = meta && profile ? readTurnState(profile, meta, cwd) : null;
     const tierStatus = deps.registry.get("runtime")?.sessions[session]?.agents.find((a) => a.id === pane)?.status;
     const decision = decideTurn(t, { status: tierStatus ?? "idle" }, startedAt);
@@ -1115,13 +1125,19 @@ async function askInner(
       // The pane's status folds "unknown"/"done" to idle, so a dead-but-
       // listed agent looks idle and would otherwise hang for the whole
       // budget on its first ask — fail fast with a distinct code instead.
-      // The message states which basis was measured: the transcript tier
-      // means the transcript itself never grew; the status tier (today's
-      // behavior) means agent_status never became working.
+      // The message states which basis was measured. On the status tier
+      // that's "agent_status never became working" (today's behavior,
+      // unchanged). On the transcript tier, reaching this throw requires
+      // status === "idle" on every poll, which for evidence === "transcript"
+      // only happens when the transcript itself says the turn is DONE — so
+      // the agent didn't fail to start, it finished without ever writing
+      // the answer file. Same code (failing fast is still right — a
+      // completed turn with no answer file will never produce one), a
+      // message that says what was actually observed.
       throw new BrokerError(
         "agent_unresponsive",
         decision.evidence === "transcript"
-          ? `agent in pane '${pane}' wrote nothing to its transcript within ${startGraceMs}ms — it may be dead or stuck`
+          ? `agent in pane '${pane}' finished its turn (per its own transcript) but wrote no answer file within ${startGraceMs}ms`
           : `agent in pane '${pane}' never started working within ${startGraceMs}ms — it may be dead or stuck`,
         { pane_id: pane, evidence: decision.evidence },
       );

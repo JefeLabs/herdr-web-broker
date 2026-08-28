@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { closeSync, existsSync, fstatSync, openSync, readFileSync, readSync } from "node:fs";
 import { createRequire } from "node:module";
 import { homedir } from "node:os";
 import type { CliProfile } from "./cli-profiles.js";
@@ -176,14 +176,38 @@ export function decideTurn(
 }
 
 /** Only the tail matters: a turn's terminal record is at the end, and a
- * long-running session's transcript can reach megabytes. */
+ * long-running session's transcript can reach megabytes. This runs on
+ * every ask poll (default every 500ms) on the broker's single event loop,
+ * so it seeks and reads just the tail rather than loading the whole file
+ * and slicing afterward — the byte cap is a real read size, not a
+ * post-hoc trim. */
 const TAIL_BYTES = 256 * 1024;
 
 function readTail(path: string): string | null {
   if (!existsSync(path)) return null;
+  let fd: number | undefined;
   try {
-    const buf = readFileSync(path);
-    return buf.subarray(Math.max(0, buf.length - TAIL_BYTES)).toString("utf8");
+    fd = openSync(path, "r");
+    const size = fstatSync(fd).size;
+    const start = Math.max(0, size - TAIL_BYTES);
+    const len = size - start;
+    const buf = Buffer.alloc(len);
+    readSync(fd, buf, 0, len, start);
+    return buf.toString("utf8");
+  } catch {
+    return null;
+  } finally {
+    if (fd !== undefined) closeSync(fd);
+  }
+}
+
+/** A whole-file read for small non-JSONL files — the agy cwd->id cache is
+ * one JSON object, so tail-truncating it (readTail) could cut it into
+ * invalid JSON and degrade to null by accident rather than by design. */
+function readFull(path: string): string | null {
+  if (!existsSync(path)) return null;
+  try {
+    return readFileSync(path, "utf8");
   } catch {
     return null;
   }
@@ -202,11 +226,16 @@ export function readTurnState(
   profile: CliProfile,
   meta: AgentMeta,
   cwd: string,
-  home: string = homedir(),
+  home?: string,
 ): TranscriptState | null {
   const src = profile.transcript;
   if (!src) return null;
   try {
+    // homedir() can throw (SystemError) if the platform can't resolve a
+    // home dir — as a default parameter it would evaluate before this
+    // try, making it the one path in this function able to escape the
+    // degrade-to-null contract. Resolved here instead, inside the try.
+    home ??= homedir();
     let path: string | undefined;
     if (src.via === "path") {
       if (!meta.sessionId) return null;
@@ -216,7 +245,7 @@ export function readTurnState(
       // last-write-wins per cwd, so two agents in one cwd can collide —
       // startedAt bounds that until WT-2 says whether minting works.
       const mapPath = render(src.mapFile, { home });
-      const raw = readTail(mapPath);
+      const raw = readFull(mapPath);
       if (!raw) return null;
       const id = meta.sessionId ?? (JSON.parse(raw) as Record<string, string>)[cwd];
       if (!id) return null;

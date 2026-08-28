@@ -440,6 +440,99 @@ test("broker.agent.wait: status wait defaults to needs-me-or-done; timeout is a 
   }
 });
 
+// The claude builtin's terminal vocabulary, reused so these profile
+// overrides parse exactly like the real claude profile — only `template`
+// changes, to an absolute tmp path with no {home} placeholder so the tier
+// is reachable through the real askInner/waitAgent call sites without
+// touching the actual OS home directory.
+const CLAUDE_TERMINAL = { done: ["end_turn", "stop_sequence", "max_tokens", "refusal"], blocked: ["tool_use"], running: [] };
+
+test("broker.agent.wait: a transcript that proves completion overrides herdr's raw status (evidence: transcript)", async () => {
+  const t = await setup();
+  try {
+    const dir = join(tmpDir(), "claude-transcripts");
+    mkdirSync(dir, { recursive: true });
+    t.deps.profiles = new CliProfiles({
+      profiles: [
+        {
+          kind: "claude",
+          pin: { flag: "--session-id" },
+          transcript: { via: "path", template: join(dir, "{sessionId}.jsonl") },
+          terminal: CLAUDE_TERMINAL,
+        },
+      ],
+    });
+    t.fake.agents.push({ pane_id: "w7:p1", name: "claude-a", agent: "claude", agent_status: "working" });
+    // waitAgent's cwd comes from the index (never touched on disk for this
+    // via, but readTurnState is only reached when it resolves at all).
+    t.deps.index.set("default", "w7", { cwd: "/work/proj" });
+    t.deps.agents.set("default", "w7:p1", { sessionId: "sid-w7", kind: "claude", startedAt: 0 });
+    // Timestamp far in the future so it's unambiguously fresh relative to
+    // whenever this test actually runs — no clock-skew flakiness.
+    writeFileSync(
+      join(dir, "sid-w7.jsonl"),
+      '{"type":"assistant","timestamp":"2030-01-01T00:00:00.000Z","message":{"role":"assistant","stop_reason":"end_turn"}}\n',
+    );
+    // herdr itself still reports "working" — the transcript is the proof
+    t.fake.handlers.set("agent.wait", () => ({
+      type: "agent_info",
+      agent: { pane_id: "w7:p1", name: "claude-a", agent: "claude", agent_status: "working" },
+    }));
+    const out = await runBrokerMethod(t.deps, "default", "broker.agent.wait", { pane_id: "w7:p1", until: ["idle"] });
+    assert.deepEqual(out, {
+      waited: true,
+      status: "idle",
+      raw_status: "done",
+      evidence: "transcript",
+      pane_id: "w7:p1",
+    });
+  } finally {
+    await t.teardown();
+  }
+});
+
+test("broker.agent.wait: a transcript record from before THIS wait began is not evidence about it — status tier decides", async () => {
+  const t = await setup();
+  try {
+    const dir = join(tmpDir(), "claude-transcripts");
+    mkdirSync(dir, { recursive: true });
+    t.deps.profiles = new CliProfiles({
+      profiles: [
+        {
+          kind: "claude",
+          pin: { flag: "--session-id" },
+          transcript: { via: "path", template: join(dir, "{sessionId}.jsonl") },
+          terminal: CLAUDE_TERMINAL,
+        },
+      ],
+    });
+    t.fake.agents.push({ pane_id: "w8:p1", name: "claude-b", agent: "claude", agent_status: "blocked" });
+    t.deps.index.set("default", "w8", { cwd: "/work/proj" });
+    // startedAt is old (spawn happened long ago). Under a freshness rule
+    // bound to spawn time, ANY record since then would count as fresh; this
+    // proves freshness is bound to THIS wait's own start instead.
+    t.deps.agents.set("default", "w8:p1", { sessionId: "sid-w8", kind: "claude", startedAt: 0 });
+    writeFileSync(
+      join(dir, "sid-w8.jsonl"),
+      '{"type":"assistant","timestamp":"2020-01-01T00:00:00.000Z","message":{"role":"assistant","stop_reason":"end_turn"}}\n',
+    );
+    t.fake.handlers.set("agent.wait", () => ({
+      type: "agent_info",
+      agent: { pane_id: "w8:p1", name: "claude-b", agent: "claude", agent_status: "blocked" },
+    }));
+    const out = await runBrokerMethod(t.deps, "default", "broker.agent.wait", { pane_id: "w8:p1", until: ["blocked"] });
+    assert.deepEqual(out, {
+      waited: true,
+      status: "blocked",
+      raw_status: "blocked",
+      evidence: "status",
+      pane_id: "w8:p1",
+    });
+  } finally {
+    await t.teardown();
+  }
+});
+
 test("broker.agent.wait: output wait rides pane.wait_for_output and returns the matched line", async () => {
   const t = await setup();
   try {
@@ -1270,6 +1363,45 @@ test("ask: an agent that never starts working fails fast as agent_unresponsive, 
       (e: BrokerError) => e.code === "agent_unresponsive",
     );
     assert.ok(Date.now() - started < 3_000, "must fail at the start grace, not the 30s budget");
+  } finally {
+    await t.teardown();
+  }
+});
+
+test("ask: a transcript proving the turn finished, with no answer file, gets the transcript-specific agent_unresponsive message", async () => {
+  const t = await setup();
+  t.deps.askStartGraceMs = 100;
+  try {
+    const cwd = scratchRepo();
+    t.deps.index.set("default", "w10", { cwd });
+    const dir = join(tmpDir(), "claude-transcripts");
+    mkdirSync(dir, { recursive: true });
+    t.deps.profiles = new CliProfiles({
+      profiles: [
+        {
+          kind: "claude",
+          pin: { flag: "--session-id" },
+          transcript: { via: "path", template: join(dir, "{sessionId}.jsonl") },
+          terminal: { done: ["end_turn", "stop_sequence", "max_tokens", "refusal"], blocked: ["tool_use"], running: [] },
+        },
+      ],
+    });
+    t.fake.agents.push({ pane_id: "w10:p1", name: "claude-c", agent: "claude", agent_status: "idle" });
+    t.deps.agents.set("default", "w10:p1", { sessionId: "sid-w10", kind: "claude", startedAt: 0 });
+    // Fresh (future-dated) and DONE from the first poll onward — herdr's
+    // own agent_status is irrelevant here, the transcript alone drives it.
+    writeFileSync(
+      join(dir, "sid-w10.jsonl"),
+      '{"type":"assistant","timestamp":"2030-01-01T00:00:00.000Z","message":{"role":"assistant","stop_reason":"end_turn"}}\n',
+    );
+    t.fake.handlers.set("agent.prompt", () => ({ type: "prompted" }));
+    await assert.rejects(
+      runBrokerMethod(t.deps, "default", "broker.agent.ask", { pane_id: "w10:p1", prompt: "x", timeout_ms: 5000 }),
+      (e: BrokerError) =>
+        e.code === "agent_unresponsive" &&
+        e.details.evidence === "transcript" &&
+        /finished its turn \(per its own transcript\) but wrote no answer file/.test(e.message),
+    );
   } finally {
     await t.teardown();
   }

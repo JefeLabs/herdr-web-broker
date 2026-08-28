@@ -245,6 +245,7 @@ export const CATALOG: EndpointSpec[] = [
         timed_out: { type: "boolean" },
         status: { type: "string" },
         raw_status: { type: "string" },
+        evidence: { type: "string", enum: ["transcript", "status"] },
         matched_line: { type: "string" },
         pane_id: { type: "string" },
       },
