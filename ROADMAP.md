@@ -197,7 +197,7 @@ missing endpoints/SDK/UI, not missing reachability):
     then dies. Two windows, and the shipped one sits on the far side of
     this failure.
 
-28. **Module system — capabilities, not internals.** Spec:
+28. ~~**Module system — capabilities, not internals.**~~ Done. Spec:
     `docs/superpowers/specs/2026-08-28-extension-model-design.md`.
     Operators need to add their own git, file and workspace
     functionality. Today the only extension points are data rows in
@@ -295,8 +295,32 @@ missing endpoints/SDK/UI, not missing reachability):
     behind the same realpathSync escape guard, so splitting it would add
     an ABI name distinguishing nothing. The rule, for whoever adds the
     eighth capability: SPLIT WHERE THE GUARANTEES DIFFER, NOT WHERE THE
-    VERBS DO. The spec now carries zero open questions. Coupled to item 26 — the ABI wants to ship as a published
+    VERBS DO. Coupled to item 26 — the ABI wants to ship as a published
     `packages/module` alongside the SDK, not after it.
+    SHIPPED, with one correction found by a security review DURING
+    implementation, recorded because the reasoning was wrong and not just
+    the code: `api.git.raw` originally guarded argv[0] against a DENYLIST
+    of subcommands. Git accepts GLOBAL OPTIONS there, and
+    `git -c alias.x='!sh …' x` executes a shell — verified against real
+    git, not theorised. The argv array defends against metacharacter
+    injection; it does nothing when git itself spawns the shell. The same
+    denylist omitted commit/merge/apply/am/update-ref/branch/config, so a
+    `git.read` grant could mutate freely — the read/write split defeated
+    by its own escape valve. Root error was the denylist itself: git's
+    surface is far too large for "block the dangerous ones" to ever be
+    complete. Inverted to an ALLOWLIST of read-only subcommands; argv[0]
+    must match a bare-subcommand shape, which blocks every
+    pre-subcommand global; exec-bearing options are refused wherever they
+    appear. `raw` is therefore READ-ONLY, and mutations go through the
+    audited verbs — which is what the design always said, it just was not
+    true until now. This NARROWS the earlier "keep raw" decision: raw is
+    kept, but cannot mutate.
+    Stayed honest: modules are NOT sandboxed (node:fs is one import away
+    — capabilities make the safe path narrow, they do not confine);
+    installable only from config.toml, with a test asserting five
+    plausible install routes all fail; boot-only, no hot reload; a failed
+    module 404s and the broker still boots; and `packages/module` remains
+    UNPUBLISHED until item 26.
 
 ## Blocked on herdr (needs a live schema probe)
 

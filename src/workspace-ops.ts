@@ -191,6 +191,7 @@ export async function runBrokerMethod(
         addAll: p.add_all === false ? false : true,
         ...(author ? { author } : {}),
       });
+      deps.events?.emit("broker.repo.pushed", { workspace_id: workspaceId, repo });
       return { workspace_id: workspaceId, repo, ...result };
     }
     case "broker.repo.log": {
@@ -605,6 +606,7 @@ async function spawn(deps: OpsDeps, session: string, p: Record<string, unknown>)
       }
       // The workspace exists — hand its id back so the client can retry into
       // it with mode B instead of leaking it (spec §2.1).
+      deps.events?.emit("broker.agent.spawn_failed", { kind, code: err.code, message: err.message });
       throw new BrokerError(err.code, err.message, { ...err.details, workspace_id: workspaceId, pane_id: paneId });
     }
   }
@@ -648,6 +650,7 @@ async function spawn(deps: OpsDeps, session: string, p: Record<string, unknown>)
     agents?: Array<Record<string, unknown>>;
   };
   const entry = raw.agents?.find((a) => a.pane_id === paneId);
+  deps.events?.emit("broker.agent.spawned", { pane_id: paneId, workspace_id: workspaceId, kind });
   return {
     workspace_id: workspaceId,
     pane_id: paneId,
@@ -1115,11 +1118,17 @@ async function ask(deps: OpsDeps, session: string, p: Record<string, unknown>): 
     });
   }
   deps.askLocks.add(lockKey);
+  let result: unknown;
   try {
-    return await askInner(deps, session, pane, prompt, p);
+    result = await askInner(deps, session, pane, prompt, p);
   } finally {
     deps.askLocks.delete(lockKey);
   }
+  // AFTER the lock, deliberately: a handler reacting to this may want to
+  // ask again on the same pane, and emitting inside the try would hand it
+  // a pane_busy it could not avoid.
+  deps.events?.emit("broker.ask.completed", { pane_id: pane });
+  return result;
 }
 
 /** A repo can commit `.herdr` itself — or a subdir under it, like
@@ -1225,6 +1234,10 @@ async function askInner(
       // the answer file. Same code (failing fast is still right — a
       // completed turn with no answer file will never produce one), a
       // message that says what was actually observed.
+      // Carries `evidence`, which is the clearest case for the broker.*
+      // layer existing: a handler can tell a transcript-proven stall from
+      // an inferred one, and no herdr event can express that.
+      deps.events?.emit("broker.ask.unresponsive", { pane_id: pane, evidence: decision.evidence });
       throw new BrokerError(
         "agent_unresponsive",
         decision.evidence === "transcript"
@@ -1312,6 +1325,9 @@ async function execCommand(deps: OpsDeps, session: string, p: Record<string, unk
   // timeout just because no poll happened to land after it.
   const code = readCode();
   rmSync(file, { force: true });
-  if (code !== undefined) return { pane_id: pane, exit_code: code, ok: code === 0 };
+  if (code !== undefined) {
+    deps.events?.emit("broker.exec.finished", { pane_id: pane, exit_code: code, ok: code === 0 });
+    return { pane_id: pane, exit_code: code, ok: code === 0 };
+  }
   throw new BrokerError("upstream_timeout", `command produced no exit code within ${budget}ms`, { pane_id: pane });
 }

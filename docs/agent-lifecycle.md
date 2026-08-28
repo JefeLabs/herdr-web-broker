@@ -280,6 +280,85 @@ closes every workspace and stops the herdr. Owned sessions are invisible
 to other bearers — 404, indistinguishable from nonexistent. The primary
 herdr hosting this plugin refuses teardown always.
 
+## 5c. Modules — operator-added endpoints
+
+An operator can add endpoints and event handlers to a running broker by
+declaring a module in `config.toml`:
+
+```toml
+[[modules]]
+path = "./modules/blame.js"
+capabilities = ["git.read"]
+```
+
+It serves at `GET /v1/modules/blame/...`, authenticated by the broker
+before dispatch — a module cannot opt out of auth, and never sees the
+token itself, only its name.
+
+**Modules are plain `.js`.** The broker `import()`s the path and owns no
+compile step. Authors wanting types write TypeScript and build, or
+annotate with JSDoc against `@jefelabs/herdr-broker-module`.
+
+**Capabilities are declared, then granted.** A module has no *type* —
+"git module" is a description the broker cannot verify. Instead it
+declares what it intends to reach, the operator lists what it may reach,
+and the broker builds the `api` object from the intersection. An
+ungranted capability is `undefined` on that object, not a stub that
+throws:
+
+| capability | grants |
+| --- | --- |
+| `git.read` | `raw`, `diff`, `log`, `tree` — `raw` takes an argv **array** and is **read-only** |
+| `git.write` | `commit`, `push` — audited |
+| `files` | `read`, `write`, `list`, every path resolved against the workspace |
+| `workspaces` | `list`, `cwd` — read-only |
+| `agents` | `list`, `prompt`, `ask` |
+| `rpc` | herdr passthrough, still subject to `remote_deny` |
+| `events` | `api.on` — consume only |
+
+Each capability wraps a helper that already carries the broker's
+guarantees, so a module inherits them without knowing they exist:
+`api.git` runs through `git-exec`'s no-shell `execFile` with its timeout
+and repo-path guard, and `api.files` through the same `realpathSync`
+escape check `ask` and `exec` use.
+
+`api.git.raw` is read-only by allowlist rather than denylist. A denylist
+over git's surface cannot be complete — and `git -c alias.x='!sh …' x` is
+arbitrary shell execution, so `argv[0]` must be a bare subcommand rather
+than a global option. Mutations go through the audited verbs.
+
+**`api.agents.ask` takes the same per-pane lock core does.** A module and
+a core route contending on one pane means the second gets `pane_busy`;
+two concurrent asks would interleave two answer-file contracts at one
+agent.
+
+Handlers can subscribe to `broker.*` events the broker knows and herdr
+cannot — `broker.agent.spawned`, `broker.agent.spawn_failed`,
+`broker.ask.completed`, `broker.ask.unresponsive` (which carries
+`evidence`, §5a), `broker.repo.pushed`, `broker.exec.finished`. Delivery
+is at-most-once and fire-and-forget, matching `WS /events`, which is
+live-only with no replay. There is no `api.emit`: module-to-module
+eventing would make the ABI a message bus.
+
+**Two properties stated plainly.**
+
+Modules are installable **only** from `config.toml`. There is no API to
+add one, and `GET /admin/modules` is observability only. A module is
+arbitrary in-process code, so a bearer token that could install one would
+be a remote shell.
+
+Modules are **not sandboxed**. They run in the daemon's process with its
+privileges, and `node:fs` is one import away. Capabilities make the safe
+path the narrow path; they are not a confinement. Installing a module is
+installing code, with the same trust as an npm dependency.
+
+Modules load **once, at boot**. `config.toml` keeps hot-reloading
+`client_tokens`, but `[[modules]]` is exempt — re-importing mid-flight
+leaks whatever the old instance closed over. A change needs a restart;
+`GET /admin/modules` reports the loaded set, so drift between the file
+and the process is visible. A module that fails to load leaves its routes
+404 and the broker still boots.
+
 ## 6. Death — and its remaining honesty gaps
 
 Agents die when their process exits or their pane closes; herdr keeps the
@@ -344,6 +423,7 @@ Cleanup and remaining limitations:
 | Wait for a status/output | `POST .../agents/{pane}/wait` (`until` or `match`) → `evidence` on status waits |
 | Watch the terminal | `GET .../panes/{pane}/screen?version=&wait_ms=` (long-poll) |
 | Live events | `WS /events` |
+| Operator-added endpoints | `GET /v1/modules/{id}/…`; declare in `config.toml`, inspect with `GET /admin/modules` |
 | Live workspaces the broker doesn't own | `GET .../sessions/{s}/orphans` (reports; never kills) |
 | Stop one agent | `DELETE .../agents/{pane}` (its pane closes; the team survives) |
 | Reap a working set | `DELETE .../workspaces/{w}` (panes + agents die with it) |
