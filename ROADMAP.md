@@ -278,9 +278,24 @@ missing endpoints/SDK/UI, not missing reachability):
     lock releases, or a handler reacting to it cannot ask again on that
     pane. General rule instantiated: where core holds an invariant, the
     module API hands over the GUARDED function, never the guarded thing.
-    Still open: whether module-emitted events turn the ABI into a message
-    bus; module routes on config reload; and whether it is inconsistent
-    that `git` splits read/write while `files` does not. Coupled to item 26 — the ABI wants to ship as a published
+    DECIDED, closing the last three: NO module-emitted events — a module
+    may CONSUME herdr and `broker.*` events but not publish them, since
+    module-to-module eventing makes the ABI a message bus and drags in
+    delivery ordering, cycle detection and inter-module failure semantics
+    as permanent obligations, in exchange for a capability nobody has
+    asked for. Modules load at BOOT ONLY — config.toml keeps hot-reloading
+    `client_tokens`, but `[[modules]]` is exempt, because re-importing
+    mid-flight leaks whatever the old instance closed over and a route
+    table changing under live requests is the wrong trade for a feature
+    whose appeal is predictability; `GET /admin/modules` reports the
+    loaded set so drift is visible. And the capability split STAYS
+    asymmetric: `git` splits read/write because its mutating verbs are the
+    audited, confirm-gated ones, so the line marks a real change in blast
+    radius, while `files` has no equivalent boundary — both directions sit
+    behind the same realpathSync escape guard, so splitting it would add
+    an ABI name distinguishing nothing. The rule, for whoever adds the
+    eighth capability: SPLIT WHERE THE GUARANTEES DIFFER, NOT WHERE THE
+    VERBS DO. The spec now carries zero open questions. Coupled to item 26 — the ABI wants to ship as a published
     `packages/module` alongside the SDK, not after it.
 
 ## Blocked on herdr (needs a live schema probe)
