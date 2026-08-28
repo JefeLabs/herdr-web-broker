@@ -87,6 +87,48 @@ missing endpoints/SDK/UI, not missing reachability):
     multi-line prompt through the broker is quietly submitting early,
     which would be a bug fix, not a config row), and WT-2 above.
 
+25. **Lifecycle-determinism follow-ups.** Deferred from item 24's final
+    whole-branch review, ordered by what a maintainer would hit first.
+    (a) **Teardown clears one index, not both.** `demolishOwned` now
+    removes `AgentIndex` rows but still leaves `WorkspaceIndex` ones,
+    while `broker.workspace.close` clears both — the sibling stores are
+    inconsistent at that call site. Session names are deterministic, so
+    a user who tears down and re-authenticates gets the same name back
+    and inherits stale rows; since `resolveCwd` falls back to the index
+    when herdr doesn't list a workspace, a stale row can hand a repo
+    endpoint a path from a session that no longer exists. Pre-existing,
+    but item 24 made it asymmetric. (b) **`ask` and `wait` resolve cwd
+    differently.** `resolveCwd` prefers HERDR's cwd and falls back to
+    the index; `waitAgent` reads the index directly. For a mode-C
+    worktree spawn — where the index deliberately holds the CHECKOUT
+    path — the two can disagree, yielding different `cwdSlug` values and
+    so different `claude` transcript paths for one pane. It degrades
+    safely (wrong slug → no file → status tier), which is why it
+    shipped, but the fix needs a shared NON-THROWING resolver: `wait`
+    cannot simply adopt `resolveCwd`, which throws `unknown_workspace`
+    and would turn a currently-succeeding wait into an error.
+    (c) **`GET .../agents` carries no `evidence`.** The spec claimed it
+    would; only `wait`'s reply and `ask`'s `agent_unresponsive` details
+    do. Wiring it means a transcript read per agent per list call
+    against a registry fed by push WS events rather than per-request
+    computation — a deliberate design decision, not an oversight.
+    (d) **`agy`'s concurrent-same-cwd collision is still open.** The
+    `startedAt` bound rejects a transcript older than the agent, so a
+    STALE map entry can't be claimed, but two `agy` agents live in one
+    cwd still resolve to the same conversation. WT-2 (can
+    `--conversation` mint a fresh id?) is what actually closes it.
+    (e) **`opencode`'s `terminal.done` is dead config.** `parseOpencode`
+    keys off the presence of `time.completed` and never reads its
+    `profile`, so a `[[cli.profiles]]` override of that vocabulary
+    silently no-ops — unlike `claude`/`agy`, where it takes effect.
+    (f) **`transcript.ts` mixes layers.** It holds the pure parsers, the
+    pure `decideTurn` tier, AND fs/sqlite I/O, against the spec's "all
+    I/O stays in thin shells". A `transcript-resolve.ts` split would
+    honor that; not worth churning while the format work is still live.
+    (g) **No integration test** covers `GET .../orphans` or teardown's
+    `unrecognized` field — `classifySession` is fully unit-tested, the
+    HTTP wiring is not.
+
 ## Blocked on herdr (needs a live schema probe)
 
 The 2026-08-21 schema probe against live herdr (protocol 19, via the demo
