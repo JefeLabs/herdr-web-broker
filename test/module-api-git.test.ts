@@ -50,17 +50,43 @@ test("raw REJECTS a string argv — there must be no shell to inject into", asyn
   await assert.rejects(() => g.raw("w1", ".", "log --oneline" as never), /array/);
 });
 
-test("raw denies destructive porcelain — those go through the audited verbs", async () => {
+test("raw REFUSES a global option as argv[0] — `git -c alias.x='!sh'` is arbitrary execution", async () => {
+  // Verified against real git: `git -c alias.pwn='!echo …' pwn` runs a
+  // shell. The argv ARRAY stops metacharacter injection; it does nothing
+  // when git itself spawns the shell. argv[0] must be a bare subcommand.
   const g = api(["git.read"], scratchRepo()).git!;
-  await assert.rejects(() => g.raw("w1", ".", ["reset", "--hard"]), /not permitted/);
-  await assert.rejects(() => g.raw("w1", ".", ["clean", "-fd"]), /not permitted/);
-  await assert.rejects(() => g.raw("w1", ".", ["checkout", "main"]), /not permitted/);
+  await assert.rejects(() => g.raw("w1", ".", ["-c", "alias.pwn=!echo owned", "pwn"]), /must be a subcommand/);
+  await assert.rejects(() => g.raw("w1", ".", ["-C", "/etc", "log"]), /must be a subcommand/);
+  await assert.rejects(() => g.raw("w1", ".", ["--exec-path=/tmp/evil", "log"]), /must be a subcommand/);
+  await assert.rejects(() => g.raw("w1", ".", ["--git-dir=/elsewhere", "log"]), /must be a subcommand/);
 });
 
-test("raw denies push --force specifically, since push itself is allowed to read", async () => {
+test("raw is READ-ONLY — an allowlist, because a denylist over git can never be complete", async () => {
   const g = api(["git.read"], scratchRepo()).git!;
-  await assert.rejects(() => g.raw("w1", ".", ["push", "--force"]), /not permitted/);
-  await assert.rejects(() => g.raw("w1", ".", ["push", "-f", "origin"]), /not permitted/);
+  // The first draft denied reset/clean/checkout and left these open,
+  // so a git.read grant could mutate freely.
+  for (const sub of ["commit", "merge", "apply", "am", "update-ref", "branch", "config", "remote", "submodule"]) {
+    await assert.rejects(() => g.raw("w1", ".", [sub, "--help"]), /read-only/, `'${sub}' must not be reachable`);
+  }
+  // And the ones the original denylist did cover.
+  for (const sub of ["reset", "clean", "checkout", "rebase", "gc", "push", "fetch", "pull"]) {
+    await assert.rejects(() => g.raw("w1", ".", [sub]), /read-only/, `'${sub}' must not be reachable`);
+  }
+});
+
+test("raw denies exec-bearing options that survive as SUBCOMMAND options", async () => {
+  const g = api(["git.read"], scratchRepo()).git!;
+  await assert.rejects(() => g.raw("w1", ".", ["log", "--output=/tmp/x"]), /not permitted/);
+  await assert.rejects(() => g.raw("w1", ".", ["grep", "--open-files-in-pager", "x"]), /not permitted/);
+});
+
+test("the read-only subcommands a real module needs still work", async () => {
+  const cwd = scratchRepo();
+  const g = api(["git.read"], cwd).git!;
+  assert.match(await g.raw("w1", ".", ["log", "--oneline"]), /init/);
+  assert.match(await g.raw("w1", ".", ["blame", "--porcelain", "a.txt"]), /a\.txt|author/i);
+  assert.ok((await g.raw("w1", ".", ["rev-parse", "HEAD"])).trim().length >= 7);
+  assert.match(await g.raw("w1", ".", ["ls-files"]), /a\.txt/);
 });
 
 test("raw rejects an empty argv rather than running bare git", async () => {

@@ -1,32 +1,68 @@
 import { appendFileSync, mkdirSync, readdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join, sep } from "node:path";
 import type { BrokerModuleApi, RouteHandler } from "../packages/module/src/index.js";
-import type { BrokerEvents } from "./broker-events.js";
+import { BROKER_EVENTS, type BrokerEventName, type BrokerEvents } from "./broker-events.js";
 import type { Capability } from "./capabilities.js";
 import { BrokerError } from "./errors.js";
 import { git, repoCommit, repoDiff, repoLog, repoPush, repoTree, resolveRepo } from "./git-exec.js";
 import { runBrokerMethod, type OpsDeps } from "./workspace-ops.js";
 
-/** argv[0] values a module may not run through `raw`. These are the
- * operations whose broker equivalents audit and confirm — a module
- * wanting them goes through the vetted verb, which keeps the audit trail
- * and the preview hash intact.
+/** Subcommands `raw` permits. An ALLOWLIST, deliberately — not a denylist.
  *
- * The denylist is on argv[0] only, and that is sufficient because `raw`
- * takes an ARRAY: there is no shell, so no second command can be
- * smuggled through a separator. */
-const RAW_DENIED = new Set(["reset", "clean", "checkout", "rebase", "filter-branch", "gc", "prune"]);
+ * A denylist over git's surface can never be complete. The first draft of
+ * this denied reset/clean/checkout and still allowed `commit`, `merge`,
+ * `apply`, `am`, `update-ref`, `branch` and `config`, so a `git.read`
+ * grant could mutate the repo freely and the read/write capability split
+ * was defeated by its own escape valve. Read-only git, by contrast, is a
+ * small enumerable set.
+ *
+ * `raw` is therefore READ-ONLY, always. Mutations go through the vetted
+ * verbs (`commit`, `push` under `git.write`), which audit — which is what
+ * the design intended all along. */
+const RAW_ALLOWED = new Set([
+  "log", "show", "diff", "diff-tree", "diff-index", "status", "blame", "shortlog",
+  "ls-files", "ls-tree", "cat-file", "rev-parse", "rev-list", "describe", "grep",
+  "show-ref", "for-each-ref", "name-rev", "merge-base", "count-objects",
+  "whatchanged", "cherry", "range-diff", "verify-commit", "verify-tag", "check-ignore",
+]);
+
+/** Options that make git run ANOTHER program, wherever they appear.
+ *
+ * argv[0] being a bare subcommand blocks git's pre-subcommand globals
+ * (`-c`, `-C`, `--git-dir`, `--exec-path`, …). These are the ones that
+ * survive as SUBCOMMAND options and still reach an exec. */
+const RAW_DENIED_OPTS = new Set(["--upload-pack", "--receive-pack", "--output", "--open-files-in-pager"]);
 
 function assertRawAllowed(argv: unknown): asserts argv is string[] {
   if (!Array.isArray(argv) || argv.some((a) => typeof a !== "string")) {
     throw new BrokerError("bad_request", "git argv must be an array of strings — a string would need a shell");
   }
   if (argv.length === 0) throw new BrokerError("bad_request", "git argv must not be empty");
-  if (RAW_DENIED.has(argv[0] as string)) {
-    throw new BrokerError("bad_request", `git '${argv[0]}' is not permitted through raw — use the audited verb`);
+
+  const sub = argv[0] as string;
+  // argv[0] MUST be a bare subcommand. Git accepts global options there,
+  // and `git -c alias.x='!sh -c …' x` is arbitrary shell execution —
+  // verified, not theorised. The argv array stops metacharacter
+  // injection; it does nothing when git itself spawns the shell.
+  if (!/^[a-z][a-z0-9-]*$/.test(sub)) {
+    throw new BrokerError(
+      "bad_request",
+      `git argv[0] must be a subcommand, not an option: '${sub}' — global options can make git execute another program`,
+    );
   }
-  if (argv[0] === "push" && argv.some((a) => a === "--force" || a === "-f")) {
-    throw new BrokerError("bad_request", "git 'push --force' is not permitted through raw — use the audited verb");
+  if (!RAW_ALLOWED.has(sub)) {
+    throw new BrokerError(
+      "bad_request",
+      `git '${sub}' is not available through raw — raw is read-only; mutations go through the audited verbs`,
+    );
+  }
+  for (const a of argv as string[]) {
+    if (RAW_DENIED_OPTS.has(a.split("=")[0])) {
+      throw new BrokerError(
+        "bad_request",
+        `git option '${a.split("=")[0]}' is not permitted — it can make git execute another program`,
+      );
+    }
   }
 }
 
@@ -217,6 +253,21 @@ export function buildApi(opts: BuildApiOpts): BuiltApi {
     // The same herdr surface a federated child gets — modules do not
     // receive a wider one than the tunnel does.
     api.rpc = async (method, params) => opts.deps.local.request(opts.session, method, params, 30_000);
+  }
+
+  if (has("events")) {
+    // Consume only. There is deliberately no `emit`: module-to-module
+    // eventing would make this ABI a message bus, which owes its users
+    // delivery ordering, cycle detection and inter-module failure
+    // semantics — permanent obligations for a capability nobody has
+    // asked for. Modules needing to coordinate use the filesystem or
+    // their own transport, outside the broker's contract.
+    api.on = (event, handler) => {
+      if (!(BROKER_EVENTS as readonly string[]).includes(event)) {
+        throw new BrokerError("bad_request", `unknown event '${event}' — a typo would otherwise never fire`);
+      }
+      opts.events.on(event as BrokerEventName, handler);
+    };
   }
 
   return { api, routes };
