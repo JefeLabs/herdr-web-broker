@@ -31,6 +31,14 @@ import type {
 
 const enc = encodeURIComponent;
 
+/** The API version this SDK speaks. The broker also serves every route
+ * unversioned, so an older SDK keeps working — but everything emitted
+ * here carries the prefix, which is what gives a future v2 somewhere to
+ * live alongside v1 rather than replacing it. `GET /health` reports the
+ * broker's own `api_version` unauthenticated, so a client can negotiate
+ * before it holds a token. */
+export const API_VERSION = "v1";
+
 export interface BrokerClientOpts {
   /** e.g. "http://127.0.0.1:7591", or "" when served behind a same-origin proxy */
   origin: string;
@@ -115,7 +123,7 @@ export class InstanceHandle {
   ) {}
 
   #base(): string {
-    return `/instances/${enc(this.name)}`;
+    return `/${API_VERSION}/instances/${enc(this.name)}`;
   }
 
   detail(): Promise<InstanceDetail> {
@@ -160,7 +168,7 @@ export class SessionHandle {
   ) {}
 
   base(): string {
-    return `/instances/${enc(this.instance)}/sessions/${enc(this.name)}`;
+    return `/${API_VERSION}/instances/${enc(this.instance)}/sessions/${enc(this.name)}`;
   }
 
   async agents(opts: { fresh?: boolean } = {}): Promise<AgentInfo[]> {

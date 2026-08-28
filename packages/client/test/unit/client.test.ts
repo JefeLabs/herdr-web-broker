@@ -19,9 +19,9 @@ describe("BrokerClient", () => {
     await session.workspaces();
     await broker.instance("runtime").models("claude");
     expect(calls.map((c) => c.url)).toEqual([
-      "http://b/instances/my%20box/sessions/default/agents?fresh=1",
-      "http://b/instances/my%20box/sessions/default/workspaces",
-      "http://b/instances/runtime/models?kind=claude",
+      "http://b/v1/instances/my%20box/sessions/default/agents?fresh=1",
+      "http://b/v1/instances/my%20box/sessions/default/workspaces",
+      "http://b/v1/instances/runtime/models?kind=claude",
     ]);
   });
 
@@ -50,9 +50,9 @@ describe("BrokerClient", () => {
     });
 
     await session.worktrees("w1");
-    expect(calls[1].url).toBe("/instances/runtime/sessions/default/workspaces/w1/worktrees");
+    expect(calls[1].url).toBe("/v1/instances/runtime/sessions/default/workspaces/w1/worktrees");
     await session.removeWorktree("w6", { force: true });
-    expect(calls[2].url).toBe("/instances/runtime/sessions/default/worktrees/w6?force=1");
+    expect(calls[2].url).toBe("/v1/instances/runtime/sessions/default/worktrees/w6?force=1");
     expect(calls[2].init.method).toBe("DELETE");
   });
 
@@ -61,7 +61,7 @@ describe("BrokerClient", () => {
     const session = new BrokerClient({ origin: "", token: "t", fetchFn }).instance("runtime").session("default");
     const out = await session.closeWorkspace("w2");
     expect(out.closed).toBe(true);
-    expect(calls[0].url).toBe("/instances/runtime/sessions/default/workspaces/w2");
+    expect(calls[0].url).toBe("/v1/instances/runtime/sessions/default/workspaces/w2");
     expect(calls[0].init.method).toBe("DELETE");
   });
 
@@ -94,8 +94,8 @@ describe("BrokerClient", () => {
     const session = new BrokerClient({ origin: "", token: "t", fetchFn }).instance("runtime").session("default");
     await session.repo("w1", ".").tree();
     await session.repo("w1", ".").file("notes.md");
-    expect(calls[0].url).toBe("/instances/runtime/sessions/default/workspaces/w1/repos/-/tree");
-    expect(calls[1].url).toBe("/instances/runtime/sessions/default/workspaces/w1/repos/-/file?path=notes.md");
+    expect(calls[0].url).toBe("/v1/instances/runtime/sessions/default/workspaces/w1/repos/-/tree");
+    expect(calls[1].url).toBe("/v1/instances/runtime/sessions/default/workspaces/w1/repos/-/file?path=notes.md");
   });
 
   test("git verbs: commit/log/push/checkout hit their routes with the right shapes", async () => {
@@ -106,10 +106,10 @@ describe("BrokerClient", () => {
     await repo.push();
     await repo.checkout("feat/x", { create: true });
     expect(calls.map((c) => c.url)).toEqual([
-      "/instances/runtime/sessions/default/workspaces/w1/repos/-/git/commit",
-      "/instances/runtime/sessions/default/workspaces/w1/repos/-/git/log?limit=5",
-      "/instances/runtime/sessions/default/workspaces/w1/repos/-/git/push",
-      "/instances/runtime/sessions/default/workspaces/w1/repos/-/git/checkout",
+      "/v1/instances/runtime/sessions/default/workspaces/w1/repos/-/git/commit",
+      "/v1/instances/runtime/sessions/default/workspaces/w1/repos/-/git/log?limit=5",
+      "/v1/instances/runtime/sessions/default/workspaces/w1/repos/-/git/push",
+      "/v1/instances/runtime/sessions/default/workspaces/w1/repos/-/git/checkout",
     ]);
     expect(JSON.parse(String(calls[0].init.body))).toEqual({ message: "vibe: keep it" });
     expect(JSON.parse(String(calls[3].init.body))).toEqual({ ref: "feat/x", create: true });
@@ -134,7 +134,7 @@ describe("BrokerClient", () => {
 
     const up = await ctx.upload("spec.pdf", new Uint8Array([1, 2, 3, 4]), { contentType: "application/pdf" });
     expect(up.name).toBe("spec.pdf");
-    expect(calls[0].url).toBe("/instances/runtime/sessions/default/workspaces/w1/context/spec.pdf");
+    expect(calls[0].url).toBe("/v1/instances/runtime/sessions/default/workspaces/w1/context/spec.pdf");
     expect(calls[0].init.method).toBe("PUT");
     expect((calls[0].init.headers as Record<string, string>)["content-type"]).toBe("application/pdf");
 
@@ -183,7 +183,7 @@ describe("session ownership", () => {
       .teardown();
     expect(out.torn_down).toBe("u-kathia-abc123");
     expect(out.workspaces_closed).toBe(2);
-    expect(calls[0].url).toBe("http://b/instances/runtime/sessions/u-kathia-abc123");
+    expect(calls[0].url).toBe("http://b/v1/instances/runtime/sessions/u-kathia-abc123");
     expect(calls[0].init.method).toBe("DELETE");
   });
 });
@@ -197,7 +197,7 @@ describe("git pull/discard/stash verbs", () => {
     const out = await repoOf(fetchFn).pull({ rebase: true });
     expect(out.pulled).toBe(false);
     expect(out.conflicts).toEqual(["a.txt"]);
-    expect(calls[0].url).toBe("http://b/instances/runtime/sessions/default/workspaces/w1/repos/-/git/pull");
+    expect(calls[0].url).toBe("http://b/v1/instances/runtime/sessions/default/workspaces/w1/repos/-/git/pull");
     expect(JSON.parse(String(calls[0].init.body))).toEqual({ rebase: true });
   });
 

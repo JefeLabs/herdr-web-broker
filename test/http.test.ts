@@ -219,6 +219,33 @@ test("health needs no auth; /instances does", async () => {
   await teardown(t);
 });
 
+test("/v1 and the bare path are the SAME routes — the alias keeps pre-1.0 clients working", async () => {
+  const t = await setup();
+  const { authed } = t;
+
+  // /health, unauthenticated, reports the API version so a client can
+  // negotiate before it holds a token — and answers under both forms.
+  const bare = await (await fetch(t.base + "/health")).json();
+  const versioned = await (await fetch(t.base + "/v1/health")).json();
+  assert.equal(bare.api_version, "v1");
+  assert.deepEqual({ ...bare, pid: 0 }, { ...versioned, pid: 0 }, "same body either way");
+
+  // An authenticated route: identical payload through both paths.
+  const rollBare = await (await authed("/instances")).json();
+  const rollV1 = await (await authed("/v1/instances")).json();
+  assert.deepEqual(rollBare, rollV1);
+
+  // The prefix is stripped, not merely tolerated — a deeper route still
+  // resolves, so this is not a special case bolted onto the top level.
+  const sBare = await (await authed("/instances/runtime/sessions/default/agents")).json();
+  const sV1 = await (await authed("/v1/instances/runtime/sessions/default/agents")).json();
+  assert.deepEqual(sBare, sV1);
+
+  // Only the exact segment is a version. `/v11` is a real 404, not a strip.
+  assert.equal((await authed("/v11/instances")).status, 404);
+  await teardown(t);
+});
+
 test("GET grammar: rollup, instance, sessions, agents", async () => {
   const t = await setup();
   const { authed } = t;

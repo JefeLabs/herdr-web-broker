@@ -13,7 +13,7 @@ import { classifySession } from "./reconcile.js";
 import type { Registry } from "./registry.js";
 import type { ChildrenStore } from "./state.js";
 import type { TunnelHub } from "./tunnel.js";
-import { PLUGIN_VERSION } from "./version.js";
+import { API_VERSION, PLUGIN_VERSION } from "./version.js";
 import type { CallInstance } from "./ws-server.js";
 import { isBrokerMethod, runBrokerMethod, type OpsDeps } from "./workspace-ops.js";
 
@@ -185,10 +185,26 @@ export function createHttpHandler(deps: HttpDeps) {
 
   async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
     const url = new URL(req.url ?? "/", "http://placeholder");
-    const parts = url.pathname.split("/").filter(Boolean);
+    // API versioning happens HERE and nowhere else: strip a leading `/v1`
+    // once, so all 55 route matchers below stay written unversioned. The
+    // bare path is a deprecated alias — every pre-1.0 caller keeps working
+    // and the SDK moves to `/v1` on its own schedule; the alias goes away
+    // at 1.0. `url.pathname` is deliberately left untouched so the
+    // "unsupported route" errors echo what the caller actually sent.
+    const rawParts = url.pathname.split("/").filter(Boolean);
+    const parts = rawParts[0] === API_VERSION ? rawParts.slice(1) : rawParts;
+    const routePath = "/" + parts.join("/");
 
-    if (req.method === "GET" && url.pathname === "/health") {
-      json(res, 200, { ok: true, name: "herdr-web-broker", version: PLUGIN_VERSION, pid: process.pid });
+    if (req.method === "GET" && routePath === "/health") {
+      json(res, 200, {
+        ok: true,
+        name: "herdr-web-broker",
+        version: PLUGIN_VERSION,
+        // The API version this broker serves. Unauthenticated on purpose:
+        // a client has to be able to negotiate BEFORE it holds a token.
+        api_version: API_VERSION,
+        pid: process.pid,
+      });
       return;
     }
 

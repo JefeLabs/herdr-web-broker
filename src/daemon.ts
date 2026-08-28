@@ -22,6 +22,7 @@ import { ParentLink } from "./south.js";
 import { AgentIndex, ChildrenStore, WorkspaceIndex, clearLock, ensureAdminToken, readLock, writeLock } from "./state.js";
 import { CliProfiles } from "./cli-profiles.js";
 import { TunnelHub } from "./tunnel.js";
+import { verdictFor } from "./version.js";
 import type { OpsDeps } from "./workspace-ops.js";
 import { attachUpgradeHandling, type UpgradeHandle } from "./ws-server.js";
 
@@ -73,6 +74,19 @@ export async function startDaemon(opts: DaemonOptions): Promise<DaemonHandle | u
   if (normalizeClientTokens(config.client_tokens) && opts.configOverrides?.client_tokens === undefined) {
     saveConfig(opts.configDir, config);
   }
+  // herdr compatibility gate. Detection already happened below via
+  // detectHerdrVersion(); until now nothing acted on the result. The
+  // asymmetry is deliberate — see verdictFor: below the floor is
+  // known-incompatible and refuses, above the tested ceiling is merely
+  // unknown and warns, because refusing there would turn a
+  // possibly-working setup into a guaranteed outage on every herdr
+  // upgrade. Tests inject herdrVersion, so they bypass the spawn, not
+  // the policy.
+  const herdrVersion = opts.herdrVersion ?? detectHerdrVersion();
+  const verdict = verdictFor(herdrVersion);
+  if (!verdict.ok) throw new Error(`herdr-web-broker: ${verdict.refuse}`);
+  if ("warn" in verdict) console.warn(`herdr-web-broker: WARNING — ${verdict.warn}`);
+
   const registry = new Registry(join(opts.stateDir, "registry.json"));
   registry.load();
   const children = new ChildrenStore(opts.stateDir);
@@ -82,7 +96,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<DaemonHandle | u
 
   const local = new LocalHerdr({
     registry,
-    herdrVersion: opts.herdrVersion ?? detectHerdrVersion(),
+    herdrVersion,
     endpoints: opts.localEndpoints,
     envSocket: opts.localEndpoints ? undefined : process.env.HERDR_SOCKET_PATH,
     defaultSocket: opts.localEndpoints ? undefined : join(homedir(), ".config/herdr/herdr.sock"),
