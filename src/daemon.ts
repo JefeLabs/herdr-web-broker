@@ -97,6 +97,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<DaemonHandle | u
     models: new ModelRegistry(config.models),
     agents,
     profiles: new CliProfiles(config.cli),
+    stateDir: opts.stateDir,
   };
 
   const hub = new TunnelHub();

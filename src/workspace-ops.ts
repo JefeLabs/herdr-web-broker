@@ -32,6 +32,7 @@ import type { LocalHerdr } from "./local-attach.js";
 import type { Registry } from "./registry.js";
 import type { AgentIndex, WorkspaceIndex } from "./state.js";
 import type { CliProfiles } from "./cli-profiles.js";
+import { prepareWorkspace } from "./prepare-workspace.js";
 import { decideTurn, readTurnState } from "./transcript.js";
 
 export interface OpsDeps {
@@ -42,6 +43,9 @@ export interface OpsDeps {
   models: ModelRegistry;
   agents: AgentIndex;
   profiles: CliProfiles;
+  /** broker's own state dir — prepareWorkspace materializes broker-owned
+   * CLI config dirs (e.g. trust-dialog pre-acceptance) under here */
+  stateDir: string;
   /** test overrides for broker.agent.ask pacing */
   askPollMs?: number;
   askGraceMs?: number;
@@ -439,8 +443,11 @@ async function spawn(deps: OpsDeps, session: string, p: Record<string, unknown>)
   }
 
   // Env spec §5: resolve first — a failing hook must not leave an orphan
-  // workspace or pane behind.
-  const injected = await deps.env.resolveForSpawn(session, kind);
+  // workspace or pane behind. prepareWorkspace's vars ride the same
+  // injection path, so a trust dialog is answered before the CLI starts
+  // rather than screen-scraped after it appears.
+  const prepared = prepareWorkspace(deps.profiles.get(kind) ?? { kind, source: "builtin" }, deps.stateDir);
+  const injected = { ...prepared, ...(await deps.env.resolveForSpawn(session, kind)) };
 
   let paneId: string;
   let workspaceId: string;

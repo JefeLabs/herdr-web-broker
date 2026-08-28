@@ -36,6 +36,7 @@ async function setup(): Promise<{ fake: FakeHerdr; deps: OpsDeps; teardown: () =
     models: new ModelRegistry(),
     agents: new AgentIndex(tmpDir()),
     profiles: new CliProfiles(),
+    stateDir: tmpDir(),
     askPollMs: 25,
     askGraceMs: 150,
     envSettleMs: 5,
@@ -158,6 +159,9 @@ test("spawn: a pinnable kind (claude) appends --session-id after the caller's ow
     const cwd = scratchRepo();
     t.fake.handlers.set("workspace.create", () => ({ root_pane: { pane_id: "w2:p1" } }));
     t.fake.handlers.set("agent.start", () => ({ type: "agent_started" }));
+    // claude's prepare block always yields CLAUDE_CONFIG_DIR, so spawn's
+    // env-injection path (drop file + send_input) runs for this kind.
+    t.fake.handlers.set("pane.send_input", () => ({ type: "ok" }));
     await runBrokerMethod(t.deps, "default", "broker.agent.spawn", {
       kind: "claude",
       cwd,
@@ -179,6 +183,9 @@ test("spawn: the pinned id sent to agent.start is the same id recorded in AgentI
     const cwd = scratchRepo();
     t.fake.handlers.set("workspace.create", () => ({ root_pane: { pane_id: "w2:p1" } }));
     t.fake.handlers.set("agent.start", () => ({ type: "agent_started" }));
+    // claude's prepare block always yields CLAUDE_CONFIG_DIR, so spawn's
+    // env-injection path (drop file + send_input) runs for this kind.
+    t.fake.handlers.set("pane.send_input", () => ({ type: "ok" }));
     await runBrokerMethod(t.deps, "default", "broker.agent.spawn", { kind: "claude", cwd });
     const started = t.fake.received.find((r) => r.method === "agent.start");
     const sentId = (started?.params as { args: string[] }).args[1];

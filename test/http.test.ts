@@ -65,6 +65,7 @@ async function setup(opts: { limiter?: AuthLimiter; ownership?: boolean } = {}) 
     models: new ModelRegistry(),
     agents: new AgentIndex(tmpDir()),
     profiles: new CliProfiles(),
+    stateDir: tmpDir(),
     askPollMs: 25,
     askGraceMs: 150,
   };
