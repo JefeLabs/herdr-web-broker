@@ -570,7 +570,13 @@ test("wait + explain routes: POST .../wait blocks and 200s on timeout; GET .../e
       body: JSON.stringify({ until: ["idle"], timeout_ms: 5000 }),
     });
     assert.equal(waited.status, 200);
-    assert.deepEqual(await waited.json(), { waited: true, status: "idle", raw_status: "idle", pane_id: "w1:p1" });
+    assert.deepEqual(await waited.json(), {
+      waited: true,
+      status: "idle",
+      raw_status: "idle",
+      evidence: "status",
+      pane_id: "w1:p1",
+    });
 
     t.fake.handlers.set("agent.explain", () => ({ type: "agent_explain", explain: { agent: "claude" } }));
     const explain = await t.authed("/instances/runtime/sessions/default/agents/w1%3Ap1/explain");

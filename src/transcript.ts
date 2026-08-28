@@ -1,4 +1,18 @@
+import { existsSync, readFileSync } from "node:fs";
+import { createRequire } from "node:module";
+import { homedir } from "node:os";
 import type { CliProfile } from "./cli-profiles.js";
+import type { AgentMeta } from "./state.js";
+
+// node:sqlite landed in Node 22.5 behind a flag and only went flag-free
+// around 22.13 (stable in 24+). This package supports >=22, so a top-level
+// `import { DatabaseSync } from "node:sqlite"` would throw
+// ERR_UNKNOWN_BUILTIN_MODULE at module load on 22.0-22.12 — taking down
+// claude/agy transcript reading along with opencode's, not just degrading
+// the sqlite branch. Loading it lazily through createRequire, inside the
+// sqlite branch's own try/catch, keeps a missing/old sqlite implementation
+// a same-as-missing-file degradation instead of a load-time crash.
+const require_ = createRequire(import.meta.url);
 
 /** What a CLI's own session file says about the current turn. `done` is a
  * terminal stop the agent WROTE — the ground truth herdr's screen-inference
@@ -159,4 +173,75 @@ export function decideTurn(
     return { status: t.state, raw_status: t.state, evidence: "transcript" };
   }
   return { status: tier.status, raw_status: tier.raw_status ?? tier.status, evidence: "status" };
+}
+
+/** Only the tail matters: a turn's terminal record is at the end, and a
+ * long-running session's transcript can reach megabytes. */
+const TAIL_BYTES = 256 * 1024;
+
+function readTail(path: string): string | null {
+  if (!existsSync(path)) return null;
+  try {
+    const buf = readFileSync(path);
+    return buf.subarray(Math.max(0, buf.length - TAIL_BYTES)).toString("utf8");
+  } catch {
+    return null;
+  }
+}
+
+function render(template: string, vars: Record<string, string>): string {
+  let out = template;
+  for (const [k, v] of Object.entries(vars)) out = out.replaceAll(`{${k}}`, v);
+  return out;
+}
+
+/** Locate and read this pane's transcript. Every failure path is `null` —
+ * the caller falls back to agent_status, so a CLI that changed its format
+ * degrades the broker to today's behavior rather than breaking it. */
+export function readTurnState(
+  profile: CliProfile,
+  meta: AgentMeta,
+  cwd: string,
+  home: string = homedir(),
+): TranscriptState | null {
+  const src = profile.transcript;
+  if (!src) return null;
+  try {
+    let path: string | undefined;
+    if (src.via === "path") {
+      if (!meta.sessionId) return null;
+      path = render(src.template, { home, cwdSlug: claudeCwdSlug(cwd), sessionId: meta.sessionId });
+    } else if (src.via === "map") {
+      // No launch pin: the CLI's own cwd -> id cache is the lookup. It is
+      // last-write-wins per cwd, so two agents in one cwd can collide —
+      // startedAt bounds that until WT-2 says whether minting works.
+      const mapPath = render(src.mapFile, { home });
+      const raw = readTail(mapPath);
+      if (!raw) return null;
+      const id = meta.sessionId ?? (JSON.parse(raw) as Record<string, string>)[cwd];
+      if (!id) return null;
+      path = render(src.template, { home, sessionId: id });
+    } else {
+      // sqlite (opencode today, copilot once WT-5 lands). The db file
+      // check comes first so a CLI that was never run (no db at all)
+      // short-circuits without touching node:sqlite. Read-only, and
+      // node:sqlite reads through the WAL, so a live session is visible.
+      const dbPath = render(src.dbPath, { home });
+      if (!existsSync(dbPath)) return null;
+      const { DatabaseSync } = require_("node:sqlite") as typeof import("node:sqlite");
+      const db = new DatabaseSync(dbPath, { readOnly: true });
+      try {
+        const row = meta.sessionId
+          ? (db.prepare(src.queryBySession).get(meta.sessionId) as { data?: string } | undefined)
+          : (db.prepare(src.queryByCwd).get(cwd) as { data?: string } | undefined);
+        return typeof row?.data === "string" ? parseTranscript(profile.kind, row.data, profile) : null;
+      } finally {
+        db.close();
+      }
+    }
+    const text = readTail(path);
+    return text === null ? null : parseTranscript(profile.kind, text, profile);
+  } catch {
+    return null;
+  }
 }

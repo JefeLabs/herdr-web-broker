@@ -405,7 +405,13 @@ test("broker.agent.wait: status wait defaults to needs-me-or-done; timeout is a 
       raw_status: string;
       pane_id: string;
     };
-    assert.deepEqual(out, { waited: true, status: "blocked", raw_status: "blocked", pane_id: "w1:p1" });
+    assert.deepEqual(out, {
+      waited: true,
+      status: "blocked",
+      raw_status: "blocked",
+      evidence: "status",
+      pane_id: "w1:p1",
+    });
     const sent = t.fake.received.find((r) => r.method === "agent.wait");
     assert.deepEqual(sent?.params, { target: "copilot", until: ["idle", "blocked", "done"], timeout_ms: 30_000 });
 

@@ -32,6 +32,7 @@ import type { LocalHerdr } from "./local-attach.js";
 import type { Registry } from "./registry.js";
 import type { AgentIndex, WorkspaceIndex } from "./state.js";
 import type { CliProfiles } from "./cli-profiles.js";
+import { decideTurn, readTurnState } from "./transcript.js";
 
 export interface OpsDeps {
   local: LocalHerdr;
@@ -662,7 +663,12 @@ async function waitAgent(deps: OpsDeps, session: string, p: Record<string, unkno
       timeoutMs + 10_000,
     )) as { agent?: { agent_status?: unknown } };
     const raw = String(r?.agent?.agent_status ?? "unknown");
-    return { waited: true, status: foldStatus(raw), raw_status: raw, pane_id: pane };
+    const meta = deps.agents.get(session, pane);
+    const profile = meta ? deps.profiles.get(meta.kind) : undefined;
+    const cwd = deps.index.get(session, pane.split(":")[0])?.cwd;
+    const t = meta && profile && cwd ? readTurnState(profile, meta, cwd) : null;
+    const d = decideTurn(t, { status: foldStatus(raw), raw_status: raw }, meta?.startedAt ?? 0);
+    return { waited: true, status: d.status, raw_status: d.raw_status, evidence: d.evidence, pane_id: pane };
   } catch (e) {
     const err = e instanceof BrokerError ? e : new BrokerError("upstream_error", String(e));
     if (err.code === "timeout") return { waited: false, timed_out: true, pane_id: pane };
@@ -1091,7 +1097,12 @@ async function askInner(
       // possibly mid-write — keep polling; the deadline or the status
       // grace decides when to give up and report parse_error
     }
-    const status = deps.registry.get("runtime")?.sessions[session]?.agents.find((a) => a.id === pane)?.status;
+    const meta = deps.agents.get(session, pane);
+    const profile = meta ? deps.profiles.get(meta.kind) : undefined;
+    const t = meta && profile ? readTurnState(profile, meta, cwd) : null;
+    const tierStatus = deps.registry.get("runtime")?.sessions[session]?.agents.find((a) => a.id === pane)?.status;
+    const decision = decideTurn(t, { status: tierStatus ?? "idle" }, startedAt);
+    const status = decision.status;
     if (status === "working" || status === "blocked") {
       // blocked (e.g. an approval prompt) is not idle — the agent may still
       // resume and write the answer, so it must not start the countdown.
@@ -1104,10 +1115,15 @@ async function askInner(
       // The pane's status folds "unknown"/"done" to idle, so a dead-but-
       // listed agent looks idle and would otherwise hang for the whole
       // budget on its first ask — fail fast with a distinct code instead.
+      // The message states which basis was measured: the transcript tier
+      // means the transcript itself never grew; the status tier (today's
+      // behavior) means agent_status never became working.
       throw new BrokerError(
         "agent_unresponsive",
-        `agent in pane '${pane}' never started working within ${startGraceMs}ms — it may be dead or stuck`,
-        { pane_id: pane },
+        decision.evidence === "transcript"
+          ? `agent in pane '${pane}' wrote nothing to its transcript within ${startGraceMs}ms — it may be dead or stuck`
+          : `agent in pane '${pane}' never started working within ${startGraceMs}ms — it may be dead or stuck`,
+        { pane_id: pane, evidence: decision.evidence },
       );
     }
     await new Promise((r) => setTimeout(r, pollMs));
