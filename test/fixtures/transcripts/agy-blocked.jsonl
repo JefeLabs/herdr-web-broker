@@ -1,0 +1,2 @@
+{"step_index":0,"source":"USER_EXPLICIT","type":"USER_INPUT","status":"DONE","created_at":"2026-08-27T10:00:00Z","content":"hi"}
+{"step_index":1,"source":"MODEL","type":"ASK_QUESTION","status":"DONE","created_at":"2026-08-27T10:00:06Z","content":"which one?"}

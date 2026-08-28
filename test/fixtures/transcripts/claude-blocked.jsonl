@@ -1,0 +1,2 @@
+{"type":"user","timestamp":"2026-08-27T10:00:00.000Z","message":{"role":"user","content":"hi"}}
+{"type":"assistant","timestamp":"2026-08-27T10:00:05.000Z","message":{"role":"assistant","stop_reason":"tool_use","content":[{"type":"tool_use","id":"t9","name":"Bash"}]}}
