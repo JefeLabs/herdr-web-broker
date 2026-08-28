@@ -8,7 +8,8 @@ import { ModelRegistry } from "../src/model-registry.js";
 import { LocalHerdr } from "../src/local-attach.js";
 import { Registry } from "../src/registry.js";
 import { ParentLink } from "../src/south.js";
-import { WorkspaceIndex } from "../src/state.js";
+import { AgentIndex, WorkspaceIndex } from "../src/state.js";
+import { CliProfiles } from "../src/cli-profiles.js";
 import { PROTO_VERSION } from "../src/tunnel.js";
 import { FakeHerdr } from "./fake-herdr.js";
 import { tmpDir } from "./util.js";
@@ -57,7 +58,15 @@ test("child heartbeat: answers a server-initiated ping after enroll; stop() clea
     local,
     registry,
     remoteDeny: [],
-    ops: { local, registry, index: new WorkspaceIndex(tmpDir()), env: new EnvRegistry({ stateDir: tmpDir() }), models: new ModelRegistry() },
+    ops: {
+      local,
+      registry,
+      index: new WorkspaceIndex(tmpDir()),
+      env: new EnvRegistry({ stateDir: tmpDir() }),
+      models: new ModelRegistry(),
+      agents: new AgentIndex(tmpDir()),
+      profiles: new CliProfiles(),
+    },
   });
   link.start();
   await helloReceived;

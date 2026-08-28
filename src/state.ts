@@ -97,6 +97,53 @@ export class WorkspaceIndex {
   }
 }
 
+export interface AgentMeta {
+  /** the id pinned at launch (--session-id/--session), when the CLI has
+   * such a flag; absent means the transcript must be discovered instead */
+  sessionId?: string;
+  kind: string;
+  /** ms since epoch — bounds claim-by-recency for unpinnable CLIs */
+  startedAt: number;
+}
+
+/** pane_id -> agent meta per session. WorkspaceIndex is workspace-scoped
+ * and cannot hold this: a mode-B spawn puts several panes, each its own
+ * agent with its own session id, inside ONE workspace. */
+export class AgentIndex {
+  #path: string;
+
+  constructor(stateDir: string) {
+    mkdirSync(stateDir, { recursive: true });
+    this.#path = join(stateDir, "agents.json");
+  }
+
+  #read(): Record<string, Record<string, AgentMeta>> {
+    return readJson(this.#path, {});
+  }
+
+  #write(data: Record<string, Record<string, AgentMeta>>): void {
+    writeFileSync(this.#path, JSON.stringify(data, null, 2) + "\n");
+  }
+
+  get(session: string, pane: string): AgentMeta | undefined {
+    return this.#read()[session]?.[pane];
+  }
+
+  set(session: string, pane: string, meta: AgentMeta): void {
+    const data = this.#read();
+    (data[session] ??= {})[pane] = meta;
+    this.#write(data);
+  }
+
+  remove(session: string, pane: string): void {
+    const data = this.#read();
+    if (data[session]?.[pane] !== undefined) {
+      delete data[session][pane];
+      this.#write(data);
+    }
+  }
+}
+
 export function ensureAdminToken(stateDir: string): string {
   mkdirSync(stateDir, { recursive: true });
   const path = join(stateDir, "admin-token");

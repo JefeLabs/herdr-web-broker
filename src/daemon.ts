@@ -19,7 +19,8 @@ import { Presence } from "./presence.js";
 import { Projection } from "./projection.js";
 import { Registry } from "./registry.js";
 import { ParentLink } from "./south.js";
-import { ChildrenStore, WorkspaceIndex, clearLock, ensureAdminToken, readLock, writeLock } from "./state.js";
+import { AgentIndex, ChildrenStore, WorkspaceIndex, clearLock, ensureAdminToken, readLock, writeLock } from "./state.js";
+import { CliProfiles } from "./cli-profiles.js";
 import { TunnelHub } from "./tunnel.js";
 import type { OpsDeps } from "./workspace-ops.js";
 import { attachUpgradeHandling, type UpgradeHandle } from "./ws-server.js";
@@ -76,6 +77,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<DaemonHandle | u
   registry.load();
   const children = new ChildrenStore(opts.stateDir);
   const index = new WorkspaceIndex(opts.stateDir);
+  const agents = new AgentIndex(opts.stateDir);
   const adminToken = ensureAdminToken(opts.stateDir);
 
   const local = new LocalHerdr({
@@ -93,6 +95,8 @@ export async function startDaemon(opts: DaemonOptions): Promise<DaemonHandle | u
     index,
     env: new EnvRegistry({ stateDir: opts.stateDir, hooks: config.env_hooks, enabled: config.env_registry.enabled }),
     models: new ModelRegistry(config.models),
+    agents,
+    profiles: new CliProfiles(config.cli),
   };
 
   const hub = new TunnelHub();

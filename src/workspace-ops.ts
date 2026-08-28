@@ -1,4 +1,4 @@
-import { createHash, randomBytes } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { isAbsolute, join, sep } from "node:path";
 import {
@@ -30,7 +30,8 @@ import {
 } from "./git-exec.js";
 import type { LocalHerdr } from "./local-attach.js";
 import type { Registry } from "./registry.js";
-import type { WorkspaceIndex } from "./state.js";
+import type { AgentIndex, WorkspaceIndex } from "./state.js";
+import type { CliProfiles } from "./cli-profiles.js";
 
 export interface OpsDeps {
   local: LocalHerdr;
@@ -38,6 +39,8 @@ export interface OpsDeps {
   index: WorkspaceIndex;
   env: EnvRegistry;
   models: ModelRegistry;
+  agents: AgentIndex;
+  profiles: CliProfiles;
   /** test overrides for broker.agent.ask pacing */
   askPollMs?: number;
   askGraceMs?: number;
@@ -527,6 +530,15 @@ async function spawn(deps: OpsDeps, session: string, p: Record<string, unknown>)
   // client whose mode-B retry would leak a new workspace per attempt.
   const busyRetries = deps.paneBusyRetries ?? 4;
   const busyDelayMs = deps.paneBusyDelayMs ?? 1000;
+  // Session-id pinning: when the CLI can be told its own session id, the
+  // transcript path is known in advance instead of discovered by scanning
+  // and guessing which file belongs to which pane. Two of five CLIs have
+  // such a flag; the rest are discovered by cwd map + startedAt bound.
+  const profile = deps.profiles.get(kind);
+  const pinnedId = profile?.pin ? randomUUID() : undefined;
+  if (profile?.pin && pinnedId) {
+    args = [...(args ?? []), profile.pin.flag, pinnedId];
+  }
   for (let attempt = 0; ; attempt++) {
     try {
       await deps.local.request(
@@ -554,6 +566,8 @@ async function spawn(deps: OpsDeps, session: string, p: Record<string, unknown>)
       throw new BrokerError(err.code, err.message, { ...err.details, workspace_id: workspaceId, pane_id: paneId });
     }
   }
+
+  deps.agents.set(session, paneId, { ...(pinnedId ? { sessionId: pinnedId } : {}), kind, startedAt: Date.now() });
 
   const raw = (await deps.local.request(session, "agent.list", {}, 5000).catch(() => ({}))) as {
     agents?: Array<Record<string, unknown>>;

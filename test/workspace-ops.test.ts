@@ -7,7 +7,8 @@ import { BrokerError } from "../src/errors.js";
 import { LocalHerdr } from "../src/local-attach.js";
 import { ModelRegistry } from "../src/model-registry.js";
 import { Registry } from "../src/registry.js";
-import { WorkspaceIndex } from "../src/state.js";
+import { AgentIndex, WorkspaceIndex } from "../src/state.js";
+import { CliProfiles } from "../src/cli-profiles.js";
 import { isBrokerMethod, runBrokerMethod, type OpsDeps } from "../src/workspace-ops.js";
 import { FakeHerdr, FakeHerdrError } from "./fake-herdr.js";
 import { scratchRepo, sh, tmpDir } from "./util.js";
@@ -33,6 +34,8 @@ async function setup(): Promise<{ fake: FakeHerdr; deps: OpsDeps; teardown: () =
     index: new WorkspaceIndex(tmpDir()),
     env: new EnvRegistry({ stateDir: tmpDir() }),
     models: new ModelRegistry(),
+    agents: new AgentIndex(tmpDir()),
+    profiles: new CliProfiles(),
     askPollMs: 25,
     askGraceMs: 150,
     envSettleMs: 5,
