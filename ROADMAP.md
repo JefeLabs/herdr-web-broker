@@ -241,11 +241,24 @@ missing endpoints/SDK/UI, not missing reachability):
     `abi: 1` it is a compatibility obligation forever, which argues for
     keeping the v1 surface small. Load failures degrade (that module's
     routes 404, the broker still boots) rather than taking the whole API
-    down for one optional extension. Open in the spec: `.js`-only vs a TS
-    loader; whether `api.git.raw` is too sharp (enumerating safe
-    subcommands is safer and guarantees this does not meet the stated
-    need); and whether module-emitted events turn the ABI into a message
-    bus. Coupled to item 26 — the ABI wants to ship as a published
+    down for one optional extension.
+    Modules have no TYPE — "git module"/"file module" are descriptions
+    the broker cannot verify, and metadata that looks like a constraint
+    but is not one is worse than none. Instead a module DECLARES
+    capabilities (`git.read`, `git.write`, `files`, `workspaces`,
+    `agents`, `rpc`, `events`) and the broker grants the intersection of
+    that and the operator's config list, CONSTRUCTING `api` from the
+    grant — an ungranted capability is `undefined`, not a function that
+    throws. Least privilege by construction, plus an honest install-time
+    disclosure: a module that later wants `git.write` shows up in a diff.
+    Explicitly NOT a sandbox — node:fs stays one import away. Flat by
+    design (no dependency graph, no delegation, no runtime grants), and
+    the capability NAMES join the ABI, so granularity is decide-once.
+    Open in the spec: `.js`-only vs a TS loader; whether `api.git.raw` is
+    too sharp (enumerating safe subcommands is safer and guarantees this
+    does not meet the stated need); whether module-emitted events turn
+    the ABI into a message bus; and whether it is inconsistent that `git`
+    splits read/write while `files` does not. Coupled to item 26 — the ABI wants to ship as a published
     `packages/module` alongside the SDK, not after it.
 
 ## Blocked on herdr (needs a live schema probe)
