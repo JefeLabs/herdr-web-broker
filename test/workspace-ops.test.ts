@@ -1738,3 +1738,34 @@ test("spawn: send_input failure removes the drop file and fails the spawn", asyn
     await t.teardown();
   }
 });
+
+test("spawn: a pane that renders ready then goes unready within the settle window fails the spawn", async () => {
+  const t = await setup();
+  t.deps.settleMsOverride = 300;
+  try {
+    armSpawnFake(t.fake);
+    // agent.list is read live on each poll (test/fake-herdr.ts). The first
+    // sample catches the pane freshly ready; the second (after one 250ms
+    // gap, per settleMs=300) catches it having crashed — the render-then-die
+    // sequence this whole task exists to reject, not merely "never ready".
+    let calls = 0;
+    t.fake.handlers.set("agent.list", () => {
+      calls++;
+      return {
+        type: "agent_list",
+        agents: [{ pane_id: "w9:p1", name: "copilot", agent: "copilot", agent_status: "working", interactive_ready: calls === 1 }],
+      };
+    });
+    await assert.rejects(
+      runBrokerMethod(t.deps, "default", "broker.agent.spawn", { kind: "copilot", cwd: scratchRepo() }),
+      (e: BrokerError) =>
+        e.code === "upstream_error" &&
+        /became ready then stopped being ready/.test(e.message) &&
+        e.details.pane_id === "w9:p1" &&
+        e.details.workspace_id === "w9",
+    );
+    assert.ok(calls >= 2, "must have sampled at least twice to observe the drop");
+  } finally {
+    await t.teardown();
+  }
+});

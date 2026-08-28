@@ -33,6 +33,7 @@ import type { Registry } from "./registry.js";
 import type { AgentIndex, WorkspaceIndex } from "./state.js";
 import type { CliProfiles } from "./cli-profiles.js";
 import { prepareWorkspace } from "./prepare-workspace.js";
+import { holdsReady } from "./readiness.js";
 import { decideTurn, readTurnState } from "./transcript.js";
 
 export interface OpsDeps {
@@ -580,12 +581,15 @@ async function spawn(deps: OpsDeps, session: string, p: Record<string, unknown>)
 
   deps.agents.set(session, paneId, { ...(pinnedId ? { sessionId: pinnedId } : {}), kind, startedAt: Date.now() });
 
-  // Readiness settle: sample interactive_ready across the profile's window
-  // and require it to HOLD. A pane that renders and then dies fails here
-  // instead of being handed back as a live pane id. Only an explicit false
-  // fails the spawn — a herdr that never reports the field yields undefined
-  // samples, and spawn proceeds exactly as it does today; this must not
-  // break instances whose herdr omits interactive_ready.
+  // Readiness settle: sample interactive_ready repeatedly across the
+  // profile's window. The LEVEL property — "stayed ready", not just "was
+  // ready once" — comes from this repeated sampling, not from holdsReady
+  // itself; holdsReady only asks whether any sample ever proved the pane
+  // had stopped. A pane that renders and then dies fails here instead of
+  // being handed back as a live pane id. Only an explicit false fails the
+  // spawn — a herdr that never reports the field yields undefined samples,
+  // and spawn proceeds as it does today; this must not break instances
+  // whose herdr omits interactive_ready.
   const settleMs = deps.settleMsOverride ?? deps.profiles.get(kind)?.settleMs ?? 2500;
   if (settleMs > 0) {
     const gap = Math.max(250, Math.floor(settleMs / 3));
@@ -598,7 +602,7 @@ async function spawn(deps: OpsDeps, session: string, p: Record<string, unknown>)
       const e = list.agents?.find((a) => a.pane_id === paneId);
       samples.push(typeof e?.interactive_ready === "boolean" ? e.interactive_ready : undefined);
     }
-    if (samples.some((s) => s === false)) {
+    if (!holdsReady(samples)) {
       throw new BrokerError(
         "upstream_error",
         `agent in pane '${paneId}' became ready then stopped being ready within ${settleMs}ms — it likely crashed on startup`,

@@ -10,11 +10,6 @@ test("a CLI that renders then dies does NOT hold", () => {
   assert.equal(holdsReady([true, true, false]), false);
 });
 
-test("readiness is a level, not an edge — a single true is not enough", () => {
-  assert.equal(holdsReady([true]), false, "one sample cannot demonstrate a hold");
-  assert.equal(holdsReady([]), false);
-});
-
-test("undefined (herdr did not report the field) is not a hold", () => {
-  assert.equal(holdsReady([true, undefined, true]), false);
+test("undefined (herdr did not report the field) does not fail the hold", () => {
+  assert.equal(holdsReady([true, undefined, true]), true);
 });
