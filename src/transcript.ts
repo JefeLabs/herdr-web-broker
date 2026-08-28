@@ -133,3 +133,30 @@ export function parseTranscript(kind: string, text: string, profile: CliProfile)
     return null;
   }
 }
+
+export interface Decision {
+  /** the wire's three-valued fold */
+  status: "working" | "blocked" | "idle";
+  /** unfolded truth — "done" here is a transcript-proven completion */
+  raw_status: string;
+  /** which tier decided, so a caller can tell proof from inference */
+  evidence: "transcript" | "status";
+}
+
+/** The tier. Transcript evidence wins WHEN IT IS ABOUT THIS TURN; otherwise
+ * today's agent_status logic is preserved exactly.
+ *
+ * Freshness is a record-timestamp rule, never an mtime window: a correctly
+ * finished agent stops writing the instant it finishes, so an mtime rule
+ * would reject the very evidence this function exists to read. */
+export function decideTurn(
+  t: TranscriptState | null,
+  tier: { status: "working" | "blocked" | "idle"; raw_status?: string },
+  promptedAt: number,
+): Decision {
+  if (t && t.lastRecordAt >= promptedAt) {
+    if (t.state === "done") return { status: "idle", raw_status: "done", evidence: "transcript" };
+    return { status: t.state, raw_status: t.state, evidence: "transcript" };
+  }
+  return { status: tier.status, raw_status: tier.raw_status ?? tier.status, evidence: "status" };
+}
