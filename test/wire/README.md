@@ -26,6 +26,7 @@ answer in the spec's wire-truth table and, where it is a per-CLI fact, as a
 | WT-4 | codex `rollout-*.jsonl` terminal record shape | codex stays on the status tier |
 | WT-5 | copilot `session-store.db` schema | copilot stays on the status tier |
 | WT-6 | does herdr's `pane.exited` carry an exit code? | agent-death cause stays unreported (the exec endpoint is unaffected — it reads its own `; echo $?` drop file, not `pane.exited`) |
+| WT-7 | does `pane.wait_for_output` match the pane's OWN echoed input, or only program output? | the spawn-readiness sentinel design is not viable as written — fall back to the retry-only behavior we have today |
 
 WT-3's answer already shipped and needs no probe: `src/cli-profiles.ts`'s
 `opencode` profile (`via: "sqlite"`) and `src/transcript.ts`'s
