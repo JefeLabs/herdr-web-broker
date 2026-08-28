@@ -32,6 +32,14 @@ test("agy: PLANNER_RESPONSE/DONE is done; ASK_QUESTION is blocked; RUNNING is wo
   assert.equal(parseTranscript("agy", fx("agy-running.jsonl"), P.get("agy")!)?.state, "working");
 });
 
+test("agy: a row that is BOTH status RUNNING and a blocked type reads as working", () => {
+  // status and type live on the same row and can collide: the question is
+  // still streaming out and hasn't reached the user yet, so liveness wins.
+  const row =
+    '{"step_index":1,"source":"MODEL","type":"ASK_QUESTION","status":"RUNNING","created_at":"2026-08-27T10:00:05Z","content":"still forming a question"}';
+  assert.equal(parseTranscript("agy", row, P.get("agy")!)?.state, "working");
+});
+
 test("opencode: assistant+time.completed is done; everything else is working", () => {
   const P2 = P.get("opencode")!;
   const done = '{"role":"assistant","time":{"created":1000,"completed":2000}}';
@@ -47,6 +55,9 @@ test("garbage and empty input return null rather than throwing", () => {
   assert.equal(parseTranscript("claude", "", P.get("claude")!), null);
   assert.equal(parseTranscript("claude", "not json\n{{{", P.get("claude")!), null);
   assert.equal(parseTranscript("agy", "", P.get("agy")!), null);
+  assert.equal(parseTranscript("agy", "not json\n{{{", P.get("agy")!), null);
+  assert.equal(parseTranscript("opencode", "", P.get("opencode")!), null);
+  assert.equal(parseTranscript("opencode", "not json\n{{{", P.get("opencode")!), null);
 });
 
 test("a kind with no parser returns null", () => {

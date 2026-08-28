@@ -5,7 +5,11 @@ import type { CliProfile } from "./cli-profiles.js";
  * can only approximate. */
 export interface TranscriptState {
   state: "working" | "blocked" | "done";
-  /** ms since epoch, from the last record's own timestamp */
+  /** ms since epoch: the timestamp of the record that ESTABLISHED `state`,
+   * not necessarily the transcript's newest row. A row appended after the
+   * state-determining one (a fresh prompt landing, say) must not make a
+   * stale state look freshly re-confirmed — decideTurn's freshness test is
+   * `lastRecordAt >= promptedAt`. */
   lastRecordAt: number;
 }
 
@@ -43,24 +47,35 @@ function parseClaude(text: string, profile: CliProfile): TranscriptState | null 
   const done = new Set(profile.terminal?.done ?? []);
   const blocked = new Set(profile.terminal?.blocked ?? []);
 
-  let lastRecordAt = 0;
-  for (const r of rows) lastRecordAt = Math.max(lastRecordAt, ts(r.timestamp) ?? 0);
-  if (lastRecordAt === 0) return null;
-
   // Walk backwards to the newest assistant message carrying a stop_reason.
+  // lastRecordAt is pinned to THAT row's own timestamp, not the file's
+  // newest row overall — a prompt appended after a terminal `done` row
+  // must read as stale, not as fresh confirmation of a turn that hasn't
+  // started (see the TranscriptState.lastRecordAt doc comment).
   for (let i = rows.length - 1; i >= 0; i--) {
     const msg = rows[i].message as { stop_reason?: unknown } | undefined;
     const reason = typeof msg?.stop_reason === "string" ? msg.stop_reason : undefined;
     if (!reason) continue;
-    if (done.has(reason)) return { state: "done", lastRecordAt };
+    const at = ts(rows[i].timestamp);
+    if (at === undefined) return null;
+    if (done.has(reason)) return { state: "done", lastRecordAt: at };
     if (blocked.has(reason)) {
       // A tool_use answered by a later tool_result means the turn is still
       // moving; an unanswered one means the agent is waiting on approval.
       const answered = rows.slice(i + 1).some((r) => r.toolUseResult !== undefined);
-      return { state: answered ? "working" : "blocked", lastRecordAt };
+      return { state: answered ? "working" : "blocked", lastRecordAt: at };
     }
-    return { state: "working", lastRecordAt };
+    return { state: "working", lastRecordAt: at };
   }
+
+  // No row carries a stop_reason at all — e.g. only a user turn has landed
+  // so far. There's no state-determining row to pin to, so fall back to
+  // the newest timestamp in the file: the best available evidence of when
+  // the transcript was last touched, for a state ("working") that isn't
+  // claiming to be terminal anyway.
+  let lastRecordAt = 0;
+  for (const r of rows) lastRecordAt = Math.max(lastRecordAt, ts(r.timestamp) ?? 0);
+  if (lastRecordAt === 0) return null;
   return { state: "working", lastRecordAt };
 }
 
