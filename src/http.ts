@@ -9,6 +9,9 @@ import { BrokerError, httpStatus } from "./errors.js";
 import { LocalHerdr, mapAgentList, type HerdrEndpoint } from "./local-attach.js";
 import type { OwnerRegistry } from "./owners.js";
 import { methodDenied } from "./policy.js";
+import type { BrokerEvents } from "./broker-events.js";
+import type { LoadedModule } from "./module-loader.js";
+import { matchModuleRoute } from "./module-routes.js";
 import { classifySession } from "./reconcile.js";
 import type { Registry } from "./registry.js";
 import type { ChildrenStore } from "./state.js";
@@ -39,6 +42,9 @@ export interface HttpDeps {
   audit?: Audit;
   /** session ownership (spec 2026-08-22): one email owns one herdr session */
   owners?: OwnerRegistry;
+  /** modules loaded at boot; empty when none are configured */
+  modules?: LoadedModule[];
+  brokerEvents?: BrokerEvents;
   /** starts/stops per-user herdr sessions; start resolves once the socket
    * answers and returns the endpoint to attach */
   provisioner?: { start(name: string): Promise<HerdrEndpoint>; stop(name: string): Promise<void> };
@@ -330,6 +336,24 @@ export function createHttpHandler(deps: HttpDeps) {
         remote: req.socket.remoteAddress ?? undefined,
       });
       json(res, 200, { signed_out: tokenName, token_revoked: tokenRevoked, sockets_closed: socketsClosed });
+      return;
+    }
+
+    // Module routes. Auth has already run above — a module cannot opt out
+    // of it, and never sees the token itself, only its name.
+    const modMatch = matchModuleRoute(deps.modules ?? [], req.method ?? "GET", parts);
+    if (modMatch) {
+      const body = req.method === "GET" || req.method === "DELETE" ? undefined : await readBody(req);
+      const result = await modMatch.route.handler({
+        workspaceId: url.searchParams.get("workspace_id") ?? modMatch.params.workspaceId ?? "",
+        sessionId: url.searchParams.get("session") ?? "default",
+        instance: "runtime",
+        params: modMatch.params,
+        query: url.searchParams,
+        body,
+        tokenName,
+      });
+      json(res, 200, result ?? {});
       return;
     }
 
@@ -818,6 +842,22 @@ export function createHttpHandler(deps: HttpDeps) {
   ): Promise<void> {
     const note = (action: string, target?: string) =>
       deps.audit?.record({ action, actor: "admin", target, remote: req.socket.remoteAddress ?? undefined });
+    // Observability only. There is deliberately NO POST/PUT/DELETE here:
+    // a module is arbitrary in-process code, so a bearer token that could
+    // install one would be a remote shell. config.toml is the only way.
+    if (req.method === "GET" && parts[1] === "modules" && parts.length === 2) {
+      json(res, 200, {
+        modules: (deps.modules ?? []).map((m) => ({
+          id: m.id,
+          path: m.path,
+          granted: m.granted,
+          routes: m.routes.length,
+          ...(m.error ? { error: m.error } : {}),
+        })),
+      });
+      return;
+    }
+
     if (req.method === "GET" && parts[1] === "status") {
       json(res, 200, {
         listen: deps.config.listen,

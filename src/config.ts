@@ -4,6 +4,7 @@ import { parse, stringify } from "smol-toml";
 import { hashSecret } from "./auth.js";
 import type { CliConfig } from "./cli-profiles.js";
 import type { ModelsConfig } from "./model-registry.js";
+import type { ModuleSpec } from "./module-loader.js";
 import { DEFAULT_REMOTE_DENY } from "./policy.js";
 
 export interface ClientToken {
@@ -57,6 +58,12 @@ export interface BrokerConfig {
   models?: ModelsConfig;
   /** per-CLI transcript/pin/prepare profiles layered over the builtins */
   cli?: CliConfig;
+  /** operator-installed modules. Read ONCE at boot and deliberately NOT
+   * hot-reloaded with the rest of this file: re-importing mid-flight
+   * leaks whatever the old instance closed over, and a route table
+   * changing under live requests is the wrong trade for a feature whose
+   * appeal is predictability. */
+  modules?: ModuleSpec[];
 }
 
 export const DEFAULT_LISTEN = "127.0.0.1:7591";
@@ -76,6 +83,7 @@ export function loadConfig(configDir: string): BrokerConfig {
     token_mint: { enabled: (raw.token_mint as { enabled?: boolean } | undefined)?.enabled ?? false },
     models: raw.models as ModelsConfig | undefined,
     cli: raw.cli as CliConfig | undefined,
+    modules: raw.modules as ModuleSpec[] | undefined,
   };
 }
 
@@ -94,5 +102,6 @@ export function saveConfig(configDir: string, config: BrokerConfig): void {
   if (config.token_mint.enabled) out.token_mint = config.token_mint;
   if (config.models) out.models = config.models;
   if (config.cli) out.cli = config.cli;
+  if (config.modules) out.modules = config.modules;
   writeFileSync(join(configDir, "config.toml"), stringify(out) + "\n");
 }

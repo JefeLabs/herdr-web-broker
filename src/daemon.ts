@@ -21,6 +21,8 @@ import { Registry } from "./registry.js";
 import { ParentLink } from "./south.js";
 import { AgentIndex, ChildrenStore, WorkspaceIndex, clearLock, ensureAdminToken, readLock, writeLock } from "./state.js";
 import { CliProfiles } from "./cli-profiles.js";
+import { BrokerEvents } from "./broker-events.js";
+import { loadModules, type LoadedModule } from "./module-loader.js";
 import { TunnelHub } from "./tunnel.js";
 import { verdictFor } from "./version.js";
 import type { OpsDeps } from "./workspace-ops.js";
@@ -129,6 +131,33 @@ export async function startDaemon(opts: DaemonOptions): Promise<DaemonHandle | u
           logDir: opts.stateDir,
         }));
   const audit = new Audit(join(opts.stateDir, "audit.log"));
+
+  // Modules load ONCE, here. config.toml keeps hot-reloading
+  // client_tokens; [[modules]] is deliberately exempt — re-importing
+  // mid-flight leaks whatever the old instance closed over.
+  const brokerEvents = new BrokerEvents();
+  ops.events = brokerEvents;
+  const modules: LoadedModule[] = await loadModules(config.modules ?? [], {
+    deps: ops,
+    session: "default",
+    instance: "runtime",
+    events: brokerEvents,
+    log: (m) => console.warn(m),
+    audit,
+  });
+  for (const m of modules) {
+    // The configured set belongs in the trail, not only in a file:
+    // "which extensions was this broker running" should be answerable
+    // after the fact.
+    audit.record({
+      action: m.error ? "module_refused" : "module_loaded",
+      actor: "boot",
+      target: `${m.id} (${m.granted.join(",") || "no caps"})`,
+    });
+    if (!m.error) {
+      console.warn(`[modules] loaded ${m.id} — ${m.routes.length} route(s), caps: ${m.granted.join(",") || "none"}`);
+    }
+  }
   let link: ParentLink | undefined;
   const startLink = (cfg: BrokerConfig) => {
     link?.stop();
@@ -162,6 +191,8 @@ export async function startDaemon(opts: DaemonOptions): Promise<DaemonHandle | u
     limiter,
     audit,
     owners,
+    modules,
+    brokerEvents,
     ...(provisioner ? { provisioner } : {}),
   });
 

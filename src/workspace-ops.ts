@@ -10,6 +10,7 @@ import {
   updateContext,
 } from "./context-store.js";
 import type { EnvRegistry } from "./env-registry.js";
+import type { BrokerEvents } from "./broker-events.js";
 import { BrokerError } from "./errors.js";
 import type { ModelRegistry } from "./model-registry.js";
 import {
@@ -66,6 +67,9 @@ export interface OpsDeps {
   screenPollMs?: number;
   /** test override for the readiness settle window */
   settleMsOverride?: number;
+  /** broker.* event bus; absent when no modules are configured, so every
+   * emit site is `deps.events?.emit(...)` and costs nothing when unused */
+  events?: BrokerEvents;
 }
 
 export function isBrokerMethod(method: string): boolean {
