@@ -289,6 +289,8 @@ export async function runBrokerMethod(
       return spawn(deps, session, p);
     case "broker.pane.screen":
       return screen(deps, session, p);
+    case "broker.pane.exec":
+      return execCommand(deps, session, p);
     case "broker.agent.stop":
       return stopAgent(deps, session, p);
     case "broker.agent.wait":
@@ -1193,4 +1195,70 @@ async function askInner(
     return toAskResult(res);
   }
   throw new BrokerError("upstream_timeout", `agent produced no answer within ${budget}ms`, { pane_id: pane });
+}
+
+/** Run a command in the pane and learn whether it SUCCEEDED, not merely
+ * that it finished. herdr's agent.start owns the agent's own process
+ * launch, so there is no agent command line for the broker to wrap; this
+ * answers the question for commands instead — the CI-shaped case
+ * (this repo's own validate.sh, say). "Finished" and "succeeded" are
+ * different questions; only the shell's own $? tells them apart, so the
+ * wrapped command writes it to a drop file we poll for.
+ *
+ * Same discipline as ask()'s answer file, including its symlink-escape
+ * guard: a repo that commits .herdr/exits as a symlink pointing outside
+ * the workspace must not let us read/write through it. */
+async function execCommand(deps: OpsDeps, session: string, p: Record<string, unknown>): Promise<unknown> {
+  const pane = str(p.pane_id, "pane_id");
+  const command = str(p.command, "command");
+  if (command.length > 8_000) throw new BrokerError("bad_request", "'command' must be at most 8000 chars");
+  if (/[\r\n]/.test(command)) throw new BrokerError("bad_request", "'command' must be a single line");
+  const budget = Math.min(Math.max(typeof p.timeout_ms === "number" ? p.timeout_ms : 120_000, 1_000), 600_000);
+  const workspaceId = pane.split(":")[0];
+  const cwd = await resolveCwd(deps, session, workspaceId);
+
+  const id = randomBytes(8).toString("hex");
+  const dir = join(cwd, ".herdr", "exits");
+  mkdirSync(dir, { recursive: true });
+  // .herdr/.gitignore ("*") is otherwise only written by context-store.ts's
+  // ensureDir, and only once a context attachment is created — a fresh
+  // workspace with none won't have it yet. Write it here too so exit drop
+  // files never show up in the user's git status.
+  const ignore = join(cwd, ".herdr", ".gitignore");
+  if (!existsSync(ignore)) writeFileSync(ignore, "*\n");
+  // A repo that commits .herdr/exits as a symlink pointing outside the
+  // workspace must not let us readFileSync/rmSync through it — same guard
+  // as askInner: resolve both sides through symlinks before comparing.
+  const realDir = realpathSync(dir);
+  const realCwd = realpathSync(cwd);
+  if (realDir !== realCwd && !realDir.startsWith(realCwd + sep)) {
+    throw new BrokerError("unknown_workspace", "workspace exits dir escapes the workspace");
+  }
+  const file = join(dir, id);
+  await deps.local.request(
+    session,
+    "pane.send_input",
+    { pane_id: pane, text: `${command}; echo $? > .herdr/exits/${id}`, keys: ["Enter"] },
+    10_000,
+  );
+
+  const pollMs = deps.askPollMs ?? 500;
+  const deadline = Date.now() + budget;
+  while (Date.now() < deadline) {
+    if (existsSync(file)) {
+      const raw = readFileSync(file, "utf8").trim();
+      const code = Number.parseInt(raw, 10);
+      if (Number.isInteger(code)) {
+        rmSync(file, { force: true });
+        return { pane_id: pane, exit_code: code, ok: code === 0 };
+      }
+      // mid-write: keep polling
+    }
+    await new Promise((r) => setTimeout(r, pollMs));
+  }
+  // Unlike askInner's answer file, a never-written exit file has no value
+  // to a caller who already gave up — remove it so a slow shell finally
+  // writing $? after the timeout doesn't leave stray droppings behind.
+  rmSync(file, { force: true });
+  throw new BrokerError("upstream_timeout", `command produced no exit code within ${budget}ms`, { pane_id: pane });
 }

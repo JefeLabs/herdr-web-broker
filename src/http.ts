@@ -746,6 +746,17 @@ export function createHttpHandler(deps: HttpDeps) {
       return;
     }
 
+    // POST .../panes/{pane}/exec — run a command and learn its exit code.
+    // "finished" and "succeeded" are different questions; this answers the
+    // second one for CI-shaped work (this repo's own validate.sh, say).
+    if (parts.length === 7 && parts[4] === "panes" && parts[6] === "exec" && req.method === "POST") {
+      const body = await readBody(req);
+      const t = Math.min(Math.max(typeof body.timeout_ms === "number" ? body.timeout_ms : 120_000, 1_000), 600_000);
+      const params = { ...body, timeout_ms: t, pane_id: decodeURIComponent(parts[5]) };
+      json(res, 200, await callInstance(instance, session, "broker.pane.exec", params, t + 45_000));
+      return;
+    }
+
     // POST /instances/{i}/sessions/{s}/rpc
     if (parts[4] === "rpc" && req.method === "POST") {
       const body = await readBody(req);
