@@ -129,6 +129,25 @@ missing endpoints/SDK/UI, not missing reachability):
     `unrecognized` field — `classifySession` is fully unit-tested, the
     HTTP wiring is not.
 
+26. **Publish the SDK — it is not installable.** All three library
+    packages (`@jefelabs/herdr-broker-client`, `-react`, `-ui`) sit at
+    0.1.0, unpublished, while `herdr-plugin.toml`'s own description
+    sells "TypeScript SDK and React packages". Anyone building a client
+    today must vendor the source or take a git dependency on an
+    unpublished 0.1.0. For a project whose differentiator over
+    herdr-remote/mirror/mobile-relay is "an API, not an app", the API's
+    client being unreachable is the single largest adoption barrier —
+    and unlike the rest of this list it is not a design question, it is
+    an unpushed button. Everything needed already exists:
+    `.github/workflows/release.yml` publishes all three on a `v*` tag
+    with `--access public --provenance`, and its own header documents
+    the one-time setup (add an npm automation token as the `NPM_TOKEN`
+    secret). Note the workflow covers THREE packages, not the two the
+    description advertises — `-ui` ships too. Do this before item 25's
+    API-versioning window closes for real: `/v1` aliases are cheap to
+    keep while the only caller is this repo, and become a compatibility
+    obligation the moment someone installs from the registry.
+
 ## Blocked on herdr (needs a live schema probe)
 
 The 2026-08-21 schema probe against live herdr (protocol 19, via the demo
