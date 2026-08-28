@@ -148,6 +148,55 @@ missing endpoints/SDK/UI, not missing reachability):
     keep while the only caller is this repo, and become a compatibility
     obligation the moment someone installs from the registry.
 
+27. **Spawn readiness — prove the shell is at its prompt, don't guess.**
+    Spec: `docs/superpowers/specs/2026-08-28-spawn-readiness-design.md`.
+    `spawn()` creates a pane and calls `agent.start` almost immediately;
+    on a cold pane whose login shell has not reached its prompt herdr
+    refuses with `agent_pane_busy` ("not an available shell"). A field
+    report filed this as high severity. Two of its four points are
+    already fixed — the internal `4× @ ~1s` retry (`workspace-ops.ts:
+    568-569`) and the per-retry workspace leak, which went away when
+    mode B moved to `pane.split` — so the race is currently ABSORBED,
+    not present: it costs up to ~4s of internal retrying on every cold
+    macOS pane rather than surfacing an error. What is left is that the
+    broker is paying a timeout instead of asking a question.
+    The report's own suggested fix (poll `interactive_ready` before
+    `agent.start`) is NOT implementable: that field comes from
+    `agent.list`, which lists AGENTS, and before `agent.start` there is
+    no agent in the pane. `workspace-ops.ts:564` already records the
+    same conclusion — "herdr's refusal is the only verified readiness
+    signal". True of what herdr EXPOSES; not of what the broker can
+    ELICIT. Proposed instead: a sentinel. Push
+    `printf '__herdr_ready_<id>__'` through the PTY and
+    `pane.wait_for_output` for it; when it echoes, the shell is provably
+    at its prompt and executing commands — shell-agnostic, no
+    prompt-pattern matching, and on the env path it appends to the line
+    the broker already sends, so one round trip replaces both the 300ms
+    sleep and the guess. It also covers mode B, mode C, and mode A
+    without env vars, all three of which get ZERO settle today (only
+    mode-A-with-env sleeps, and `claude` lands there only incidentally,
+    because roadmap 24's `prepare` block gives it a non-empty env map).
+    Deliberately NOT the report's `spawn_settle_ms`: a tunable sleep is
+    still a guess, just a longer one. The only number that survives is a
+    timeout, which bounds failure rather than estimating success, and
+    `envSettleMs` — a test-only override wired to no config — is deleted
+    rather than promoted.
+    **Blocked on WT-7** (`test/wire/shell-ready.wire.ts`, written and
+    committed, not yet run — needs a live herdr): does
+    `pane.wait_for_output` match the pane's OWN echoed input, or only
+    program output? The design is worthless if it is the latter.
+    Inference from the API's shape, not a probe: it takes
+    `source: "visible" | "recent"`, the same vocabulary `pane.read`
+    takes, and a matcher tapping program output would have no use for a
+    screen/scrollback distinction — so it very likely matches the
+    rendered buffer. Do not build the rest until WT-7 is green; if it is
+    red, keep the retry as the sole mechanism, which is what ships
+    today anyway. Note this also means the existing readiness settle
+    window from roadmap 24 does not help here: it samples
+    `interactive_ready` AFTER `agent.start`, to catch a CLI that renders
+    then dies. Two windows, and the shipped one sits on the far side of
+    this failure.
+
 ## Blocked on herdr (needs a live schema probe)
 
 The 2026-08-21 schema probe against live herdr (protocol 19, via the demo
