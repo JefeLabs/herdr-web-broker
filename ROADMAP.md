@@ -254,11 +254,23 @@ missing endpoints/SDK/UI, not missing reachability):
     Explicitly NOT a sandbox — node:fs stays one import away. Flat by
     design (no dependency graph, no delegation, no runtime grants), and
     the capability NAMES join the ABI, so granularity is decide-once.
-    Open in the spec: `.js`-only vs a TS loader; whether `api.git.raw` is
-    too sharp (enumerating safe subcommands is safer and guarantees this
-    does not meet the stated need); whether module-emitted events turn
-    the ABI into a message bus; and whether it is inconsistent that `git`
-    splits read/write while `files` does not. Coupled to item 26 — the ABI wants to ship as a published
+    DECIDED: modules are plain `.js` — the broker `import()`s the path
+    and owns no compile step, loader hook or transpiler; Node's native
+    type-stripping covers only a subset of TS syntax, so `.ts` would mean
+    shipping a compiler or supporting a confusing partial dialect.
+    Authors wanting types write TS and build, or use a JSDoc `@type`
+    against the published `packages/module` types. DECIDED: `api.git.raw`
+    is KEPT — enumerating safe subcommands is tighter and would guarantee
+    this feature misses the need that motivated it, since an operator
+    adding THEIR git functionality cannot be limited to the subcommands
+    we anticipated; the guards are the argv array (no shell to inject
+    into), the argv[0] denylist, and its being gated behind `git.read`.
+    It stays the sharpest edge here and wants its own review pass.
+    Still open: whether module-emitted events turn the ABI into a message
+    bus; module routes on config reload; whether `api.agents.ask` must
+    participate in the core per-pane lock rather than bypass it; and
+    whether it is inconsistent that `git` splits read/write while `files`
+    does not. Coupled to item 26 — the ABI wants to ship as a published
     `packages/module` alongside the SDK, not after it.
 
 ## Blocked on herdr (needs a live schema probe)
