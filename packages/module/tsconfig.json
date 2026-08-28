@@ -6,6 +6,11 @@
     "moduleResolution": "NodeNext",
     "strict": true,
     "declaration": true,
+    // Explicit because this package has a SINGLE source file: with one
+    // file tsc cannot infer the common source directory confidently and
+    // TS6 raises TS5011. The sibling packages get away without it only
+    // because they have several files under src/.
+    "rootDir": "src",
     "outDir": "dist",
     "skipLibCheck": true
   },

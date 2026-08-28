@@ -1,4 +1,4 @@
-# Publication (roadmap 12): pushing a v* tag publishes the three library
+# Publication (roadmap 12, 26): pushing a v* tag publishes the four library
 # packages to npm — suite-gated, dependency-ordered, with npm provenance.
 # One-time setup: add an npm automation token as the NPM_TOKEN secret.
 # Releasing is then: git tag v0.1.0 && git push --tags
@@ -36,7 +36,17 @@ jobs:
       - name: ui suite
         run: npm run build -w packages/ui && npm test -w packages/ui
 
-      # dependency order: client → react → ui (each is already built above)
+      # types-only: no runtime, so nothing to test beyond it compiling
+      - name: module types build
+        run: npm run build -w packages/module
+
+      # module is standalone (types only) so it goes first; the rest are
+      # in dependency order client → react → ui, each already built above
+      - name: publish @jefelabs/herdr-broker-module
+        run: npm publish -w packages/module --access public --provenance
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
       - name: publish @jefelabs/herdr-broker-client
         run: npm publish -w packages/client --access public --provenance
         env:
