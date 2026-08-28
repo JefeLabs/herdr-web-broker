@@ -68,6 +68,7 @@ async function setup(opts: { limiter?: AuthLimiter; ownership?: boolean } = {}) 
     stateDir: tmpDir(),
     askPollMs: 25,
     askGraceMs: 150,
+    settleMsOverride: 0,
   };
   const persisted: string[] = [];
   const presence = new Presence();

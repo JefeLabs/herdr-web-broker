@@ -67,6 +67,7 @@ test("child heartbeat: answers a server-initiated ping after enroll; stop() clea
       agents: new AgentIndex(tmpDir()),
       profiles: new CliProfiles(),
       stateDir: tmpDir(),
+      settleMsOverride: 0,
     },
   });
   link.start();

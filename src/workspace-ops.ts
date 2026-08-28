@@ -62,6 +62,8 @@ export interface OpsDeps {
   askLocks?: Set<string>;
   /** test override for pane-screen long-poll pacing */
   screenPollMs?: number;
+  /** test override for the readiness settle window */
+  settleMsOverride?: number;
 }
 
 export function isBrokerMethod(method: string): boolean {
@@ -577,6 +579,33 @@ async function spawn(deps: OpsDeps, session: string, p: Record<string, unknown>)
   }
 
   deps.agents.set(session, paneId, { ...(pinnedId ? { sessionId: pinnedId } : {}), kind, startedAt: Date.now() });
+
+  // Readiness settle: sample interactive_ready across the profile's window
+  // and require it to HOLD. A pane that renders and then dies fails here
+  // instead of being handed back as a live pane id. Only an explicit false
+  // fails the spawn — a herdr that never reports the field yields undefined
+  // samples, and spawn proceeds exactly as it does today; this must not
+  // break instances whose herdr omits interactive_ready.
+  const settleMs = deps.settleMsOverride ?? deps.profiles.get(kind)?.settleMs ?? 2500;
+  if (settleMs > 0) {
+    const gap = Math.max(250, Math.floor(settleMs / 3));
+    const samples: Array<boolean | undefined> = [];
+    for (let i = 0; i * gap < settleMs; i++) {
+      if (i > 0) await new Promise((r) => setTimeout(r, gap));
+      const list = (await deps.local.request(session, "agent.list", {}, 5000).catch(() => ({}))) as {
+        agents?: Array<Record<string, unknown>>;
+      };
+      const e = list.agents?.find((a) => a.pane_id === paneId);
+      samples.push(typeof e?.interactive_ready === "boolean" ? e.interactive_ready : undefined);
+    }
+    if (samples.some((s) => s === false)) {
+      throw new BrokerError(
+        "upstream_error",
+        `agent in pane '${paneId}' became ready then stopped being ready within ${settleMs}ms — it likely crashed on startup`,
+        { workspace_id: workspaceId, pane_id: paneId },
+      );
+    }
+  }
 
   const raw = (await deps.local.request(session, "agent.list", {}, 5000).catch(() => ({}))) as {
     agents?: Array<Record<string, unknown>>;

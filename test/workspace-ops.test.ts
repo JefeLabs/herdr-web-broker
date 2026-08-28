@@ -41,6 +41,7 @@ async function setup(): Promise<{ fake: FakeHerdr; deps: OpsDeps; teardown: () =
     askGraceMs: 150,
     envSettleMs: 5,
     paneBusyDelayMs: 5,
+    settleMsOverride: 0,
   };
   return {
     fake,
