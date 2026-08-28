@@ -1242,23 +1242,31 @@ async function execCommand(deps: OpsDeps, session: string, p: Record<string, unk
     10_000,
   );
 
+  // undefined covers both "no file yet" and "file mid-write" (a partial
+  // write like "" or "0\n0" doesn't parse to an integer) — both cases
+  // mean keep polling, never that the command failed.
+  const readCode = (): number | undefined => {
+    if (!existsSync(file)) return undefined;
+    const code = Number.parseInt(readFileSync(file, "utf8").trim(), 10);
+    return Number.isInteger(code) ? code : undefined;
+  };
+
   const pollMs = deps.askPollMs ?? 500;
   const deadline = Date.now() + budget;
   while (Date.now() < deadline) {
-    if (existsSync(file)) {
-      const raw = readFileSync(file, "utf8").trim();
-      const code = Number.parseInt(raw, 10);
-      if (Number.isInteger(code)) {
-        rmSync(file, { force: true });
-        return { pane_id: pane, exit_code: code, ok: code === 0 };
-      }
-      // mid-write: keep polling
+    const code = readCode();
+    if (code !== undefined) {
+      rmSync(file, { force: true });
+      return { pane_id: pane, exit_code: code, ok: code === 0 };
     }
     await new Promise((r) => setTimeout(r, pollMs));
   }
-  // Unlike askInner's answer file, a never-written exit file has no value
-  // to a caller who already gave up — remove it so a slow shell finally
-  // writing $? after the timeout doesn't leave stray droppings behind.
+  // One last check, mirroring askInner: the file may have finished landing
+  // in the gap between the loop's last poll and this check — a command
+  // that finishes right as the budget runs out must not be reported as a
+  // timeout just because no poll happened to land after it.
+  const code = readCode();
   rmSync(file, { force: true });
+  if (code !== undefined) return { pane_id: pane, exit_code: code, ok: code === 0 };
   throw new BrokerError("upstream_timeout", `command produced no exit code within ${budget}ms`, { pane_id: pane });
 }
