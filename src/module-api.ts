@@ -5,7 +5,7 @@ import type { BrokerEvents } from "./broker-events.js";
 import type { Capability } from "./capabilities.js";
 import { BrokerError } from "./errors.js";
 import { git, repoCommit, repoDiff, repoLog, repoPush, repoTree, resolveRepo } from "./git-exec.js";
-import type { OpsDeps } from "./workspace-ops.js";
+import { runBrokerMethod, type OpsDeps } from "./workspace-ops.js";
 
 /** argv[0] values a module may not run through `raw`. These are the
  * operations whose broker equivalents audit and confirm — a module
@@ -169,6 +169,54 @@ export function buildApi(opts: BuildApiOpts): BuiltApi {
         repoCommit(repoOf(workspaceId, repo), { message, addAll: true });
       api.git.push = async (workspaceId, repo) => repoPush(repoOf(workspaceId, repo), {});
     }
+  }
+
+  if (has("workspaces")) {
+    api.workspaces = {
+      async list() {
+        const r = (await runBrokerMethod(opts.deps, opts.session, "broker.workspace.list", {})) as {
+          workspaces: Array<{ workspace_id: string; cwd: string; label?: string }>;
+        };
+        return r.workspaces;
+      },
+      async cwd(workspaceId) {
+        return cwdOf(workspaceId);
+      },
+    };
+  }
+
+  if (has("agents")) {
+    api.agents = {
+      async list() {
+        // There is no broker.agent.list — the HTTP route builds its
+        // response in http.ts — so this reads herdr directly, the same
+        // way resolveCwd and agentInPane do.
+        const r = (await opts.deps.local.request(opts.session, "agent.list", {}, 10_000)) as {
+          agents?: unknown[];
+        };
+        return r.agents ?? [];
+      },
+      async prompt(paneId, text) {
+        return runBrokerMethod(opts.deps, opts.session, "broker.agent.prompt", { pane_id: paneId, text });
+      },
+      // Goes through runBrokerMethod, NOT askInner, so it takes the same
+      // per-pane lock core takes. Two concurrent asks on one pane would
+      // interleave two answer-file contracts at one agent, and the agent
+      // cannot tell which prompt it is answering.
+      async ask(paneId, prompt, o) {
+        return runBrokerMethod(opts.deps, opts.session, "broker.agent.ask", {
+          pane_id: paneId,
+          prompt,
+          ...(o?.timeoutMs ? { timeout_ms: o.timeoutMs } : {}),
+        });
+      },
+    };
+  }
+
+  if (has("rpc")) {
+    // The same herdr surface a federated child gets — modules do not
+    // receive a wider one than the tunnel does.
+    api.rpc = async (method, params) => opts.deps.local.request(opts.session, method, params, 30_000);
   }
 
   return { api, routes };
