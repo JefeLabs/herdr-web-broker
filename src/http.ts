@@ -9,6 +9,7 @@ import { BrokerError, httpStatus } from "./errors.js";
 import { LocalHerdr, mapAgentList, type HerdrEndpoint } from "./local-attach.js";
 import type { OwnerRegistry } from "./owners.js";
 import { methodDenied } from "./policy.js";
+import { classifySession } from "./reconcile.js";
 import type { Registry } from "./registry.js";
 import type { ChildrenStore } from "./state.js";
 import type { TunnelHub } from "./tunnel.js";
@@ -140,22 +141,30 @@ export function createHttpHandler(deps: HttpDeps) {
     torn_down: string;
     email: string;
     workspaces_closed: number;
+    unrecognized: string[];
   }> {
     const listed = (await deps.local
       .request(binding.session, "workspace.list", {}, 15_000)
       .catch(() => ({}))) as { workspaces?: Array<{ workspace_id?: string }> };
+    const liveIds = (listed.workspaces ?? []).map((w) => w.workspace_id).filter((id): id is string => !!id);
+    // Informational only: the herdr PROCESS is stopped right after this
+    // loop regardless, so every workspace in it dies either way. Declining
+    // to close a workspace the broker never indexed wouldn't save it — it
+    // would just turn a graceful workspace.close into an abrupt process
+    // kill. So everything listed still gets closed below; this only tells
+    // the caller which ones the broker had no record of.
+    const { orphans: unrecognized } = classifySession(deps.ops.index.all(binding.session), liveIds);
     let closed = 0;
-    for (const w of listed.workspaces ?? []) {
-      if (!w.workspace_id) continue;
+    for (const workspaceId of liveIds) {
       await deps.local
-        .request(binding.session, "workspace.close", { workspace_id: w.workspace_id }, 15_000)
+        .request(binding.session, "workspace.close", { workspace_id: workspaceId }, 15_000)
         .then(() => closed++)
         .catch(() => undefined); // a dead pane must not abort the teardown
     }
     await deps.provisioner!.stop(binding.session);
     deps.local.forgetSession(binding.session);
     deps.owners!.remove(binding.email);
-    return { torn_down: binding.session, email: binding.email, workspaces_closed: closed };
+    return { torn_down: binding.session, email: binding.email, workspaces_closed: closed, unrecognized };
   }
   const callInstance = makeCallInstance({
     registry: deps.registry,
@@ -487,6 +496,13 @@ export function createHttpHandler(deps: HttpDeps) {
     // GET /instances/{i}/sessions/{s}/workspaces — working sets (spec §2.2)
     if (parts.length === 5 && parts[4] === "workspaces" && req.method === "GET") {
       json(res, 200, await callInstance(instance, session, "broker.workspace.list", {}));
+      return;
+    }
+
+    // GET /instances/{i}/sessions/{s}/orphans — live workspaces the broker
+    // has no record of. Reports only; nothing here kills anything.
+    if (parts.length === 5 && parts[4] === "orphans" && req.method === "GET") {
+      json(res, 200, await callInstance(instance, session, "broker.session.orphans", {}));
       return;
     }
 

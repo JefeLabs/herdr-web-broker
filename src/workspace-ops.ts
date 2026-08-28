@@ -34,6 +34,7 @@ import type { AgentIndex, WorkspaceIndex } from "./state.js";
 import type { CliProfiles } from "./cli-profiles.js";
 import { prepareWorkspace } from "./prepare-workspace.js";
 import { holdsReady } from "./readiness.js";
+import { classifySession } from "./reconcile.js";
 import { decideTurn, readTurnState } from "./transcript.js";
 
 export interface OpsDeps {
@@ -125,6 +126,12 @@ export async function runBrokerMethod(
     }
     case "broker.workspace.list":
       return listWorkspaces(deps, session);
+    // Report-never-reap surface (see classifySession): live workspaces the
+    // broker has no index row for. Kills nothing — pure inspection.
+    case "broker.session.orphans": {
+      const live = [...(await herdrWorkspaces(deps, session)).keys()];
+      return { session, ...classifySession(deps.index.all(session), live) };
+    }
     case "broker.worktree.list": {
       const workspaceId = str(p.workspace_id, "workspace_id");
       const cwd = await resolveCwd(deps, session, workspaceId);
