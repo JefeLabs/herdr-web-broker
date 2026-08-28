@@ -3,6 +3,9 @@ dist/
 .screenshots/
 .idea
 .env
+# npm auth token — a granular access token with bypass-2FA lives here so
+# `npm publish` needs no OTP and no TTY. NEVER commit it.
+.npmrc
 /docs/superpowers/
 *.tsbuildinfo
 .playwright-mcp/
