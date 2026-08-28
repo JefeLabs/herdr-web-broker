@@ -266,11 +266,21 @@ missing endpoints/SDK/UI, not missing reachability):
     we anticipated; the guards are the argv array (no shell to inject
     into), the argv[0] denylist, and its being gated behind `git.read`.
     It stays the sharpest edge here and wants its own review pass.
+    DECIDED: `api.agents.ask` participates in the core per-pane lock —
+    it calls the same `ask()` wrapper core routes call, not `askInner`,
+    so it takes `deps.askLocks` and gets the same `pane_busy`. Not
+    defensive plumbing: two concurrent asks on one pane interleave two
+    answer-file contracts at the same agent, and the symptom (an answer
+    arriving for the wrong question) is close to undebuggable. The lock
+    is per PANE, not per caller, so a module holding it blocks core and
+    vice versa — correct, since the constraint belongs to the agent.
+    Falls out of it: `broker.ask.completed` must be emitted AFTER the
+    lock releases, or a handler reacting to it cannot ask again on that
+    pane. General rule instantiated: where core holds an invariant, the
+    module API hands over the GUARDED function, never the guarded thing.
     Still open: whether module-emitted events turn the ABI into a message
-    bus; module routes on config reload; whether `api.agents.ask` must
-    participate in the core per-pane lock rather than bypass it; and
-    whether it is inconsistent that `git` splits read/write while `files`
-    does not. Coupled to item 26 — the ABI wants to ship as a published
+    bus; module routes on config reload; and whether it is inconsistent
+    that `git` splits read/write while `files` does not. Coupled to item 26 — the ABI wants to ship as a published
     `packages/module` alongside the SDK, not after it.
 
 ## Blocked on herdr (needs a live schema probe)
