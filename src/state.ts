@@ -142,6 +142,36 @@ export class AgentIndex {
       this.#write(data);
     }
   }
+
+  /** Every pane in a workspace shares its id prefix (`${workspaceId}:`) —
+   * a mode-B spawn puts several panes/agents in ONE workspace, so closing
+   * or removing that workspace has to clear all of them in one pass, not
+   * just one pane. Called when the workspace itself ends, so a pane id it
+   * used never inherits a stale kind/sessionId if herdr later reuses it. */
+  removeWorkspace(session: string, workspaceId: string): void {
+    const data = this.#read();
+    const rows = data[session];
+    if (!rows) return;
+    const prefix = `${workspaceId}:`;
+    let changed = false;
+    for (const pane of Object.keys(rows)) {
+      if (pane.startsWith(prefix)) {
+        delete rows[pane];
+        changed = true;
+      }
+    }
+    if (changed) this.#write(data);
+  }
+
+  /** Every agent row for a whole session — used when the session itself
+   * (not just one of its workspaces) is torn down. */
+  removeSession(session: string): void {
+    const data = this.#read();
+    if (data[session] !== undefined) {
+      delete data[session];
+      this.#write(data);
+    }
+  }
 }
 
 export function ensureAdminToken(stateDir: string): string {

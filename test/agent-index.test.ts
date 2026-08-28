@@ -24,6 +24,32 @@ test("panes are namespaced by session and removable", () => {
   assert.equal(a.get("s2", "w1:p1")?.kind, "agy", "removal is scoped to one session");
 });
 
+test("removeWorkspace clears every pane under a workspace prefix, leaves other workspaces and sessions untouched", () => {
+  const dir = tmpDir();
+  const a = new AgentIndex(dir);
+  a.set("s1", "w1:p1", { kind: "claude", startedAt: 1 });
+  a.set("s1", "w1:p2", { kind: "codex", startedAt: 2 });
+  a.set("s1", "w2:p1", { kind: "agy", startedAt: 3 });
+  a.set("s2", "w1:p1", { kind: "copilot", startedAt: 4 });
+  a.removeWorkspace("s1", "w1");
+  assert.equal(a.get("s1", "w1:p1"), undefined);
+  assert.equal(a.get("s1", "w1:p2"), undefined);
+  assert.equal(a.get("s1", "w2:p1")?.kind, "agy", "a different workspace in the same session is untouched");
+  assert.equal(a.get("s2", "w1:p1")?.kind, "copilot", "removal is scoped to one session");
+});
+
+test("removeSession clears every row for a whole session, leaves other sessions untouched", () => {
+  const dir = tmpDir();
+  const a = new AgentIndex(dir);
+  a.set("s1", "w1:p1", { kind: "claude", startedAt: 1 });
+  a.set("s1", "w2:p1", { kind: "codex", startedAt: 2 });
+  a.set("s2", "w1:p1", { kind: "agy", startedAt: 3 });
+  a.removeSession("s1");
+  assert.equal(a.get("s1", "w1:p1"), undefined);
+  assert.equal(a.get("s1", "w2:p1"), undefined);
+  assert.equal(a.get("s2", "w1:p1")?.kind, "agy");
+});
+
 test("unknown lookups are undefined, and a corrupt file self-heals to empty", () => {
   const dir = tmpDir();
   assert.equal(new AgentIndex(dir).get("nope", "w9:p9"), undefined);

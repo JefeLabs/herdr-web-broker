@@ -340,6 +340,7 @@ test("broker.worktree.remove: deletes the checkout, keeps the branch, forgets th
   const t = await setup();
   try {
     t.deps.index.set("default", "w6", { cwd: "/tmp/wt/feat-x" });
+    t.deps.agents.set("default", "w6:p1", { kind: "claude", startedAt: 0 });
     t.fake.handlers.set("worktree.remove", () => ({
       type: "worktree_removed",
       workspace_id: "w6",
@@ -353,6 +354,7 @@ test("broker.worktree.remove: deletes the checkout, keeps the branch, forgets th
     const sent = t.fake.received.find((r) => r.method === "worktree.remove");
     assert.deepEqual(sent?.params, { workspace_id: "w6" });
     assert.equal(t.deps.index.get("default", "w6"), undefined);
+    assert.equal(t.deps.agents.get("default", "w6:p1"), undefined, "removed worktree's agent row removed");
   } finally {
     await t.teardown();
   }
@@ -557,6 +559,7 @@ test("broker.agent.explain: passes through herdr's detection diagnostics", async
 test("broker.agent.stop: closes the agent's pane; empty panes answer 'no agent in pane'", async () => {
   const t = await setup();
   try {
+    t.deps.agents.set("default", "w1:p1", { kind: "copilot", startedAt: 0 });
     t.fake.handlers.set("pane.close", () => ({ type: "ok" }));
     const out = (await runBrokerMethod(t.deps, "default", "broker.agent.stop", {
       pane_id: "w1:p1",
@@ -564,6 +567,7 @@ test("broker.agent.stop: closes the agent's pane; empty panes answer 'no agent i
     assert.deepEqual(out, { stopped: true, pane_id: "w1:p1", agent: "copilot", kind: "copilot" });
     const closed = t.fake.received.find((r) => r.method === "pane.close");
     assert.deepEqual(closed?.params, { pane_id: "w1:p1" });
+    assert.equal(t.deps.agents.get("default", "w1:p1"), undefined, "agent row removed with the pane");
 
     // a pane with no agent is not "stopped" silently — same contract as prompt/slash
     await assert.rejects(
@@ -580,6 +584,8 @@ test("broker.workspace.close: closes at herdr and drops the index entry", async 
   try {
     const cwd = scratchRepo();
     t.deps.index.set("default", "w7", { cwd, label: "old team" });
+    t.deps.agents.set("default", "w7:p1", { kind: "claude", startedAt: 0 });
+    t.deps.agents.set("default", "w8:p1", { kind: "claude", startedAt: 0 });
     t.fake.handlers.set("workspace.close", () => ({ type: "ok" }));
     const out = (await runBrokerMethod(t.deps, "default", "broker.workspace.close", {
       workspace_id: "w7",
@@ -588,6 +594,8 @@ test("broker.workspace.close: closes at herdr and drops the index entry", async 
     const closed = t.fake.received.find((r) => r.method === "workspace.close");
     assert.deepEqual(closed?.params, { workspace_id: "w7" });
     assert.equal(t.deps.index.get("default", "w7"), undefined, "index entry removed");
+    assert.equal(t.deps.agents.get("default", "w7:p1"), undefined, "closed workspace's agent row removed");
+    assert.equal(t.deps.agents.get("default", "w8:p1")?.kind, "claude", "a different workspace's row is untouched");
 
     // herdr refusing an unknown workspace surfaces as its own error
     t.fake.handlers.set("workspace.close", () => {
@@ -1771,6 +1779,7 @@ test("spawn: a pane that renders ready then goes unready within the settle windo
         e.details.workspace_id === "w9",
     );
     assert.ok(calls >= 2, "must have sampled at least twice to observe the drop");
+    assert.equal(t.deps.agents.get("default", "w9:p1"), undefined, "no orphan row for a pane that never survived its settle window");
   } finally {
     await t.teardown();
   }

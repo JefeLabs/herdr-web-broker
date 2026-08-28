@@ -1114,6 +1114,7 @@ test("ownership teardown: closes workspaces, stops the herdr, prunes the roster,
       closedIds.push(String((p as { workspace_id?: string })?.workspace_id));
       return { type: "workspace_closed" };
     });
+    t.ops.agents.set(session, "w9:p1", { kind: "claude", startedAt: 0 });
 
     // a non-owner cannot even see the session to tear it down
     const denied = await t.authed2(`/instances/runtime/sessions/${session}`, { method: "DELETE" });
@@ -1132,6 +1133,7 @@ test("ownership teardown: closes workspaces, stops the herdr, prunes the roster,
     assert.deepEqual(closedIds, ["w9"], "agents died with their workspaces");
     assert.ok(!t.local.sessions().includes(session), "actively deregistered, not left to rot");
     assert.equal(t.provisionedFakes.has(session), false, "the herdr process was stopped");
+    assert.equal(t.ops.agents.get(session, "w9:p1"), undefined, "agent rows torn down with the session");
 
     // the binding is freed: the same email provisions FRESH next time
     const rebirth = await t.authed("/auth", { method: "POST", body: JSON.stringify({ email: "kathia@example.com" }) });

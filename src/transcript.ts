@@ -260,6 +260,9 @@ export function readTurnState(
     // degrade-to-null contract. Resolved here instead, inside the try.
     home ??= homedir();
     let path: string | undefined;
+    // Set only by the "map" branch below — the ONE via where a stale
+    // resolved state is possible (see the bound applied at the bottom).
+    let boundToStartedAt = false;
     if (src.via === "path") {
       if (!meta.sessionId) return null;
       const configDir = (stateDir && configDirFor(profile, stateDir)) ?? join(home, ".claude");
@@ -274,6 +277,7 @@ export function readTurnState(
       const id = meta.sessionId ?? (JSON.parse(raw) as Record<string, string>)[cwd];
       if (!id) return null;
       path = render(src.template, { home, sessionId: id });
+      boundToStartedAt = true;
     } else {
       // sqlite (opencode today, copilot once WT-5 lands). The db file
       // check comes first so a CLI that was never run (no db at all)
@@ -293,7 +297,21 @@ export function readTurnState(
       }
     }
     const text = readTail(path);
-    return text === null ? null : parseTranscript(profile.kind, text, profile);
+    const state = text === null ? null : parseTranscript(profile.kind, text, profile);
+    // The cwd->id cache map is last-write-wins (no per-agent isolation
+    // until WT-2 verifies agy can mint a fresh id per spawn — see the agy
+    // profile's own comment in cli-profiles.ts). A map entry whose newest
+    // record predates THIS agent's own spawn is stale evidence left over
+    // from whatever last ran in this cwd, not this agent's turn — reject
+    // it rather than hand it back as if it were. This is a per-AGENT
+    // bound, checked once; decideTurn's freshness check is a separate,
+    // per-TURN bound (via promptedAt) and does different work. It does
+    // NOT (and structurally cannot) resolve two agents racing the SAME
+    // cwd concurrently — a wrong-but-NEWER conversation would still pass
+    // this check — that gap is the accepted limitation until WT-2 lands
+    // minting, not something this bound claims to fix.
+    if (boundToStartedAt && state && state.lastRecordAt < meta.startedAt) return null;
+    return state;
   } catch {
     return null;
   }

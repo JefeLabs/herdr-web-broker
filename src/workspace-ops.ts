@@ -122,6 +122,10 @@ export async function runBrokerMethod(
       // workspace and every pane in it — the mode-B leak's cleanup path.
       await deps.local.request(session, "workspace.close", { workspace_id: workspaceId }, 15_000);
       deps.index.remove(session, workspaceId);
+      // Every agent row for this workspace dies with it — a pane id herdr
+      // later reuses must not inherit a stale kind/sessionId pointing a
+      // transcript read at a previous agent that no longer exists.
+      deps.agents.removeWorkspace(session, workspaceId);
       return { workspace_id: workspaceId, closed: true };
     }
     case "broker.workspace.list":
@@ -152,6 +156,7 @@ export async function runBrokerMethod(
         15_000,
       )) as { path?: unknown };
       deps.index.remove(session, workspaceId);
+      deps.agents.removeWorkspace(session, workspaceId);
       return { workspace_id: workspaceId, removed: true, path: typeof r?.path === "string" ? r.path : null };
     }
     case "broker.repo.tree": {
@@ -600,8 +605,6 @@ async function spawn(deps: OpsDeps, session: string, p: Record<string, unknown>)
     }
   }
 
-  deps.agents.set(session, paneId, { ...(pinnedId ? { sessionId: pinnedId } : {}), kind, startedAt: Date.now() });
-
   // Readiness settle: sample interactive_ready repeatedly across the
   // profile's window. The LEVEL property — "stayed ready", not just "was
   // ready once" — comes from this repeated sampling, not from holdsReady
@@ -631,6 +634,11 @@ async function spawn(deps: OpsDeps, session: string, p: Record<string, unknown>)
       );
     }
   }
+
+  // Recorded only once the pane is confirmed to have survived its settle
+  // window — a settle failure above must not leave a permanent orphan row
+  // (nothing later removes it) for a pane that never became a live agent.
+  deps.agents.set(session, paneId, { ...(pinnedId ? { sessionId: pinnedId } : {}), kind, startedAt: Date.now() });
 
   const raw = (await deps.local.request(session, "agent.list", {}, 5000).catch(() => ({}))) as {
     agents?: Array<Record<string, unknown>>;
@@ -753,6 +761,9 @@ async function stopAgent(deps: OpsDeps, session: string, p: Record<string, unkno
   const { kind, entry } = await agentInPane(deps, session, pane);
   const agent = typeof entry.name === "string" && entry.name ? entry.name : String(entry.agent ?? kind);
   await deps.local.request(session, "pane.close", { pane_id: pane }, 15_000);
+  // The agent's life ends with its pane — a reused pane id must not
+  // inherit this agent's stale kind/sessionId for a future transcript read.
+  deps.agents.remove(session, pane);
   return { stopped: true, pane_id: pane, agent, kind };
 }
 

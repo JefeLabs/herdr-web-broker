@@ -73,6 +73,33 @@ test("agy: the cwd->id cache map resolves the transcript without a pin flag", ()
   assert.equal(s?.state, "blocked");
 });
 
+// The cwd->id cache map is last-write-wins (agy has no per-spawn minting
+// yet — see cli-profiles.ts's comment on the agy profile). A map entry
+// whose own transcript record predates THIS agent's spawn is stale
+// evidence left behind by whatever last ran in this cwd, not this
+// agent's turn — readTurnState must not hand it back as if it were.
+test("agy: a map entry whose transcript predates this agent's own startedAt is stale, not this agent's turn", () => {
+  const home = tmpDir();
+  const cwd = "/work/proj";
+  mkdirSync(join(home, ".gemini", "antigravity-cli", "cache"), { recursive: true });
+  writeFileSync(
+    join(home, ".gemini", "antigravity-cli", "cache", "last_conversations.json"),
+    JSON.stringify({ [cwd]: "conv-stale" }),
+  );
+  const logs = join(home, ".gemini", "antigravity-cli", "brain", "conv-stale", ".system_generated", "logs");
+  mkdirSync(logs, { recursive: true });
+  const recordAt = Date.parse("2026-08-27T10:00:06Z");
+  writeFileSync(
+    join(logs, "transcript.jsonl"),
+    '{"step_index":1,"source":"MODEL","type":"ASK_QUESTION","status":"DONE","created_at":"2026-08-27T10:00:06Z"}\n',
+  );
+
+  // this agent's own spawn happened a minute AFTER that record — the map
+  // entry is a leftover, not this agent's own conversation.
+  const s = readTurnState(P.get("agy")!, { kind: "agy", startedAt: recordAt + 60_000 }, cwd, home);
+  assert.equal(s, null);
+});
+
 test("opencode: an unpinned session resolves through session.directory", () => {
   const home = tmpDir();
   const dbDir = join(home, ".local", "share", "opencode");

@@ -164,6 +164,11 @@ export function createHttpHandler(deps: HttpDeps) {
     await deps.provisioner!.stop(binding.session);
     deps.local.forgetSession(binding.session);
     deps.owners!.remove(binding.email);
+    // The whole session dies here, herdr process included — every agent
+    // row for it goes with it, not just the ones for workspaces herdr
+    // happened to still list (a deterministic re-provision later must not
+    // inherit a stale row pointing a transcript read at a dead agent).
+    deps.ops.agents.removeSession(binding.session);
     return { torn_down: binding.session, email: binding.email, workspaces_closed: closed, unrecognized };
   }
   const callInstance = makeCallInstance({
