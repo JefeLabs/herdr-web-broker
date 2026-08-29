@@ -31,7 +31,17 @@ function methodsCalledFromSrc(): Set<string> {
     // than matching a single line — a line-wise grep undercounts this by
     // roughly half, which is how the surface was first mis-sized.
     for (const m of src.matchAll(/\.request\(/g)) {
-      const lit = /"([a-z_]+\.[a-z_]+)"/.exec(src.slice(m.index, m.index + 400));
+      // ONLY an immediate literal counts. Five call sites pass the method as a
+      // variable — http.ts x2, module-api.ts, projection.ts, south.ts — and a
+      // forward scan would attribute whatever dotted string happens to appear
+      // next. src/ is full of qualifying decoys ("herdr.sock", "audit.log",
+      // "agents.json", "git.read", "auth.self_kick"). Those sites are clean
+      // today only by luck of surrounding text, and the failure mode when the
+      // luck runs out is the bad one: test 3 goes red instructing someone to
+      // document a method that does not exist. A dynamic site must contribute
+      // NOTHING rather than noise.
+      const arg = src.slice(m.index + ".request(".length, m.index + 400);
+      const lit = /^\s*[A-Za-z_$][\w$]*\s*,\s*"([a-z_]+\.[a-z_]+)"/.exec(arg);
       if (lit) out.add(lit[1]);
     }
   }
@@ -42,35 +52,39 @@ function methodsCalledFromSrc(): Set<string> {
  * liveness probe and the event channel. A backend needs both. */
 const ATTACH_METHODS = ["ping", "events.subscribe"];
 
-test("every herdr method the broker calls is documented in the seam contract", () => {
-  const doc = readFileSync(DOC, "utf8");
+/** The contract is the TABLE ROWS, not the file. Matching anywhere in the
+ * document was a reachable hole: a row could be deleted and the assertion
+ * still passed on an incidental prose mention. Verified, not theorised —
+ * deleting agent.explain's row while leaving one backticked mention left all
+ * three tests green with the table at 17 rows. */
+function methodsClaimedByContract(doc: string): Set<string> {
+  const claimed = new Set<string>();
+  for (const line of doc.split("\n")) {
+    const m = /^\| `([a-z_]+\.[a-z_]+|ping)`/.exec(line);
+    if (m) claimed.add(m[1]);
+  }
+  return claimed;
+}
+
+test("every herdr method the broker calls is a row in the seam contract", () => {
+  const claimed = methodsClaimedByContract(readFileSync(DOC, "utf8"));
+  assert.ok(claimed.size > 0, "no contract table rows found — did the doc's format change?");
   const called = [...methodsCalledFromSrc(), ...ATTACH_METHODS].sort();
 
-  const undocumented = called.filter((m) => !doc.includes(`\`${m}\``));
   assert.deepEqual(
-    undocumented,
+    called.filter((m) => !claimed.has(m)),
     [],
-    `these methods are called by src/ but absent from docs/local-endpoints-seam.md — ` +
-      `a backend author reading the contract would not know to implement them`,
+    `called by src/ but not a ROW in docs/local-endpoints-seam.md — a backend author ` +
+      `reading the contract tables would not know to implement them`,
   );
 });
 
 test("the seam contract documents no method the broker does not call", () => {
   // The other direction. A contract that over-states is worse than one that
   // under-states: it makes an adopter build something nothing will ever call.
-  const doc = readFileSync(DOC, "utf8");
   const called = new Set([...methodsCalledFromSrc(), ...ATTACH_METHODS]);
+  const claimed = methodsClaimedByContract(readFileSync(DOC, "utf8"));
 
-  // Only the contract tables, so prose mentioning a method in passing is not
-  // read as a requirement.
-  const claimed = new Set<string>();
-  for (const line of doc.split("\n")) {
-    if (!line.startsWith("| `")) continue;
-    const m = /^\| `([a-z_]+\.[a-z_]+|ping)`/.exec(line);
-    if (m) claimed.add(m[1]);
-  }
-
-  assert.ok(claimed.size > 0, "no contract table rows found — did the doc's format change?");
   assert.deepEqual(
     [...claimed].filter((m) => !called.has(m)).sort(),
     [],

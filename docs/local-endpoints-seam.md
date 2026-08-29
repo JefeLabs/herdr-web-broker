@@ -238,31 +238,71 @@ it is worth paying. What this records is narrower and more useful: *if* that
 path is ever taken, this is the seam it goes through, and the seam already
 works.
 
-## The trigger — the NAT flip
+## Announced vs placed — a taxonomy, not a trigger
 
-Today a child **dials out to tell the parent where it is**. Location is
-announced, because it cannot be known in advance: the laptop roams, the
-address is whatever it happens to be, and `pair --address ws://parent:7591`
-points the child at the one side that is reachable.
-
-**The flip fires when the parent already knows where the child is** — because
-it was placed rather than announced. A container you started, a remote host
-you provisioned, a socket that existed before the session did.
-
-That is the line the two mechanisms fall on:
+A child **dials out to tell the parent where it is**. Location is announced,
+because it cannot be known in advance: the laptop roams, and
+`pair --address ws://parent:7591` points the child at the one side that is
+reachable. A container you started or a host you provisioned is different —
+its socket is known at creation, so there is nothing to announce.
 
 | | how the parent learns the location | mechanism |
 | --- | --- | --- |
-| **enrolled** | the child announces it, on connect | `pair`, child-initiated tunnel, `TunnelHub` |
+| **announced** | the child tells it, on connect | `pair`, child-initiated tunnel, `TunnelHub` |
 | **placed** | already known, at creation | `localEndpoints` / `SessionProvisioner` |
 
-So federation and this seam are two halves of one problem rather than
+Federation and this seam are therefore two halves of one problem rather than
 alternatives. `HerdrEndpoint` being `{session, socketPath}` and nothing else
 is why they converge: downstream of attach, the broker cannot tell which way
 an endpoint arrived, and does not need to.
 
-The condition is observable rather than a judgement call — it is true the
-first time a session's socket is known before the session exists.
+**This is a taxonomy — it says which mechanism a host needs. It is not a
+trigger, and an earlier version of this document wrongly used it as one.**
+That version defined the trigger as "true the first time a session's socket
+is known before the session exists", which `HerdrProvisioner.start()` has
+satisfied since 2026-08-22: it computes `socketPath` from `sessionsDir` and
+the session name *before* spawning `herdr server`, then polls for the session
+to catch up to the path it already chose. A condition satisfied a week before
+it was written describes the status quo; it does not gate anything.
+
+## The NAT flip — and why it does not gate this seam
+
+The NAT flip is a real condition, recorded in the smithagents 2026-08-27
+assessment and relayed here on 2026-08-29. It is **not** the taxonomy above:
+
+- **What would have to become true:** the product must drive agents on other
+  people's machines and roaming laptops, over NAT, reachable only outbound.
+- **Observable or a judgement?** A product judgement, not observable. It fires
+  when a requirement lands, not when a network condition changes — nothing in
+  the broker could detect it. A trigger is better when observable, which is
+  what made the "placed" framing attractive; this one genuinely is not, and
+  saying so beats engineering a proxy for it.
+- **Possible, necessary, or cheaper?** **Cheaper.** The hosted design already
+  answers remote execution differently (cell-per-tenant Fargate, BYO-compute),
+  so federation and cells are competing answers to one need. They collide only
+  if federation would replace cells.
+
+What gives the condition teeth is an asymmetry worth stating plainly:
+herdr-web-broker's child-dials-out federation is proven across two real
+containers with 13 checks and a weekly canary, while smithagents' own remote
+path provably cannot run a task — the repo is never shipped to the worker and
+secrets are never forwarded, both test-pinned. The flip is not "this is
+nicer"; it is "there is no working answer in that direction and this one is
+demonstrated".
+
+**But that population is the ANNOUNCED one.** Roaming laptops reachable only
+outbound are served by federation — `pair`, the child-initiated tunnel — not
+by `localEndpoints`/`SessionProvisioner`, which by the taxonomy above is the
+placed half. So the NAT flip gates adoption of the broker's **federation**. It
+does not gate this seam.
+
+## This seam is ungated
+
+It has no trigger, and that is the honest status rather than a gap. The seam
+is documented, contract-bound, needs no code change to be used, and nothing in
+the product today requires it. If a reason to act arrives it will be recorded
+here; inventing one in the meantime is what produced the already-satisfied
+condition above.
 
 ## Status
 

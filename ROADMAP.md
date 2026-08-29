@@ -355,19 +355,28 @@ missing endpoints/SDK/UI, not missing reachability):
     `HerdrProvisioner`'s structural guard does not extend to someone else's
     implementation; and be honest that the consumer is an in-process embedder
     importing from `dist/`, because the broker is not published to npm.
-    **The trigger — the NAT flip — is defined (2026-08-29).** Today a child
-    dials out to TELL the parent where it is; location is announced because
-    it cannot be known in advance. The flip fires when the parent already
-    knows where the child is, because it was PLACED rather than announced —
-    a container started, a remote host provisioned, a socket that existed
-    before the session did. Enrolled hosts announce (`pair`, the
-    child-initiated tunnel); placed hosts are known at creation
-    (`localEndpoints`/`SessionProvisioner`). The two are halves of one
-    problem, not alternatives, which is why `HerdrEndpoint` carrying only
-    `{session, socketPath}` lets them converge — downstream of attach the
-    broker cannot tell which way an endpoint arrived. Observable rather than
-    a judgement call: true the first time a session's socket is known before
-    the session exists.
+    **Announced vs placed is a TAXONOMY, and this seam is UNGATED.** A child
+    dials out to tell the parent where it is, because its location cannot be
+    known in advance; a container you started is known at creation. Announced
+    hosts need federation (`pair`, the child-initiated tunnel), placed hosts
+    need this seam — two halves of one problem, which is why `HerdrEndpoint`
+    carrying only `{session, socketPath}` lets them converge.
+    An earlier version of this item used that taxonomy as the trigger, with
+    the condition "true the first time a session's socket is known before the
+    session exists". That was wrong twice over. It had been satisfied since
+    2026-08-22 — `HerdrProvisioner.start()` computes `socketPath` before
+    spawning `herdr server` — so it described the status quo. And the NAT flip
+    is a different condition entirely: recorded in the smithagents 2026-08-27
+    assessment as "the product must drive agents on other people's machines /
+    roaming laptops over NAT", which is the ANNOUNCED population, served by
+    federation rather than by this seam. It is a product judgement, not
+    observable, and the answer to "possible, necessary or cheaper" is
+    CHEAPER — the hosted design already answers remote execution via
+    cell-per-tenant Fargate.
+    So the flip gates adoption of the broker's FEDERATION, not this seam,
+    which has no trigger. That is the honest status: documented,
+    contract-bound, usable without code change, and nothing in the product
+    today requires it.
 
 28. ~~**Module system — capabilities, not internals.**~~ Done. Spec:
     `docs/superpowers/specs/2026-08-28-extension-model-design.md`.
