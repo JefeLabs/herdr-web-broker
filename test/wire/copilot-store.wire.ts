@@ -67,6 +67,27 @@ async function rpc(method: string, params: unknown): Promise<unknown> {
  * signal. If it never arrives, ABORT and print the pane so a human can see
  * what is blocking, instead of gambling on whatever happens to be highlighted.
  * A gate is then cleared once by hand and the probe re-run. */
+/** copilot opens on a "Restore interrupted sessions" picker listing every
+ * session it has seen, with `enter restore · esc start fresh` at the foot.
+ *
+ * Enter here RESTORES a previous session — which is what defeated this probe
+ * on 2026-08-29 before the screen was understood. copilot then legitimately
+ * ran in an EARLIER probe's folder, so the pane showed that folder (which read
+ * as a stale buffer, and was not) and no turn was ever written for the cwd
+ * under test. Esc starts fresh in the pane's own cwd, which is the only thing
+ * that makes the cwd -> session mapping mean anything.
+ *
+ * This is the same hazard as the codex update menu, one screen earlier: a
+ * default action that is wrong for a probe. */
+async function startFreshSession(pane: string): Promise<boolean> {
+  const r = (await rpc("pane.read", { pane_id: pane, source: "visible" })) as { read?: { text?: string } };
+  const text = r.read?.text ?? "";
+  if (!/restore interrupted sessions|esc start fresh/i.test(text)) return false;
+  await rpc("pane.send_input", { pane_id: pane, text: "", keys: ["Escape"] });
+  await new Promise((res) => setTimeout(res, 3000));
+  return true;
+}
+
 /** Clear ONE precisely-recognised gate: the first-run directory-trust prompt.
  *
  * This is deliberately NOT the pattern-match-and-press-Enter that broke the
@@ -146,15 +167,19 @@ test("WT-5: copilot's session-store records a completed turn, not just a session
     // One recognised gate may stand between spawn and readiness; clearing it
     // is explicit and narrow, and readiness is then re-proved either way.
     await awaitAgentReady(pane, 20_000).catch(async (first: unknown) => {
-      // Re-throw the ORIGINAL error on failure: it carries the pane dump, which
-      // is the entire diagnostic value of refusing to act.
-      if (!(await clearTrustGate(pane))) throw first;
+      // Two gates stand between spawn and readiness, in this order: the
+      // restore picker, then the directory-trust prompt. Each is handled
+      // explicitly; anything else re-throws the ORIGINAL error, which carries
+      // the pane dump that is the whole diagnostic value of refusing to act.
+      const fresh = await startFreshSession(pane);
+      const trusted = await clearTrustGate(pane);
+      if (!fresh && !trusted) throw first;
       await awaitAgentReady(pane);
     });
     await call(`/agents/${encodeURIComponent(pane)}/prompt`, "POST", { text: "say hello" });
 
     // ── 1. cwd discovery: does a session row appear for THIS cwd? ────────
-    const deadline = Date.now() + 90_000;
+    const deadline = Date.now() + 180_000;
     let sessionId: string | undefined;
     while (Date.now() < deadline) {
       const rows = query<{ id: string }>("SELECT id FROM sessions WHERE cwd = ? ORDER BY created_at DESC LIMIT 1", cwd);
@@ -191,20 +216,35 @@ test("WT-5: copilot's session-store records a completed turn, not just a session
 
     assert.ok(
       turns > 0,
-      "FAILING THIS ASSERTION IS THE FINDING, NOT A BUG: copilot created a sessions row for this " +
-        "cwd but wrote NO turns row for a completed turn, so the store carries session metadata " +
-        `only (sessions.updated_at moved: ${touched}). There is no transcript-provable completion ` +
-        "to read, so copilot stays on the status tier and cli-profiles.ts keeps no `transcript` " +
-        "entry for it. Record this in the wire-truth table; the useful half is that " +
-        "sessions.cwd -> sessions.id discovery DOES work, should a later version start writing turns.",
+      "copilot wrote NO turns row within the window. It DOES write them (confirmed 2026-08-29), " +
+        `and the row lands on SUBMISSION rather than completion, ~65s after the prompt here ` +
+        `(sessions.updated_at moved: ${touched}). So this is more likely a window or an auth ` +
+        "problem than a format finding — check the pane for `Authorization error, you may need " +
+        "to run /login` before recording anything about the schema.",
     );
 
-    const turn = query<{ timestamp: string; assistant_response: string | null }>(
-      "SELECT timestamp, assistant_response FROM turns WHERE session_id = ? ORDER BY turn_index DESC LIMIT 1",
+    const turn = query<{ timestamp: string; user_message: string | null; assistant_response: string | null }>(
+      "SELECT timestamp, user_message, assistant_response FROM turns WHERE session_id = ? ORDER BY turn_index DESC LIMIT 1",
       sessionId,
     )[0];
     assert.equal(typeof turn?.timestamp, "string", "a turn row needs a timestamp to bound freshness");
-    console.log(`WT-5 newest turn: ${turn.timestamp}, assistant_response present: ${turn.assistant_response !== null}`);
+    console.log(`WT-5 newest turn: ${turn.timestamp}`);
+    console.log(`WT-5 user_message: ${JSON.stringify(turn.user_message)}`);
+    console.log(`WT-5 assistant_response present: ${turn.assistant_response !== null}`);
+
+    // THE remaining question for a profile. The row exists from submission, so
+    // its mere presence proves a turn STARTED, not that it finished — the
+    // completion signal has to be assistant_response going non-null. Confirming
+    // that needs an AUTHENTICATED copilot: on 2026-08-29 every probe run hit
+    // "Authorization error, you may need to run /login", so the column stayed
+    // null for a reason unrelated to the schema.
+    assert.notEqual(
+      turn.assistant_response,
+      null,
+      "assistant_response is still null — if the pane shows an Authorization error, run " +
+        "`copilot` once and /login, then re-run. Until this passes, the completion SIGNAL is " +
+        "unconfirmed and copilot stays on the status tier even though its schema is now known.",
+    );
   } finally {
     await call(`/workspaces/${encodeURIComponent(workspaceId)}`, "DELETE").catch(() => undefined);
   }

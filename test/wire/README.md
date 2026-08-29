@@ -24,7 +24,7 @@ answer in the spec's wire-truth table and, where it is a per-CLI fact, as a
 | WT-2 | ~~does `agy --conversation <fresh-uuid>` mint that id, or reject it?~~ **ANSWERED 2026-08-29** (herdr 0.8.2) — NEITHER, quite: agy ACCEPTS the flag (it reaches the terminal title) but mints nothing under that id within 45s, and `last_conversations.json` never learns it | agy stays on cwd-map + `startedAt` discovery — roadmap 25(d) closes as won't-fix |
 | WT-3 | ~~`opencode export` output shape~~ **ANSWERED 2026-08-27** — opencode's real store is `~/.local/share/opencode/opencode.db` (SQLite+WAL); a finished assistant turn carries `time.completed`, and `session.directory` makes cwd discovery a SQL predicate | — |
 | WT-4 | ~~codex `rollout-*.jsonl` terminal record shape~~ **ANSWERED 2026-08-29** (codex-cli 0.151.0, live) — rollout IS findable by cwd for a freshly spawned session via `session_meta.payload.cwd`, and a finished turn ends `event_msg` with `payload.type: "task_complete"` carrying a top-level ISO `timestamp`. Record kinds seen: `session_meta`, `event_msg/task_started`, `response_item/message`, `world_state`, `turn_context`, `event_msg/item_completed`, `event_msg/task_complete` | — codex CAN leave the status tier: `via: "path"` discovery by cwd, `terminal.done: ["task_complete"]` |
-| WT-5 | copilot `session-store.db` schema — probe written and RUN 2026-08-29, **still unanswered**. Confirmed: `sessions(id, cwd, …)` gains a row for every fresh cwd, so cwd -> session_id discovery works. NOT confirmed: whether a completed turn writes a `turns` row, because copilot could not be driven past its first-run trust gate — neither the option number nor Enter cleared it, and `pane.read` appears to return stale buffers from reused panes, so screen-driven gate handling is unreliable here. `turns` is 0 DB-wide, but with no turn provably completed that stays ambiguous | copilot stays on the status tier until this is settled |
+| WT-5 | copilot `session-store.db` schema — probe RUN 2026-08-29, schema ANSWERED, completion signal still open. `sessions(id, cwd, …)` gains a row per fresh cwd (cwd -> session_id discovery works) and `turns(id, session_id, turn_index, user_message, assistant_response, timestamp)` IS written — a row appears on SUBMISSION, ~65s after the prompt, with `assistant_response` NULL until the turn finishes. Every run hit `Authorization error, you may need to run /login`, so no turn ever completed and `assistant_response` going non-null is UNCONFIRMED | copilot stays on the status tier until an authenticated run confirms the completion signal |
 | WT-6 | does herdr's `pane.exited` carry an exit code? | agent-death cause stays unreported (the exec endpoint is unaffected — it reads its own `; echo $?` drop file, not `pane.exited`) |
 | WT-7 | ~~does `pane.wait_for_output` match the pane's OWN echoed input, or only program output?~~ **ANSWERED 2026-08-29** (herdr 0.8.2) — the pane's OWN echoed input, on `visible` AND `recent`; `matched_line` comes back as the echoed command itself. The inference from `source:`'s vocabulary was right | — the spawn-readiness sentinel is viable; roadmap 27 is unblocked |
 
@@ -70,16 +70,23 @@ back empty — so the machinery that defeated WT-1 and WT-2 is already ruled
 out. What remains unverified is the half only a spawn can reach: what a
 FRESHLY created session writes. Do not record either answer until they run.
 
-## WT-5's remaining step
+## WT-5's remaining step: `copilot` then `/login`
 
-The blocker is structural, not a bug: probes spawn into a fresh `mkdtemp`, and
-a directory that does not exist yet cannot be pre-trusted. copilot's gate
-offers "2. Yes, and remember this folder for future sessions" — so the way
-through is to run copilot by hand ONCE in a fixed directory, choose that
-option, and point the probe at that stable path instead of a temp one. It
-costs the probe its isolation, which is acceptable here: the query is
-`sessions WHERE cwd = ?` and a stable path still identifies the row.
+Run `copilot` once by hand and `/login`. Every probe run on 2026-08-29 reached
+copilot in the right cwd and submitted the prompt — the pane shows
+`❯ say hello` above the correct folder — and every one came back
+`Authorization error, you may need to run /login`. So `assistant_response`
+stayed NULL for a reason that has nothing to do with the schema, and the
+completion signal is the one thing still unconfirmed.
 
-Attempting to clear the gate from the probe is the wrong direction, and the
-codex incident on the same day is why. Sending input into a menu is a
-SELECTION, whichever option happens to be highlighted.
+Two gates stand in front of copilot, and BOTH defaults are wrong for a probe.
+It opens on a "Restore interrupted sessions" picker where `enter` RESTORES a
+previous session — which is what defeated the first runs: copilot then
+legitimately ran in an EARLIER probe's folder, so the pane showed that folder
+(read at the time as a stale buffer, which it was not) and no turn was written
+for the cwd under test. `esc` starts fresh. Behind it sits the directory-trust
+prompt. The probe now handles both explicitly, in that order.
+
+That is the same hazard as the codex update menu one screen earlier, and the
+same rule applies: a probe must never send input into a screen it has not
+positively identified, because in a menu a prompt is a SELECTION.
