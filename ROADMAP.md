@@ -177,7 +177,30 @@ missing endpoints/SDK/UI, not missing reachability):
     text cross-referenced this as "item 25's API-versioning window";
     that numbering is stale — the prefix landed in 78c77b2.)
 
-27. **Spawn readiness — prove the shell is at its prompt, don't guess.**
+27. ~~**Spawn readiness — prove the shell is at its prompt, don't guess.**~~
+    **Done 2026-08-29.** `src/spawn-readiness.ts` — `readinessSentinel()`
+    (pure: the command to send and the string to await, with a per-spawn
+    random id so a reused pane's stale echo can never match) and
+    `awaitShellReady()` (the I/O shell, best-effort by construction: it
+    returns whether the shell proved ready and never throws for a readiness
+    failure). Called at one site in `spawn()`, after the pane exists and
+    before the `agent.start` retry, so all four paths are covered —
+    mode A with env, mode A without, mode B `pane.split` and mode C
+    worktree, the last three of which settled for ZERO time before this.
+    The env drop file composes into the same `send_input`
+    (`. <drop>; rm -f <drop>; printf '<marker>\n'`), so sourcing the env
+    and proving readiness cost one round trip and the shell's sequencing
+    guarantees the order. `[spawn] readiness_timeout_ms` (default 5000, 0
+    disables) replaces `envSettleMs`, which was a test-only override wired
+    to no config and is deleted. The `agent_pane_busy` retry stays as the
+    floor. 15 tests: 10 on the pure policy, 5 driving it through
+    `broker.agent.spawn` against FakeHerdr (order, degrade-on-timeout, the
+    composed env line, mode B, marker uniqueness).
+    MEASURED live on herdr 0.8.2: five fresh panes proved ready in 2–5ms
+    (mean 3ms, 5/5) — ~1000× headroom on the default timeout and ~800×
+    cheaper than the up-to-4s retry it displaces, so the "adds a round trip"
+    risk resolved in the design's favour. All four of the spec's open
+    questions are now closed in the spec itself.
     Spec: `docs/superpowers/specs/2026-08-28-spawn-readiness-design.md`.
     `spawn()` creates a pane and calls `agent.start` almost immediately;
     on a cold pane whose login shell has not reached its prompt herdr

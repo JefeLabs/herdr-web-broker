@@ -35,7 +35,10 @@ export async function setup(): Promise<{ fake: FakeHerdr; deps: OpsDeps; teardow
     stateDir: tmpDir(),
     askPollMs: 25,
     askGraceMs: 150,
-    envSettleMs: 5,
+    // The readiness sentinel is exercised by spawn-readiness.test.ts and
+    // workspace-ops.test.ts explicitly. Off here so the existing spawn call
+    // sites don't each pay a FakeHerdr round trip they aren't testing.
+    readinessTimeoutMs: 0,
     paneBusyDelayMs: 5,
     settleMsOverride: 0,
   };

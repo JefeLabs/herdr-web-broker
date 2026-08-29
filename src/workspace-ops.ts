@@ -12,6 +12,7 @@ import {
 import type { EnvRegistry } from "./env-registry.js";
 import type { BrokerEvents } from "./broker-events.js";
 import { BrokerError } from "./errors.js";
+import { awaitShellReady } from "./spawn-readiness.js";
 import type { ModelRegistry } from "./model-registry.js";
 import {
   DIFF_CAP_BYTES,
@@ -54,8 +55,10 @@ export interface OpsDeps {
   askGraceMs?: number;
   /** how long ask() waits for the agent to start working before failing fast */
   askStartGraceMs?: number;
-  /** test override for post-injection shell settle */
-  envSettleMs?: number;
+  /** how long spawn waits for the readiness sentinel before falling through
+   * to the agent_pane_busy retry; 0 disables it (spec 2026-08-28). Replaces
+   * the old envSettleMs sleep, which approximated this by guessing. */
+  readinessTimeoutMs?: number;
   /** cold-pane agent.start retry pacing (agent_pane_busy) */
   paneBusyRetries?: number;
   paneBusyDelayMs?: number;
@@ -541,26 +544,34 @@ async function spawn(deps: OpsDeps, session: string, p: Record<string, unknown>)
     deps.index.set(session, workspaceId, { cwd, ...(label ? { label } : {}) });
   }
 
-  if (!hasWs && Object.keys(injected).length > 0) {
-    const drop = deps.env.writeDropFile(injected);
-    try {
-      await deps.local.request(
-        session,
-        "pane.send_input",
-        // Source-and-delete: only the PATH transits the PTY (env spec §5).
-        { pane_id: paneId, text: ` . ${drop}; rm -f ${drop}`, keys: ["Enter"] },
-        10_000,
-      );
-      await new Promise((r) => setTimeout(r, deps.envSettleMs ?? 300));
-    } catch (e) {
-      rmSync(drop, { force: true });
-      const err = e instanceof BrokerError ? e : new BrokerError("upstream_error", String(e));
-      throw new BrokerError(err.code, `env injection failed: ${err.message}`, {
-        ...err.details,
-        workspace_id: workspaceId,
-        pane_id: paneId,
-      });
-    }
+  // Spawn readiness (spec 2026-08-28-spawn-readiness-design.md). Every path
+  // above hands back a pane whose login shell may not have reached its prompt
+  // — workspace.create, pane.split and worktree.create alike — and until now
+  // only mode A WITH env injection settled at all, by sleeping 300ms. Prove
+  // it instead: push a sentinel and wait for the echo.
+  //
+  // The env drop file composes into the SAME send, so sourcing the env and
+  // proving readiness are one round trip. Order matters and the shell
+  // guarantees it: the sentinel cannot echo before the source completes.
+  const envDrop = !hasWs && Object.keys(injected).length > 0 ? deps.env.writeDropFile(injected) : undefined;
+  try {
+    await awaitShellReady(deps, session, paneId, {
+      // Env injection failing is a real error for the caller; the sentinel
+      // failing is not — it falls through to the agent_pane_busy retry.
+      ...(envDrop !== undefined
+        ? { prefix: ` . ${envDrop}; rm -f ${envDrop}`, throwOnSendFailure: true }
+        : {}),
+    });
+  } catch (e) {
+    // Only reachable with throwOnSendFailure, i.e. only when a drop file was
+    // written — the readiness half never throws.
+    rmSync(envDrop as string, { force: true });
+    const err = e instanceof BrokerError ? e : new BrokerError("upstream_error", String(e));
+    throw new BrokerError(err.code, `env injection failed: ${err.message}`, {
+      ...err.details,
+      workspace_id: workspaceId,
+      pane_id: paneId,
+    });
   }
 
   const explicitName = typeof p.name === "string";

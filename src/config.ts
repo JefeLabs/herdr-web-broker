@@ -58,6 +58,10 @@ export interface BrokerConfig {
   models?: ModelsConfig;
   /** per-CLI transcript/pin/prepare profiles layered over the builtins */
   cli?: CliConfig;
+  /** spawn tuning. The only number here is a TIMEOUT — a bound on failure,
+   * not an estimate of success. Deliberately not a `settle_ms`: a tunable
+   * sleep is still a guess, just a longer one. */
+  spawn?: { readiness_timeout_ms?: number };
   /** operator-installed modules. Read ONCE at boot and deliberately NOT
    * hot-reloaded with the rest of this file: re-importing mid-flight
    * leaks whatever the old instance closed over, and a route table
@@ -83,6 +87,7 @@ export function loadConfig(configDir: string): BrokerConfig {
     token_mint: { enabled: (raw.token_mint as { enabled?: boolean } | undefined)?.enabled ?? false },
     models: raw.models as ModelsConfig | undefined,
     cli: raw.cli as CliConfig | undefined,
+    spawn: raw.spawn as { readiness_timeout_ms?: number } | undefined,
     modules: raw.modules as ModuleSpec[] | undefined,
   };
 }

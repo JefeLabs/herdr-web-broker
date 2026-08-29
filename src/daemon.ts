@@ -114,6 +114,9 @@ export async function startDaemon(opts: DaemonOptions): Promise<DaemonHandle | u
     agents,
     profiles: new CliProfiles(config.cli),
     stateDir: opts.stateDir,
+    ...(config.spawn?.readiness_timeout_ms !== undefined
+      ? { readinessTimeoutMs: config.spawn.readiness_timeout_ms }
+      : {}),
   };
 
   const hub = new TunnelHub();
