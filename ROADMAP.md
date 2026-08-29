@@ -338,6 +338,16 @@ missing endpoints/SDK/UI, not missing reachability):
     Already load-bearing: the devstack rides it (which is why e2e needs no
     Docker), and `daemon`/`ws-client`/`federation`/`projection` tests all boot
     through it — the last two twice each, for a parent and a child.
+    A prospective adopter named the real gap sharply: there was no declared
+    contract for what a backend must implement — only an implementation that
+    assumes herdr and a test fake that assumes it too, enumerating almost
+    nothing because each test registers just the verbs it needs. The write-up
+    now lists all **18 methods**, grouped by what breaks without each, with
+    the practical floor called out (`ping` + `agent.list` is enough to attach
+    and serve a roster) and the fact that a partial backend fails per-endpoint
+    rather than globally. `test/backend-contract.test.ts` re-derives the
+    surface from `src/` on every run and fails in BOTH directions, so the doc
+    cannot drift from the code.
     Declaring it SUPPORTED is four commitments, of which only one is work:
     publish the two types; **assert the displacement rule** (untested today —
     every test passes endpoints and none checks discovery went off); restate

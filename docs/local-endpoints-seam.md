@@ -100,6 +100,87 @@ backend would depend on — is asserted nowhere. `grep -rn "HERDR_SOCKET_PATH" t
 finds only an unrelated live-smoke reference. Every existing test passes
 endpoints and never checks that doing so turned discovery off.
 
+## The backend contract: 18 methods
+
+This section exists because a prospective adopter pointed out, correctly, that
+the repo had **no declared contract for what a backend must implement** — only
+an implementation that assumes herdr and a test fake that assumes it too. They
+had to reconstruct the list with a regex and hand-classify it. Nobody should
+have to do that twice.
+
+Below is the full surface, extracted from every `.request(` call site in
+`src/` plus the two the attach path uses directly. A single-line grep
+undercounts it, because calls wrap across lines.
+
+### Attach and liveness — without these there is no session at all
+
+| method | called from | what breaks without it |
+| --- | --- | --- |
+| `ping` | `local-attach.ts` | attach fails; the endpoint is never adopted, and the liveness probe that re-checks it has nothing to call |
+| `events.subscribe` | `local-attach.ts`, `ws-server.ts` | the push channel that feeds the registry. The broker still works, but agent status only updates when a client asks with `?fresh=1` |
+| `agent.list` | `http.ts`, `workspace-ops.ts`, `module-api.ts` | no roster: `GET .../agents`, the counts, and spawn-readiness checks all go blind |
+| `workspace.list` | `http.ts`, `workspace-ops.ts` | workspace roster, plus the cwd half of transcript resolution — `lookupCwd` falls back to the broker's own index |
+
+### Spawn — the four modes
+
+| method | mode | what breaks without it |
+| --- | --- | --- |
+| `workspace.create` | A (fresh workspace) | mode-A spawns |
+| `pane.split` | B (join existing) | mode-B spawns |
+| `worktree.create` | C (isolated checkout) | mode-C spawns |
+| `agent.start` | all | every spawn, on every path |
+| `pane.send_input` | all | env injection AND the readiness sentinel share this one call |
+| `pane.wait_for_output` | all | **degrades, does not break.** The sentinel is best-effort by design; spawn falls through to the `agent_pane_busy` retry |
+
+### Agent operations — each gates one endpoint
+
+| method | gates |
+| --- | --- |
+| `agent.prompt` | `POST .../agents/{pane}/prompt` — fire-and-forget steering |
+| `agent.wait` | `POST .../agents/{pane}/wait` |
+| `agent.explain` | `GET .../agents/{pane}/explain` |
+| `pane.read` | the pane viewer and `GET .../panes/{pane}/screen` |
+| `pane.close` | `DELETE .../agents/{pane}` — agent stop |
+
+### Teardown and worktrees
+
+| method | gates |
+| --- | --- |
+| `workspace.close` | `broker.workspace.close`, and ownership teardown |
+| `worktree.list` | `GET .../worktrees` |
+| `worktree.remove` | `DELETE .../worktrees/{w}` |
+
+### What a partial backend does
+
+A backend implementing a subset fails **per-endpoint, not globally**, which is
+what makes incremental adoption viable. `FakeHerdr` answers an unregistered
+method with `{ error: { code: "not_found" } }`, and the broker surfaces that as
+an upstream error on the one route that needed it. Everything else keeps
+working.
+
+So the practical floor is the four attach-and-liveness methods plus whichever
+feature groups you want. `ping` + `agent.list` alone — which is literally what
+`FakeHerdr` implements by default, in 116 lines — is enough to attach, list a
+roster, and serve the instance and session endpoints.
+
+### Why `FakeHerdr` cannot be the contract
+
+It is the sharpest evidence that this is a documentation gap rather than an
+engineering one: 116 lines, no herdr code whatsoever, and it backs the entire
+450-test suite plus the Playwright e2e. **A non-herdr backend driving the full
+broker plane already exists and runs in CI on every push.**
+
+But it enumerates almost nothing. It registers exactly two handlers by default
+and every other verb is set ad-hoc per test as a lambda:
+
+```js
+t.fake.handlers.set("workspace.create", () => ({ root_pane: { pane_id: "w2:p1" } }));
+```
+
+That is the right design for a test double — each test states only what it
+needs — and precisely the wrong shape for a contract. The list above is the
+artifact that was missing.
+
 ## What "supported" would commit to
 
 Today these are internal options with an internal audience. Declaring them
