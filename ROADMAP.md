@@ -323,6 +323,34 @@ missing endpoints/SDK/UI, not missing reachability):
     then dies. Two windows, and the shipped one sits on the far side of
     this failure.
 
+29. **`localEndpoints` / provisioner as a supported seam.**
+    Write-up: [docs/local-endpoints-seam.md](docs/local-endpoints-seam.md).
+    Two `DaemonOptions` fields decide where sessions come from, and together
+    they are the point at which this broker can serve sessions backed by
+    something it did not discover itself. `localEndpoints` does not hint at
+    discovery, it DISPLACES it — passing it forces `HERDR_SOCKET_PATH`, the
+    default socket and the sessions dir all to `undefined` — and
+    `SessionProvisioner` returns a `HerdrEndpoint` (`{session, socketPath}`,
+    two strings) rather than a process handle, so nothing downstream ever
+    learns how a session came to exist. An alternative backend does not have
+    to impersonate a herdr binary; it has to produce a socket that speaks
+    herdr's wire.
+    Already load-bearing: the devstack rides it (which is why e2e needs no
+    Docker), and `daemon`/`ws-client`/`federation`/`projection` tests all boot
+    through it — the last two twice each, for a parent and a child.
+    Declaring it SUPPORTED is four commitments, of which only one is work:
+    publish the two types; **assert the displacement rule** (untested today —
+    every test passes endpoints and none checks discovery went off); restate
+    the `u-` namespace invariant for third parties, since
+    `HerdrProvisioner`'s structural guard does not extend to someone else's
+    implementation; and be honest that the consumer is an in-process embedder
+    importing from `dist/`, because the broker is not published to npm.
+    **The trigger is deliberately UNDEFINED.** The condition named as the
+    "NAT flip" is not written down in this repo or in smithagents, and is
+    left blank rather than guessed — see the write-up for exactly what the
+    maintainer needs to supply. The seam is documented; the reason to act on
+    it is not.
+
 28. ~~**Module system — capabilities, not internals.**~~ Done. Spec:
     `docs/superpowers/specs/2026-08-28-extension-model-design.md`.
     Operators need to add their own git, file and workspace
