@@ -40,8 +40,9 @@ missing endpoints/SDK/UI, not missing reachability):
     transcript instead of trusting only herdr's screen-inferred
     `agent_status` — `claude` (`--session-id`-pinned JSONL under
     `~/.claude/projects/`), `agy` (cwd → conversation-id cache map,
-    since `--conversation` only RESUMES an existing id — WT-2 asks
-    whether it can mint one), and `opencode` (`--session`-pinned,
+    since `--conversation` only RESUMES an existing id — WT-2 confirmed
+    live on 2026-08-29 that it cannot mint one), and `opencode`
+    (`--session`-pinned,
     `~/.local/share/opencode/opencode.db` SQLite+WAL, a finished turn
     keyed off `time.completed` — WT-3 probed and answered live
     2026-08-27; `opencode export` was rejected as a ~561KB-per-call
@@ -82,10 +83,11 @@ missing endpoints/SDK/UI, not missing reachability):
     a flag-free runtime pushed `engines.node` to `>=22.13.0`. A live
     wire-test suite (`test/wire/`, gated on `HERDR_WIRE=1`, excluded
     from `npm test` because the glob only matches `*.test.js`) records
-    the two still-open questions: WT-1, whether `pane.send_input`
-    brackets multi-line paste (unverified — if it doesn't, every
-    multi-line prompt through the broker is quietly submitting early,
-    which would be a bug fix, not a config row), and WT-2 above.
+    what could not be settled offline. WT-1 (does `pane.send_input`
+    bracket multi-line paste?) and WT-2 both ran live on 2026-08-29
+    against herdr 0.8.2 and are ANSWERED: send_input DOES bracket, so
+    the feared early-submission bug does not exist; agy does not mint.
+    Still open are WT-4, WT-5 and WT-6, which have no probe files yet.
 
 25. **Lifecycle-determinism follow-ups.** Deferred from item 24's final
     whole-branch review, ordered by what a maintainer would hit first.
@@ -112,11 +114,19 @@ missing endpoints/SDK/UI, not missing reachability):
     do. Wiring it means a transcript read per agent per list call
     against a registry fed by push WS events rather than per-request
     computation — a deliberate design decision, not an oversight.
-    (d) **`agy`'s concurrent-same-cwd collision is still open.** The
-    `startedAt` bound rejects a transcript older than the agent, so a
-    STALE map entry can't be claimed, but two `agy` agents live in one
-    cwd still resolve to the same conversation. WT-2 (can
-    `--conversation` mint a fresh id?) is what actually closes it.
+    (d) **`agy`'s concurrent-same-cwd collision — WON'T FIX, answered
+    2026-08-29.** The `startedAt` bound rejects a transcript older than
+    the agent, so a STALE map entry can't be claimed, but two `agy`
+    agents live in one cwd still resolve to the same conversation. WT-2
+    was the thing that could have closed it, and the answer is no: agy
+    ACCEPTS `--conversation <fresh-uuid>` — it reaches the terminal
+    title — but mints nothing under that id within 45s, and
+    `last_conversations.json` never learns it. So there is no
+    launch-time-known path to pin the way claude's `--session-id` and
+    opencode's `--session` give, agy stays on cwd-map + `startedAt`
+    discovery, and `cli-profiles.ts`'s agy profile keeps no `pin` entry.
+    Two agy agents in one cwd remain ambiguous by construction; the
+    probe now pins that answer and goes red only if agy starts minting.
     (e) **`opencode`'s `terminal.done` is dead config.** `parseOpencode`
     keys off the presence of `time.completed` and never reads its
     `profile`, so a `[[cli.profiles]]` override of that vocabulary
@@ -200,17 +210,15 @@ missing endpoints/SDK/UI, not missing reachability):
     timeout, which bounds failure rather than estimating success, and
     `envSettleMs` — a test-only override wired to no config — is deleted
     rather than promoted.
-    **Blocked on WT-7** (`test/wire/shell-ready.wire.ts`, written and
-    committed, not yet run — needs a live herdr): does
-    `pane.wait_for_output` match the pane's OWN echoed input, or only
-    program output? The design is worthless if it is the latter.
-    Inference from the API's shape, not a probe: it takes
-    `source: "visible" | "recent"`, the same vocabulary `pane.read`
-    takes, and a matcher tapping program output would have no use for a
-    screen/scrollback distinction — so it very likely matches the
-    rendered buffer. Do not build the rest until WT-7 is green; if it is
-    red, keep the retry as the sole mechanism, which is what ships
-    today anyway. Note this also means the existing readiness settle
+    **WT-7 IS GREEN — this is unblocked (2026-08-29, herdr 0.8.2).**
+    `pane.wait_for_output` matches the pane's OWN echoed input, on
+    `visible` AND `recent`, returning `matched_line` as the echoed
+    command itself. The inference recorded here — that a matcher taking
+    `source: "visible" | "recent"` must be reading the rendered buffer,
+    since a program-output tap would have no use for a screen/scrollback
+    distinction — was correct. The sentinel design is viable as written
+    and the fallback (keep the retry as the sole mechanism) is not
+    needed. Build it. Note this also means the existing readiness settle
     window from roadmap 24 does not help here: it samples
     `interactive_ready` AFTER `agent.start`, to catch a CLI that renders
     then dies. Two windows, and the shipped one sits on the far side of
@@ -481,10 +489,10 @@ map!), `pane.close`, `agent.wait`, and `agent.prompt`'s
 
 The numbered roadmap is COMPLETE — 24 of 24, item 24 (agent lifecycle
 determinism) landing after publication. What remains is the maintainer's
-release act (NPM_TOKEN secret + v0.1.0 tag), the two open wire-truth
-questions item 24 recorded (WT-1 paste bracketing, WT-2 agy id minting —
-`test/wire/`) plus the still-pending `codex`/`copilot` transcript formats
-(WT-4, WT-5) and herdr's `pane.exited` exit code (WT-6), and the
+release act (an NPM_TOKEN that bypasses 2FA, then a tag — see item 26),
+the still-pending `codex`/`copilot` transcript formats (WT-4, WT-5) and
+herdr's `pane.exited` exit code (WT-6), which have no probe files yet —
+WT-1 and WT-2 were answered live on 2026-08-29 — and the
 demand-driven tails recorded in the strike notes (skins, framework
 adapters, federated multi-user, PDF extraction, quotas) plus the
 in-flight model-discovery spikes. In flight, pending credentialed spikes: per-user

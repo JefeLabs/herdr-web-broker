@@ -16,7 +16,7 @@ import { CliProfiles } from "../../src/cli-profiles.js";
  * launch-time-known path claude and opencode already get. */
 const BASE = process.env.HERDR_BASE ?? "http://127.0.0.1:7591";
 const TOKEN = process.env.HERDR_TOKEN ?? "";
-const S = `${BASE}/instances/runtime/sessions/default`;
+const S = `${BASE}/v1/instances/runtime/sessions/default`;
 
 async function call(path: string, method: string, body?: unknown): Promise<unknown> {
   const r = await fetch(`${S}${path}`, {
@@ -29,8 +29,35 @@ async function call(path: string, method: string, body?: unknown): Promise<unkno
   return text.length > 0 ? JSON.parse(text) : undefined;
 }
 
+async function rpc(method: string, params: unknown): Promise<unknown> {
+  const res = (await call("/rpc", "POST", { method, params })) as { result?: unknown };
+  return res?.result;
+}
+
+/** Clear agy's first-run permission gate.
+ *
+ * agy (Antigravity CLI) asks "Do you trust the contents of this project?" the
+ * first time it sees a directory. This probe spawns into a fresh mkdtemp, so
+ * it hits that gate on EVERY run — the agent never becomes active and the
+ * prompt below fails `agent_not_ready` long before the actual question is
+ * reached. That is what this probe did until 2026-08-29: it could not answer
+ * WT-2 even in principle. The default selection is "Yes, I trust this
+ * folder", so a bare Enter clears it. */
+async function clearTrustGate(pane: string): Promise<boolean> {
+  for (let i = 0; i < 20; i++) {
+    const res = (await rpc("pane.read", { pane_id: pane, source: "visible" })) as { read?: { text?: string } };
+    if (/trust the contents/i.test(res.read?.text ?? "")) {
+      await rpc("pane.send_input", { pane_id: pane, text: "", keys: ["Enter"] });
+      await new Promise((r) => setTimeout(r, 6000));
+      return true;
+    }
+    await new Promise((r) => setTimeout(r, 500));
+  }
+  return false;
+}
+
 test(
-  "WT-2: agy --conversation <fresh-uuid> mints that id as a new conversation",
+  "WT-2: agy --conversation <fresh-uuid> does NOT mint that id (answered 2026-08-29)",
   { skip: !process.env.HERDR_WIRE },
   async () => {
     // Read the path template off the real builtin profile rather than
@@ -57,12 +84,13 @@ test(
     if (!pane || !workspaceId) throw new Error("agents spawn returned no pane/workspace id");
 
     try {
+      await clearTrustGate(pane);
       // Give agy something to actually do — an unprompted agent may never
       // touch its own conversation store at all.
       await call(`/agents/${encodeURIComponent(pane)}/prompt`, "POST", { text: "say hello" });
 
       const path = template.replaceAll("{home}", process.env.HOME ?? "").replaceAll("{sessionId}", freshId);
-      const deadline = Date.now() + 15_000;
+      const deadline = Date.now() + 45_000;
       let minted = false;
       while (Date.now() < deadline) {
         if (existsSync(path)) {
@@ -72,14 +100,25 @@ test(
         await new Promise((r) => setTimeout(r, 500));
       }
 
+      // ANSWERED 2026-08-29 against agy on herdr 0.8.2: agy ACCEPTS the flag
+      // (it appears in the terminal title) but mints nothing — no transcript
+      // at the templated path within 45s, and last_conversations.json never
+      // learns the id. So agy stays on cwd-map + startedAt discovery and
+      // cli-profiles.ts's agy profile keeps no `pin` entry.
+      //
+      // The assertion is therefore inverted from the original: it now pins the
+      // ANSWER rather than the question. A probe that fails forever to record a
+      // negative is indistinguishable from a broken probe — this one goes red
+      // only if agy STARTS minting, which is precisely when 25(d) becomes
+      // closable and someone needs to know.
       assert.equal(
         minted,
-        true,
-        "FAILING THIS ASSERTION IS THE FINDING, NOT A BUG: agy did not create a " +
-          "transcript under the id passed to --conversation, so the flag does not " +
-          "mint a fresh conversation. agy stays on cwd-map + startedAt discovery " +
-          "(cli-profiles.ts's agy profile keeps no `pin` entry) — this is a " +
-          "recorded answer, not something to fix.",
+        false,
+        "agy NOW MINTS a conversation under --conversation <fresh-uuid>, which it " +
+          "did not on 2026-08-29. This is good news, not a regression: agy can move " +
+          "off cwd-map discovery onto a launch-time-known path like claude's " +
+          "--session-id, which closes roadmap 25(d)'s concurrent-same-cwd collision. " +
+          "Add a `pin` entry to cli-profiles.ts's agy profile and update WT-2.",
       );
     } finally {
       await call(`/workspaces/${encodeURIComponent(workspaceId)}`, "DELETE").catch(() => undefined);
