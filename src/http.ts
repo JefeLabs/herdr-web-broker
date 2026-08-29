@@ -175,6 +175,13 @@ export function createHttpHandler(deps: HttpDeps) {
     // happened to still list (a deterministic re-provision later must not
     // inherit a stale row pointing a transcript read at a dead agent).
     deps.ops.agents.removeSession(binding.session);
+    // ...and the same for workspaces (roadmap 25(a)). These two stores are
+    // siblings and broker.workspace.close clears both; this site cleared
+    // only one. Session names are deterministic, so the surviving rows were
+    // inherited by the NEXT session of the same name, and resolveCwd's
+    // index fallback could then hand a repo endpoint a cwd belonging to a
+    // session that no longer exists.
+    deps.ops.index.removeSession(binding.session);
     return { torn_down: binding.session, email: binding.email, workspaces_closed: closed, unrecognized };
   }
   const callInstance = makeCallInstance({

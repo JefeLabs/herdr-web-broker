@@ -1173,6 +1173,45 @@ test("ownership teardown: closes workspaces, stops the herdr, prunes the roster,
   }
 });
 
+test("ownership teardown clears the WORKSPACE index too, not just the agent index", async () => {
+  // Roadmap 25(a). demolishOwned called agents.removeSession but never
+  // touched WorkspaceIndex, while broker.workspace.close clears both — the
+  // sibling stores disagreed at that one call site. It matters because the
+  // session name is deterministic: the same email re-provisions the SAME
+  // name, so a surviving row is inherited by the new session, and
+  // resolveCwd falls back to the index when herdr doesn't list a workspace
+  // — handing a repo endpoint a path from a session that no longer exists.
+  const t = await setup({ ownership: true });
+  try {
+    const auth = await t.authed("/auth", { method: "POST", body: JSON.stringify({ email: "milo@example.com" }) });
+    const { session } = (await auth.json()) as { session: string };
+    const owned = t.provisionedFakes.get(session)!;
+    owned.handlers.set("workspace.list", () => ({ type: "workspace_list", workspaces: [{ workspace_id: "w9" }] }));
+    owned.handlers.set("workspace.close", () => ({ type: "workspace_closed" }));
+
+    t.ops.index.set(session, "w9", { cwd: "/gone/listed" });
+    // the row herdr no longer lists — the one that survived even a
+    // per-workspace cleanup, because nothing iterated it
+    t.ops.index.set(session, "w4", { cwd: "/gone/unlisted" });
+
+    const down = await t.authed(`/instances/runtime/sessions/${session}`, { method: "DELETE" });
+    assert.equal(down.status, 200);
+    assert.deepEqual(
+      t.ops.index.all(session),
+      {},
+      "the herdr PROCESS died; every workspace row for it goes too, listed or not",
+    );
+
+    const rebirth = await t.authed("/auth", { method: "POST", body: JSON.stringify({ email: "milo@example.com" }) });
+    const b = (await rebirth.json()) as { session: string };
+    assert.equal(b.session, session, "same deterministic name — which is why the stale row would have been inherited");
+    assert.deepEqual(t.ops.index.all(b.session), {}, "the reborn session starts clean");
+  } finally {
+    await teardown(t);
+    for (const fh of t.provisionedFakes.values()) await fh.close();
+  }
+});
+
 test("ownership admin: GET /admin/owners lists bindings; rebind moves an email to a new token", async () => {
   const t = await setup({ ownership: true });
   try {

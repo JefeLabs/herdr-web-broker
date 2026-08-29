@@ -95,6 +95,20 @@ export class WorkspaceIndex {
       this.#write(data);
     }
   }
+
+  /** Every workspace row for a whole session — used when the session itself
+   * (not just one of its workspaces) is torn down. The sibling of
+   * AgentIndex.removeSession: teardown stops the herdr PROCESS, so rows for
+   * workspaces herdr no longer lists die too. Without this a deterministic
+   * re-provision inherits stale rows, and resolveCwd's index fallback can
+   * hand a repo endpoint a path from a session that no longer exists. */
+  removeSession(session: string): void {
+    const data = this.#read();
+    if (data[session] !== undefined) {
+      delete data[session];
+      this.#write(data);
+    }
+  }
 }
 
 export interface AgentMeta {

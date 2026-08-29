@@ -91,15 +91,22 @@ missing endpoints/SDK/UI, not missing reachability):
 
 25. **Lifecycle-determinism follow-ups.** Deferred from item 24's final
     whole-branch review, ordered by what a maintainer would hit first.
-    (a) **Teardown clears one index, not both.** `demolishOwned` now
-    removes `AgentIndex` rows but still leaves `WorkspaceIndex` ones,
-    while `broker.workspace.close` clears both — the sibling stores are
-    inconsistent at that call site. Session names are deterministic, so
-    a user who tears down and re-authenticates gets the same name back
-    and inherits stale rows; since `resolveCwd` falls back to the index
-    when herdr doesn't list a workspace, a stale row can hand a repo
-    endpoint a path from a session that no longer exists. Pre-existing,
-    but item 24 made it asymmetric. (b) **`ask` and `wait` resolve cwd
+    (a) ~~**Teardown clears one index, not both.**~~ **Done 2026-08-29.**
+    `demolishOwned` cleared `AgentIndex` but left `WorkspaceIndex`, while
+    `broker.workspace.close` clears both — the sibling stores disagreed at
+    that one call site. Session names are deterministic, so a user who tore
+    down and re-authenticated got the same name back and inherited the stale
+    rows; since `resolveCwd` falls back to the index when herdr doesn't list
+    a workspace, such a row could hand a repo endpoint a path from a session
+    that no longer exists. Fixed by giving `WorkspaceIndex` the
+    `removeSession` its sibling already had and calling it beside
+    `agents.removeSession`. Both teardown routes (session DELETE and the
+    kick path) share `demolishOwned`, so one fix covers both. 3 tests: the
+    new index method including sibling-session isolation, and an integration
+    test through the teardown route seeding BOTH a listed and an unlisted
+    workspace row — the unlisted one is what survived even a per-workspace
+    cleanup, because nothing iterated it — then re-authenticating to prove
+    the reborn session starts clean. (b) **`ask` and `wait` resolve cwd
     differently.** `resolveCwd` prefers HERDR's cwd and falls back to
     the index; `waitAgent` reads the index directly. For a mode-C
     worktree spawn — where the index deliberately holds the CHECKOUT
