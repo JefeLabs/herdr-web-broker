@@ -1,4 +1,4 @@
-import { closeSync, existsSync, fstatSync, openSync, readFileSync, readSync } from "node:fs";
+import { closeSync, existsSync, fstatSync, openSync, readFileSync, readSync, readdirSync } from "node:fs";
 import { createRequire } from "node:module";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -145,10 +145,43 @@ function parseOpencode(text: string, profile: CliProfile): TranscriptState | nul
   return { state: "working", lastRecordAt };
 }
 
+/** codex writes one JSON object per line: `{ timestamp, type, payload }`.
+ * Turn state lives on `event_msg` rows, whose `payload.type` is the
+ * vocabulary — `task_started`, `item_completed`, `task_complete` (WT-4,
+ * answered live 2026-08-29 against codex-cli 0.151.0).
+ *
+ * Walks backwards to the NEWEST state-deciding row and pins lastRecordAt to
+ * THAT row's timestamp, the same rule parseClaude follows and for the same
+ * reason: a new `task_started` appended after a finished turn must read as
+ * working, not as fresh confirmation of the previous turn. Getting that
+ * backwards makes ask() hand back the PREVIOUS answer. */
+function parseCodex(text: string, profile: CliProfile): TranscriptState | null {
+  const rows = jsonLines(text);
+  if (rows.length === 0) return null;
+  const done = new Set(profile.terminal?.done ?? []);
+  const blocked = new Set(profile.terminal?.blocked ?? []);
+  const running = new Set(profile.terminal?.running ?? []);
+
+  for (let i = rows.length - 1; i >= 0; i--) {
+    if (rows[i].type !== "event_msg") continue;
+    const payload = rows[i].payload as { type?: unknown } | undefined;
+    const kind = typeof payload?.type === "string" ? payload.type : undefined;
+    if (!kind) continue;
+    if (!done.has(kind) && !blocked.has(kind) && !running.has(kind)) continue;
+    const at = ts(rows[i].timestamp);
+    if (at === undefined) return null;
+    if (done.has(kind)) return { state: "done", lastRecordAt: at };
+    if (blocked.has(kind)) return { state: "blocked", lastRecordAt: at };
+    return { state: "working", lastRecordAt: at };
+  }
+  return null;
+}
+
 const PARSERS: Record<string, (t: string, p: CliProfile) => TranscriptState | null> = {
   claude: parseClaude,
   agy: parseAgy,
   opencode: parseOpencode,
+  codex: parseCodex,
 };
 
 /** Never throws: an unparseable transcript is `null`, and every caller
@@ -255,6 +288,83 @@ function render(template: string, vars: Record<string, string>): string {
  * nothing — see configDirFor's doc comment. Omitted (older/direct
  * callers) or a kind with no `prepare` block: falls back to `{home}/.claude`,
  * the literal path this template used before {configDir} existed. */
+/** Reads just the FIRST line of a file, without loading the rest.
+ * codex's `session_meta` line embeds the whole system prompt, so it runs to
+ * several KB — a fixed small read truncates it mid-JSON. This reads a
+ * generous window and stops at the newline. */
+function firstLine(path: string, cap = 262144): string | null {
+  let fd: number | undefined;
+  try {
+    fd = openSync(path, "r");
+    const buf = Buffer.alloc(cap);
+    const n = readSync(fd, buf, 0, cap, 0);
+    const text = decodeBytesRead(buf, n);
+    const nl = text.indexOf("\n");
+    return nl < 0 ? null : text.slice(0, nl);
+  } catch {
+    return null;
+  } finally {
+    if (fd !== undefined) closeSync(fd);
+  }
+}
+
+/** Per-kind: pull the cwd a transcript recorded out of its first line. Lives
+ * beside the parsers because it is the same class of per-CLI knowledge. */
+const SCAN_CWD: Record<string, (line: string) => string | undefined> = {
+  codex: (line) => {
+    const d = JSON.parse(line) as { type?: unknown; payload?: { cwd?: unknown } };
+    return d.type === "session_meta" && typeof d.payload?.cwd === "string" ? d.payload.cwd : undefined;
+  },
+};
+
+/** Find the transcript that recorded THIS cwd, for a CLI with no pinnable id.
+ *
+ * Only today's and yesterday's partitions are searched. That is what keeps it
+ * viable on a poll: a working machine holds ~26k rollouts across ~510MB, and
+ * walking all of them costs ~210ms, while one day's directory costs ~1ms. A
+ * live session is by definition in today's — yesterday's is there so a run
+ * that crosses midnight does not lose its transcript mid-turn.
+ *
+ * Candidates are searched newest-first. codex's filenames lead with an ISO
+ * timestamp, so a lexicographic reverse sort is chronological. */
+function findByRecordedCwd(
+  kind: string,
+  src: { dirTemplate: string; filePrefix: string },
+  cwd: string,
+  home: string,
+): string | undefined {
+  const readCwd = SCAN_CWD[kind];
+  if (!readCwd) return undefined;
+  const now = new Date();
+  const days = [now, new Date(now.getTime() - 86_400_000)];
+  for (const day of days) {
+    const dir = render(src.dirTemplate, { home })
+      .replaceAll("{YYYY}", String(day.getUTCFullYear()))
+      .replaceAll("{MM}", String(day.getUTCMonth() + 1).padStart(2, "0"))
+      .replaceAll("{DD}", String(day.getUTCDate()).padStart(2, "0"));
+    let names: string[];
+    try {
+      names = readdirSync(dir)
+        .filter((f: string) => f.startsWith(src.filePrefix))
+        .sort()
+        .reverse();
+    } catch {
+      continue; // a day with no sessions has no directory
+    }
+    for (const name of names) {
+      const path = join(dir, name);
+      const line = firstLine(path);
+      if (!line) continue;
+      try {
+        if (readCwd(line) === cwd) return path;
+      } catch {
+        continue; // a rollout being written right now is not the one we want
+      }
+    }
+  }
+  return undefined;
+}
+
 export function readTurnState(
   profile: CliProfile,
   meta: AgentMeta,
@@ -289,6 +399,10 @@ export function readTurnState(
       if (!id) return null;
       path = render(src.template, { home, sessionId: id });
       boundToStartedAt = true;
+    } else if (src.via === "scan") {
+      // No id to template with: find the file by the cwd it recorded.
+      path = findByRecordedCwd(profile.kind, src, cwd, home);
+      if (!path) return null;
     } else {
       // sqlite (opencode today, copilot once WT-5 lands). The db file
       // check comes first so a CLI that was never run (no db at all)

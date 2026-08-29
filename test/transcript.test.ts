@@ -128,3 +128,51 @@ test("opencode: a profile with no terminal block still resolves done for assista
   const assistantDone = '{"role":"assistant","time":{"created":1000,"completed":2000}}';
   assert.equal(parseTranscript("opencode", assistantDone, bare)?.state, "done");
 });
+
+// ── codex (WT-4, answered live 2026-08-29) ────────────────────────────────
+const CODEX_META = '{"timestamp":"2026-08-29T14:47:26.766Z","type":"session_meta","payload":{"session_id":"sid-1","cwd":"/work/proj"}}';
+const codexRow = (ts: string, payloadType: string) =>
+  `{"timestamp":"${ts}","type":"event_msg","payload":{"type":"${payloadType}"}}`;
+
+test("codex: task_complete is done, pinned to that record's timestamp", () => {
+  const P2 = P.get("codex")!;
+  const text = [
+    CODEX_META,
+    codexRow("2026-08-29T14:47:30.000Z", "task_started"),
+    codexRow("2026-08-29T14:47:51.843Z", "task_complete"),
+  ].join("\n");
+  const s = parseTranscript("codex", text, P2);
+  assert.equal(s?.state, "done");
+  assert.equal(s?.lastRecordAt, Date.parse("2026-08-29T14:47:51.843Z"));
+});
+
+test("codex: task_started with no completion is working", () => {
+  const text = [CODEX_META, codexRow("2026-08-29T14:47:30.000Z", "task_started")].join("\n");
+  assert.equal(parseTranscript("codex", text, P.get("codex")!)?.state, "working");
+});
+
+test("codex: a prompt appended after a finished turn reads as working, not stale done", () => {
+  // Same rule parseClaude follows: pin to the NEWEST state-deciding row, so a
+  // new user turn after a task_complete does not read as an already-finished
+  // one. Getting this wrong makes ask() return the PREVIOUS turn's answer.
+  const text = [
+    CODEX_META,
+    codexRow("2026-08-29T14:47:51.843Z", "task_complete"),
+    codexRow("2026-08-29T14:48:10.000Z", "task_started"),
+  ].join("\n");
+  const s = parseTranscript("codex", text, P.get("codex")!);
+  assert.equal(s?.state, "working");
+  assert.equal(s?.lastRecordAt, Date.parse("2026-08-29T14:48:10.000Z"));
+});
+
+test("codex: an override of terminal.done takes effect", () => {
+  const overridden = new CliProfiles({
+    profiles: [{ kind: "codex", terminal: { done: ["item_completed"], blocked: [], running: ["task_started"] } }],
+  }).get("codex")!;
+  const text = [CODEX_META, codexRow("2026-08-29T14:47:55.000Z", "item_completed")].join("\n");
+  assert.equal(parseTranscript("codex", text, overridden)?.state, "done");
+});
+
+test("codex: a rollout with no event_msg rows yields no evidence", () => {
+  assert.equal(parseTranscript("codex", CODEX_META, P.get("codex")!), null);
+});

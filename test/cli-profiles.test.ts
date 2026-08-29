@@ -15,8 +15,26 @@ test("builtins: each verified kind names its own storage model", () => {
   assert.equal(p.get("agy")?.transcript?.via, "map");
   assert.equal(p.get("claude")?.transcript?.via, "path");
   assert.equal(p.get("opencode")?.transcript?.via, "sqlite");
-  assert.equal(p.get("codex")?.transcript, undefined, "unverified formats ship absent, not stubbed");
-  assert.equal(p.get("copilot")?.transcript, undefined);
+  // codex joined the verified set when WT-4 answered (2026-08-29): no pinnable
+  // id, so it discovers by the cwd the rollout records — a fourth storage
+  // model, not a variant of the other three.
+  assert.equal(p.get("codex")?.transcript?.via, "scan");
+  // copilot is still unverified: WT-5 ran but could not clear the first-run
+  // trust gate, so whether a completed turn writes a `turns` row is unknown.
+  assert.equal(p.get("copilot")?.transcript, undefined, "unverified formats ship absent, not stubbed");
+});
+
+test("builtins: the scan via names a DATE-partitioned directory, not a flat one", () => {
+  // The partition is what makes scanning viable on a 500ms ask poll: a working
+  // machine held ~26k rollouts / 510MB, so walking all of them cost ~210ms
+  // against ~1ms for one day. A template that lost its date segments would
+  // still resolve — and would silently reintroduce that cost.
+  const src = new CliProfiles().get("codex")?.transcript;
+  assert.equal(src?.via, "scan");
+  if (src?.via !== "scan") return;
+  for (const seg of ["{YYYY}", "{MM}", "{DD}"]) {
+    assert.ok(src.dirTemplate.includes(seg), `dirTemplate must stay date-partitioned, missing ${seg}`);
+  }
 });
 
 test("builtins: terminal vocabularies are per-kind", () => {

@@ -8,7 +8,14 @@
 export type TranscriptSource =
   | { via: "path"; template: string }
   | { via: "map"; mapFile: string; template: string }
-  | { via: "sqlite"; dbPath: string; queryBySession: string; queryByCwd: string };
+  | { via: "sqlite"; dbPath: string; queryBySession: string; queryByCwd: string }
+  /** No pinnable id and no cwd->id map: find the file BY the cwd it recorded.
+   * `dirTemplate` takes {home} plus {YYYY}/{MM}/{DD}, expanded for today and
+   * yesterday — a date-partitioned store keeps the scan to a handful of files
+   * instead of the whole history, and a live session is always in one of the
+   * two. Only each candidate's FIRST line is read; the per-kind reader that
+   * pulls a cwd out of it lives beside that kind's parser. */
+  | { via: "scan"; dirTemplate: string; filePrefix: string };
 
 export interface CliProfile {
   kind: string;
@@ -93,9 +100,30 @@ const BUILTIN: Array<Omit<CliProfile, "source">> = [
     terminal: { done: ["assistant"], blocked: [], running: [] },
     settleMs: 2500,
   },
-  // codex + copilot: installed and spawnable, but their transcript formats
-  // are unverified (WT-4, WT-5). No `transcript` key = status tier.
-  { kind: "codex", settleMs: 2500 },
+  {
+    kind: "codex",
+    settleMs: 2500,
+    // No launch pin: `codex resume [ID]` resumes, it does not mint, so
+    // discovery runs cwd -> file. WT-4 (live, 2026-08-29, codex-cli 0.151.0)
+    // confirmed a rollout records its own cwd in `session_meta.payload.cwd`.
+    //
+    // `scan` rather than `path` because there is no id to template with, and
+    // the directory is DATE-partitioned, which is what makes the scan cheap:
+    // ~/.codex/sessions holds 25.9k files / 510MB on a working machine, so a
+    // recursive walk costs ~210ms — untenable on a 500ms ask poll — while
+    // today's directory holds a handful and costs ~1ms.
+    transcript: {
+      via: "scan",
+      dirTemplate: `${HOME}/.codex/sessions/{YYYY}/{MM}/{DD}`,
+      filePrefix: "rollout-",
+    },
+    // payload.type on event_msg rows. `blocked` is empty: no approval event
+    // was observed in WT-4's run, so that axis stays with agent_status.
+    terminal: { done: ["task_complete"], blocked: [], running: ["task_started"] },
+  },
+  // copilot: spawnable, but its store's turn format is unverified (WT-5 ran
+  // but could not clear the first-run trust gate). No `transcript` key =
+  // status tier.
   { kind: "copilot", settleMs: 2500 },
 ];
 
