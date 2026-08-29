@@ -129,24 +129,43 @@ missing endpoints/SDK/UI, not missing reachability):
     `unrecognized` field — `classifySession` is fully unit-tested, the
     HTTP wiring is not.
 
-26. **Publish the SDK — it is not installable.** All three library
-    packages (`@jefelabs/herdr-broker-client`, `-react`, `-ui`) sit at
-    0.1.0, unpublished, while `herdr-plugin.toml`'s own description
-    sells "TypeScript SDK and React packages". Anyone building a client
-    today must vendor the source or take a git dependency on an
-    unpublished 0.1.0. For a project whose differentiator over
-    herdr-remote/mirror/mobile-relay is "an API, not an app", the API's
-    client being unreachable is the single largest adoption barrier —
-    and unlike the rest of this list it is not a design question, it is
-    an unpushed button. Everything needed already exists:
-    `.github/workflows/release.yml` publishes all three on a `v*` tag
-    with `--access public --provenance`, and its own header documents
-    the one-time setup (add an npm automation token as the `NPM_TOKEN`
-    secret). Note the workflow covers THREE packages, not the two the
-    description advertises — `-ui` ships too. Do this before item 25's
-    API-versioning window closes for real: `/v1` aliases are cheap to
-    keep while the only caller is this repo, and become a compatibility
-    obligation the moment someone installs from the registry.
+26. ~~**Publish the SDK — it is not installable.**~~ Done for 0.2.0
+    (2026-08-28); the AUTOMATED path is not. All FOUR library packages
+    are live on npm, public, at `latest` — `@jefelabs/herdr-broker-client`,
+    `-react`, `-ui`, and `-module`, which joined in bae7fd5 after this
+    item was written and which the original text therefore undercounts
+    as three. Installability was verified from a clean directory rather
+    than assumed: the four resolve, `-react`/`-ui` dedupe to a single
+    `-client`, every entry point and subpath (`/events`, `/types`,
+    `/styles.css`) imports, and a consumer `tsc` under `nodenext` with
+    `skipLibCheck: false` exits clean. The adoption barrier this item
+    names is gone.
+
+    What remains is the unpushed button itself. `NPM_TOKEN` now exists
+    but is not a token that bypasses 2FA, and the two tag-triggered
+    runs died for two different reasons — 2026-08-22 `ENEEDAUTH` (no
+    secret yet), 2026-08-28 `EOTP` (secret present, provenance signed,
+    then refused for want of a one-time password). 0.2.0 consequently
+    went out by hand and carries NO provenance attestations, the one
+    thing release.yml exists to add. The local path has since begun
+    demanding an OTP as well, so it needs a maintainer at a TTY to
+    complete npm's browser auth; 0.3.0 is committed (version bump plus
+    the module-ABI denylist correction) and sits unpublished for exactly
+    that reason. Closing this for real is one act: an npm Automation or
+    granular access token in the secret, after which a tag is the whole
+    release.
+
+    Both publish paths are now preflighted (b5347c5). Every version is
+    checked against the registry — origin reads, not the CDN, which lies
+    for a minute after a publish — before the first package ships, so a
+    taken version aborts the run instead of publishing half the set and
+    stranding the rest behind a version number npm will never re-issue.
+
+    This item's own `/v1` warning has come true rather than expired: the
+    aliases stopped being cheap the moment 0.2.0 became installable, and
+    are now a compatibility obligation to real consumers. (The original
+    text cross-referenced this as "item 25's API-versioning window";
+    that numbering is stale — the prefix landed in 78c77b2.)
 
 27. **Spawn readiness — prove the shell is at its prompt, don't guess.**
     Spec: `docs/superpowers/specs/2026-08-28-spawn-readiness-design.md`.
