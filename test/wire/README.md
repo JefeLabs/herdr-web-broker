@@ -55,6 +55,20 @@ The tell in both cases was in the assertion output: `actual: ''` is not
 taking a measurement. When a probe goes red, rule out the probe before
 recording anything about herdr.
 
+A probe can also answer CORRECTLY and have its answer misapplied, which is
+the same failure one step later. WT-7 asked whether `pane.wait_for_output`
+matches the pane's own echoed input; the answer is yes, it is recorded
+correctly above, and roadmap 27's spawn-readiness sentinel was built by
+reading that yes as confirmation of its design — "when it echoes, the shell is
+provably at its prompt". It is not. An echo proves the PTY accepted bytes,
+which a cold pane does perfectly well; only OUTPUT proves a shell executed
+anything. The shipped sentinel therefore matched its own echo and reported
+cold panes ready, and the 3ms it appeared to take should have been read as
+impossible rather than as headroom. Fixed 2026-08-29 by shaping the marker so
+it cannot appear in its own command. When a probe's answer is used to justify
+a design, check that the answer supports the CLAIM and not merely the
+sentence.
+
 The rule is not confined to this directory. `test/backend-contract.test.ts`
 extracts the herdr method surface from `src/`, and its first version scanned
 400 characters forward from each `.request(` and took the first dotted string

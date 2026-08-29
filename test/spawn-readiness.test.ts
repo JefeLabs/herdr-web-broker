@@ -20,10 +20,29 @@ function stub(answer: (method: string) => Promise<unknown>) {
 
 const ok = () => Promise.resolve({});
 
-test("the sentinel waits for the exact string it sends", () => {
+test("the marker must NOT appear verbatim in the command that produces it", () => {
+  // This assertion is inverted from the one it replaces, which read
+  // `assert.ok(s.text.includes(s.match))` and pinned the bug in place as a
+  // requirement. An obvious-looking consistency check — of course the command
+  // contains what you wait for — and it is exactly what made the sentinel
+  // match its own echo, so it proved delivery instead of execution.
   const s = readinessSentinel();
-  assert.ok(s.text.includes(s.match), "the command must contain the string awaited");
+  assert.ok(
+    !s.text.includes(s.match),
+    `the command must not contain the awaited marker, or pane.wait_for_output fires on the ECHO ` +
+      `(WT-7) and reports a cold pane ready: ${s.text} / ${s.match}`,
+  );
   assert.match(s.text, /^printf /, "a printf is shell-agnostic — no prompt pattern, no shell detection");
+});
+
+test("the sentinel's OUTPUT is the marker, even though its text is not", () => {
+  // The property the inverted assertion above must not lose: printf still has
+  // to produce exactly what is awaited. Verified by joining the way printf
+  // joins %s%s rather than by trusting the format string.
+  const s = readinessSentinel();
+  const args = /^printf '%s%s\\n' (\S+) (\S+)$/.exec(s.text);
+  assert.ok(args, `unexpected sentinel shape: ${s.text}`);
+  assert.equal(args[1] + args[2], s.match, "printf joins its two arguments into the awaited marker");
 });
 
 test("two sentinels never collide", () => {
@@ -35,14 +54,20 @@ test("two sentinels never collide", () => {
   assert.notEqual(a.match, b.match);
 });
 
-test("a shell that echoes the sentinel reports ready", async () => {
+test("a shell that OUTPUTS the sentinel reports ready", async () => {
   const { deps, calls } = stub(ok);
   const ready = await awaitShellReady(deps, "default", "w1:p1");
   assert.equal(ready, true);
   assert.deepEqual(calls.map((c) => c.method), ["pane.send_input", "pane.wait_for_output"]);
+
   const sent = String(calls[0].params.text);
   const awaited = (calls[1].params.match as { value: string }).value;
-  assert.ok(sent.includes(awaited), "sends and awaits the same marker");
+  // The relationship that matters, and it is the OPPOSITE of the obvious one:
+  // what is awaited must be absent from what is typed, or the wait resolves on
+  // the echo and reports a cold pane ready.
+  assert.ok(!sent.includes(awaited), `awaited marker must not appear in the sent text: ${sent}`);
+  const args = /printf '%s%s\\n' (\S+) (\S+)$/.exec(sent);
+  assert.ok(args && args[1] + args[2] === awaited, `sent command must OUTPUT the awaited marker: ${sent}`);
 });
 
 test("a sentinel that never echoes degrades instead of throwing", async () => {
@@ -75,7 +100,7 @@ test("a prefix is sent ahead of the sentinel, on one line, in order", async () =
   assert.equal(s, true);
   const text = String(calls[0].params.text);
   assert.ok(text.startsWith(" . /tmp/drop; rm -f /tmp/drop;"), `prefix must lead: ${text}`);
-  assert.match(text, /printf '__herdr_ready_[0-9a-f]+__/);
+  assert.match(text, /printf '%s%s\\n' __herdr_ready_ [0-9a-f]+$/);
   assert.ok(
     text.indexOf("rm -f") < text.indexOf("printf"),
     "the shell runs these sequentially, so the sentinel cannot echo before the env is sourced",

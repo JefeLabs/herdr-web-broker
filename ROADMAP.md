@@ -272,11 +272,31 @@ missing endpoints/SDK/UI, not missing reachability):
     floor. 15 tests: 10 on the pure policy, 5 driving it through
     `broker.agent.spawn` against FakeHerdr (order, degrade-on-timeout, the
     composed env line, mode B, marker uniqueness).
-    MEASURED live on herdr 0.8.2: five fresh panes proved ready in 2–5ms
-    (mean 3ms, 5/5) — ~1000× headroom on the default timeout and ~800×
-    cheaper than the up-to-4s retry it displaces, so the "adds a round trip"
-    risk resolved in the design's favour. All four of the spec's open
-    questions are now closed in the spec itself.
+    **CORRECTED 2026-08-29 — the first version did not work, and the
+    measurement that appeared to prove it was measuring the wrong thing.**
+    `readinessSentinel` built `printf '<marker>\n'`, putting the marker
+    verbatim inside the command being typed. WT-7 had established that
+    `pane.wait_for_output` matches the pane's OWN ECHO, so the wait fired on
+    DELIVERY, not execution: `awaitShellReady` returned true against a cold
+    pane and `agent.start` then raced exactly the window this item exists to
+    close. The "2–5ms, mean 3ms" recorded here was the echo round trip — a
+    figure that should have read as impossible for a login shell reaching its
+    prompt, and instead read as a triumph.
+    Fixed by shaping the marker so it CANNOT appear in its own command:
+    `printf '%s%s\n' __herdr_ready_ <id>` echoes with a space and outputs
+    joined, so matching the joined form can only be satisfied by execution.
+    Measured on cold panes, A/B on the same lifecycle: old shape matched in
+    ~106ms and `agent.start` immediately after failed `agent_pane_busy`; new
+    shape matched in ~520ms and `agent.start` succeeded, 4/4. So real
+    cold-shell readiness is ~525ms, still an order of magnitude under the
+    5000ms timeout and well under the up-to-4s retry it displaces.
+    The root error was not the code. The spec reasoned "when it echoes, the
+    shell is provably at its prompt", and WT-7's answer — yes, it matches the
+    echo — was read as CONFIRMING that when it is precisely what breaks it. A
+    probe answered its question correctly and the answer was misapplied; see
+    test/wire/README.md. Found by the smithagents session, reproduced here
+    before fixing. No unit test could have caught it: FakeHerdr does not model
+    echo-versus-output, so the regression guard has to be a wire test.
     Spec: `docs/superpowers/specs/2026-08-28-spawn-readiness-design.md`.
     `spawn()` creates a pane and calls `agent.start` almost immediately;
     on a cold pane whose login shell has not reached its prompt herdr

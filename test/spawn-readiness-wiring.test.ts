@@ -15,7 +15,9 @@ import { scratchRepo } from "./util.js";
  * The shared harness sets `readinessTimeoutMs: 0`, so each test here opts back
  * in explicitly. */
 
-const SENTINEL = /printf '__herdr_ready_[0-9a-f]{12}__/;
+// The sentinel's OUTPUT is the marker; its TEXT deliberately is not, so that
+// pane.wait_for_output cannot resolve on the echo (see readinessSentinel).
+const SENTINEL = /printf '%s%s\\n' __herdr_ready_ [0-9a-f]{12}/;
 
 test("spawn sends a readiness sentinel before agent.start", async () => {
   const t = await setup();
@@ -88,7 +90,7 @@ test("the env drop line carries source, delete AND sentinel, in that order", asy
     const sends = t.fake.received.filter((r) => r.method === "pane.send_input");
     assert.equal(sends.length, 1, "env + readiness share ONE send, not two");
     const text = String((sends[0].params as { text?: string }).text);
-    assert.match(text, /^ \. \S+; rm -f \S+; printf '__herdr_ready_/, `composed line was: ${text}`);
+    assert.match(text, /^ \. \S+; rm -f \S+; printf '%s%s/, `composed line was: ${text}`);
     assert.ok(text.indexOf("rm -f") < text.indexOf("printf"), "sentinel must come last");
   } finally {
     await t.teardown();
@@ -144,7 +146,7 @@ test("two spawns into one workspace use different markers", async () => {
 
     const markers = t.fake.received
       .filter((r) => r.method === "pane.send_input")
-      .map((r) => /__herdr_ready_([0-9a-f]{12})__/.exec(String((r.params as { text?: string }).text))?.[1]);
+      .map((r) => /__herdr_ready_ ([0-9a-f]{12})/.exec(String((r.params as { text?: string }).text))?.[1]);
     assert.equal(markers.length, 2);
     assert.notEqual(markers[0], markers[1]);
   } finally {

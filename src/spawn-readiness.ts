@@ -9,15 +9,18 @@ import { randomUUID } from "node:crypto";
  * means paying up to ~4s of timeout on every cold pane instead of asking a
  * question.
  *
- * The question is askable. Push a sentinel through the PTY and wait for it to
- * come back: when it echoes, the shell is provably at its prompt AND executing
- * commands. No prompt-pattern matching, no shell detection, no fixed sleep —
- * it works the same for zsh, bash, fish and any prompt framework, because it
- * tests the property that matters rather than a proxy for it.
+ * The question is askable. Push a sentinel through the PTY and wait for its
+ * OUTPUT to come back. No prompt-pattern matching, no shell detection, no
+ * fixed sleep — it works the same for zsh, bash, fish and any prompt
+ * framework, because it tests the property that matters rather than a proxy.
  *
- * WT-7 (2026-08-29, live herdr 0.8.2) established the fact this rests on:
- * `pane.wait_for_output` matches the pane's OWN echoed input, returning
- * `matched_line` as the echoed command itself, on `visible` AND `recent`. */
+ * OUTPUT, not echo, and the distinction is the whole design. WT-7 established
+ * that `pane.wait_for_output` matches the pane's OWN ECHOED INPUT — and the
+ * first version of this read that answer as CONFIRMING the design when it is
+ * precisely what breaks it. An echo proves the PTY accepted bytes; a cold pane
+ * echoes perfectly well. Only output proves a shell ran something. See
+ * readinessSentinel for how the marker is shaped so the two cannot be
+ * confused, and test/wire/README.md for the general form of that mistake. */
 
 /** Just the LocalHerdr surface this needs, so the policy is testable with a
  * stub instead of a daemon. `OpsDeps` satisfies it structurally. */
@@ -53,8 +56,21 @@ const DEFAULT_TIMEOUT_MS = 5000;
  * exactly the path that is hardest to test. */
 export function readinessSentinel(): { text: string; match: string } {
   const id = randomUUID().replaceAll("-", "").slice(0, 12);
-  const match = `__herdr_ready_${id}__`;
-  return { text: `printf '${match}\\n'`, match };
+  // The marker must NOT appear verbatim in the command that produces it.
+  //
+  // WT-7 established that pane.wait_for_output matches the pane's OWN ECHOED
+  // INPUT. The first version of this built `printf '<marker>\n'`, so the
+  // marker sat inside the text being typed and the wait fired on the ECHO —
+  // proving only that the PTY accepted bytes, which a cold pane does fine.
+  // Measured on cold panes: that shape matched in ~106ms and agent.start
+  // immediately after failed agent_pane_busy, i.e. the sentinel returned
+  // ready against exactly the race it exists to close.
+  //
+  // printf's own argument joining is the fix. The ECHO keeps the space
+  // between `__herdr_ready_` and the id; the OUTPUT joins them. So matching
+  // the joined form can only be satisfied by execution. Same measurement:
+  // ~518ms, and agent.start then succeeds.
+  return { text: `printf '%s%s\\n' __herdr_ready_ ${id}`, match: `__herdr_ready_${id}` };
 }
 
 /** Send the sentinel (optionally behind `prefix`) and wait for its echo.
