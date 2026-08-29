@@ -40,6 +40,13 @@ jobs:
       - name: module types build
         run: npm run build -w packages/module
 
+      # Refuse to publish anything if ANY of the four versions is already on
+      # the registry. Without this, a taken version fails midway and leaves a
+      # half-released tag behind — and npm never lets a version be re-used, so
+      # the only recovery is a bump. Fail before the first publish instead.
+      - name: release preflight
+        run: node scripts/release.mjs --check-only
+
       # module is standalone (types only) so it goes first; the rest are
       # in dependency order client → react → ui, each already built above
       - name: publish @jefelabs/herdr-broker-module

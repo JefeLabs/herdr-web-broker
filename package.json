@@ -12,8 +12,10 @@
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "test": "npm run build && node --test 'dist/test/**/*.test.js'",
-    "release:local": "npm run build && npm publish -w packages/module --access public && npm publish -w packages/client --access public && npm publish -w packages/react --access public && npm publish -w packages/ui --access public"
+    "test": "npm run build && node --test 'dist/test/**/*.test.js' && npm run test:scripts",
+    "test:scripts": "node --test 'scripts/*.test.mjs'",
+    "release:check": "node scripts/release.mjs --check-only",
+    "release:local": "npm run build && node scripts/release.mjs"
   },
   "dependencies": {
     "smol-toml": "^1.3.1",
