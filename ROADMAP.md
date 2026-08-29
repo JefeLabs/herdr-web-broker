@@ -160,10 +160,22 @@ missing endpoints/SDK/UI, not missing reachability):
     discovery, and `cli-profiles.ts`'s agy profile keeps no `pin` entry.
     Two agy agents in one cwd remain ambiguous by construction; the
     probe now pins that answer and goes red only if agy starts minting.
-    (e) **`opencode`'s `terminal.done` is dead config.** `parseOpencode`
-    keys off the presence of `time.completed` and never reads its
-    `profile`, so a `[[cli.profiles]]` override of that vocabulary
-    silently no-ops — unlike `claude`/`agy`, where it takes effect.
+    (e) ~~**`opencode`'s `terminal.done` is dead config.**~~ **Done
+    2026-08-29.** `parseOpencode` keyed off the presence of
+    `time.completed` and never took a `profile` argument at all, so a
+    `[[cli.profiles]]` override of that vocabulary silently no-opped —
+    unlike `claude`/`agy`, where the same block is live. The builtin made
+    it worse than dead by DECLARING `done: ["completed"]`, which reads
+    like live config but names the FIELD (`time.completed`) rather than
+    anything the parser branches on. Completion here is structural, so
+    the one real vocabulary is the ROLE: `done` now names which roles'
+    completed rows settle a turn, defaulting to `["assistant"]` when a
+    profile omits `terminal` so a bare profile keeps builtin behavior.
+    The builtin is corrected to `["assistant"]`. 3 tests: an override
+    widening `done` to `user` takes effect, narrowing it to `[]` withholds
+    done from an assistant row that would otherwise report it (the
+    complement — proving the set is consulted rather than merely present),
+    and a profile with no `terminal` block still resolves done.
     (f) **`transcript.ts` mixes layers.** It holds the pure parsers, the
     pure `decideTurn` tier, AND fs/sqlite I/O, against the spec's "all
     I/O stays in thin shells". A `transcript-resolve.ts` split would

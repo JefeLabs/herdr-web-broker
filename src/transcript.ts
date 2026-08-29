@@ -121,16 +121,27 @@ function parseAgy(text: string, profile: CliProfile): TranscriptState | null {
  * a `user` row means the prompt landed and no reply exists yet, an
  * `assistant` row without `completed` is mid-generation.
  *
+ * Completion itself is STRUCTURAL — the presence of `time.completed`, not a
+ * vocabulary word — so `terminal.done` names which ROLES' completed rows
+ * settle a turn. That is the one vocabulary this parser branches on, and
+ * wiring it here is roadmap 25(e): the block used to be read by claude and
+ * agy but ignored entirely here, so a `[[cli.profiles]]` override silently
+ * no-opped on exactly one of the three.
+ *
  * Never returns "blocked": opencode has no live pending-approval store, so
  * that axis stays with agent_status. decideTurn needs no special case for
  * this — a state this parser never emits is a state it never overrides. */
-function parseOpencode(text: string): TranscriptState | null {
+function parseOpencode(text: string, profile: CliProfile): TranscriptState | null {
   const d = JSON.parse(text) as { role?: string; time?: { created?: number; completed?: number } };
   const created = typeof d.time?.created === "number" ? d.time.created : undefined;
   const completed = typeof d.time?.completed === "number" ? d.time.completed : undefined;
   const lastRecordAt = completed ?? created;
   if (lastRecordAt === undefined) return null;
-  if (d.role === "assistant" && completed !== undefined) return { state: "done", lastRecordAt };
+  // Defaulted, not required: `terminal` is optional on the type, and a
+  // profile that omits it must keep the built-in behavior rather than lose
+  // `done` entirely.
+  const doneRoles = new Set(profile.terminal?.done ?? ["assistant"]);
+  if (completed !== undefined && doneRoles.has(String(d.role ?? ""))) return { state: "done", lastRecordAt };
   return { state: "working", lastRecordAt };
 }
 

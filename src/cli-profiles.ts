@@ -81,11 +81,16 @@ const BUILTIN: Array<Omit<CliProfile, "source">> = [
         "SELECT m.data AS data FROM message m JOIN session s ON s.id = m.session_id" +
         " WHERE s.directory = ? ORDER BY m.time_created DESC LIMIT 1",
     },
-    // opencode marks completion by presence of time.completed, not by a
-    // vocabulary word. `blocked` is deliberately empty: its `permission`
-    // table is a project-scoped grant ledger, not a pending-approval queue,
-    // so blocked continues to come from agent_status.
-    terminal: { done: ["completed"], blocked: [], running: [] },
+    // Completion is STRUCTURAL for opencode — the presence of
+    // time.completed, not a vocabulary word — so `done` names the ROLES
+    // whose completed rows settle a turn. It previously read
+    // `done: ["completed"]`, which named the FIELD and looked like live
+    // config while parseOpencode ignored the block entirely (roadmap 25(e)).
+    // `blocked` is deliberately empty: opencode's `permission` table is a
+    // project-scoped grant ledger, not a pending-approval queue, so blocked
+    // continues to come from agent_status; `running` has no vocabulary here
+    // either, since anything not done is working.
+    terminal: { done: ["assistant"], blocked: [], running: [] },
     settleMs: 2500,
   },
   // codex + copilot: installed and spawnable, but their transcript formats

@@ -86,3 +86,45 @@ test("decodeBytesRead: a full read is unaffected", () => {
   const buf = Buffer.from("hello", "utf8");
   assert.equal(decodeBytesRead(buf, buf.length), "hello");
 });
+
+test("opencode: a [[cli.profiles]] terminal.done override actually takes effect", () => {
+  // Roadmap 25(e). parseOpencode ignored its profile entirely, so this
+  // override silently no-opped — unlike claude/agy, where the same block is
+  // live. The builtin also DECLARED done: ["completed"], which reads like
+  // live config but named a FIELD (time.completed), not the vocabulary word
+  // the parser branches on. Both halves were misleading.
+  const overridden = new CliProfiles({
+    profiles: [
+      {
+        kind: "opencode",
+        // an operator deciding that a completed USER row also settles a turn
+        terminal: { done: ["assistant", "user"], blocked: [], running: [] },
+      },
+    ],
+  }).get("opencode")!;
+  const userDone = '{"role":"user","time":{"created":1000,"completed":2000}}';
+  assert.deepEqual(
+    parseTranscript("opencode", userDone, overridden),
+    { state: "done", lastRecordAt: 2000 },
+    "the override must reach the parser",
+  );
+  // and the default still behaves exactly as before
+  assert.equal(parseTranscript("opencode", userDone, P.get("opencode")!)?.state, "working");
+});
+
+test("opencode: narrowing terminal.done can withhold done, proving the set is consulted", () => {
+  // The complement of the test above: if `done` were still ignored, an
+  // assistant row with time.completed would report done regardless.
+  const narrowed = new CliProfiles({
+    profiles: [{ kind: "opencode", terminal: { done: [], blocked: [], running: [] } }],
+  }).get("opencode")!;
+  const assistantDone = '{"role":"assistant","time":{"created":1000,"completed":2000}}';
+  assert.equal(parseTranscript("opencode", assistantDone, narrowed)?.state, "working");
+});
+
+test("opencode: a profile with no terminal block still resolves done for assistant", () => {
+  // terminal is optional on the type; the parser must not lose its default.
+  const bare = { kind: "opencode" } as unknown as Parameters<typeof parseTranscript>[2];
+  const assistantDone = '{"role":"assistant","time":{"created":1000,"completed":2000}}';
+  assert.equal(parseTranscript("opencode", assistantDone, bare)?.state, "done");
+});
