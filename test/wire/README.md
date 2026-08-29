@@ -55,6 +55,19 @@ The tell in both cases was in the assertion output: `actual: ''` is not
 taking a measurement. When a probe goes red, rule out the probe before
 recording anything about herdr.
 
+The rule is not confined to this directory. `test/backend-contract.test.ts`
+extracts the herdr method surface from `src/`, and its first version scanned
+400 characters forward from each `.request(` and took the first dotted string
+literal — which attributes a decoy to any of the five call sites that pass the
+method as a variable, in a tree containing `herdr.sock`, `audit.log`,
+`git.read` and `auth.self_kick`. It was clean by luck of surrounding text, not
+by construction, and the failure it was one edit away from is the familiar
+one: a red test confidently instructing someone to document a method that does
+not exist. Found by the smithagents session reviewing this repo, fixed in
+64ecb45 — only an immediate literal counts now, so a dynamic site contributes
+nothing rather than noise. Any test that DERIVES a fact rather than asserting
+one is an instrument, and gets read with the same suspicion.
+
 Both are fixed, and `paste.wire.ts` now arms WT-7's sentinel before sending,
 so it no longer races the cold-shell window roadmap 27 exists to close.
 Once a question is ANSWERED its probe's assertion is inverted to pin the
