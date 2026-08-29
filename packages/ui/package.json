@@ -1,6 +1,6 @@
 {
   "name": "@jefelabs/herdr-broker-ui",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Default plain-CSS React components for herdr-web-broker: AuthGate, PaneViewer, WorkspaceBrowser, EventsPanel, SessionBar \u2014 markup-only skins over @jefelabs/herdr-broker-react",
   "keywords": [
     "herdr",
@@ -36,8 +36,8 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@jefelabs/herdr-broker-client": "^0.2.0",
-    "@jefelabs/herdr-broker-react": "^0.2.0"
+    "@jefelabs/herdr-broker-client": "^0.3.0",
+    "@jefelabs/herdr-broker-react": "^0.3.0"
   },
   "peerDependencies": {
     "react": "^19.0.0"
