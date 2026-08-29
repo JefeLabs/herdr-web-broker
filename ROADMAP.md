@@ -218,11 +218,28 @@ missing endpoints/SDK/UI, not missing reachability):
     went out by hand and carries NO provenance attestations, the one
     thing release.yml exists to add. The local path has since begun
     demanding an OTP as well, so it needs a maintainer at a TTY to
-    complete npm's browser auth; 0.3.0 is committed (version bump plus
-    the module-ABI denylist correction) and sits unpublished for exactly
-    that reason. Closing this for real is one act: an npm Automation or
-    granular access token in the secret, after which a tag is the whole
-    release.
+    complete npm's browser auth. 0.3.0 shipped that way on 2026-08-29 —
+    all four packages live, verified against the registry ORIGIN rather
+    than the CDN, and the published module ABI confirmed to carry the
+    allowlist correction rather than the removed denylist text it had
+    been advertising.
+
+    **Interactive OAuth is the decision for now (2026-08-29), not an
+    outstanding task.** Note precisely what is manual: the AUTH, not the
+    publish. `release:local` still does the publishing — preflighting
+    every version against the registry origin, then publishing in
+    dependency order — and what a human supplies is npm's OAuth browser
+    round trip instead of a stored credential. An Automation or granular
+    token in `NPM_TOKEN` would replace that round trip and make a tag the
+    whole release. The accepted costs are that published versions carry
+    no provenance attestations, and that a release needs a maintainer at
+    a terminal. Revisit when provenance matters to a consumer, or when
+    releasing outgrows one pair of hands.
+
+    There is a security argument for the current arrangement, not only
+    convenience: no long-lived publish credential exists to leak. The
+    token that would remove the round trip is exactly the token that,
+    once stored in CI, can publish without a human.
 
     Both publish paths are now preflighted (b5347c5). Every version is
     checked against the registry — origin reads, not the CDN, which lies
