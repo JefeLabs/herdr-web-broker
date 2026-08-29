@@ -180,9 +180,23 @@ missing endpoints/SDK/UI, not missing reachability):
     pure `decideTurn` tier, AND fs/sqlite I/O, against the spec's "all
     I/O stays in thin shells". A `transcript-resolve.ts` split would
     honor that; not worth churning while the format work is still live.
-    (g) **No integration test** covers `GET .../orphans` or teardown's
-    `unrecognized` field — `classifySession` is fully unit-tested, the
-    HTTP wiring is not.
+    (g) ~~**No integration test** covers `GET .../orphans` or teardown's
+    `unrecognized` field.~~ **Done 2026-08-29.** `classifySession` was
+    fully unit-tested; the HTTP wiring was not. Two tests now cover it.
+    The orphans route asserts all three buckets from one fixture — a
+    workspace both indexed and live (`adopt`), one indexed that herdr no
+    longer lists (`forget`), and one live the broker never indexed
+    (`orphans`). The teardown test asserts `unrecognized` is only the
+    un-indexed workspace AND that it is still closed (report-never-reap:
+    the herdr process dies immediately after either way, so declining to
+    close would only turn a graceful close into an abrupt kill).
+    That first assertion doubles as an ORDERING guard for 25(a), which
+    added `index.removeSession` to the end of the same function:
+    `unrecognized` is computed against the PRE-teardown index, so
+    clearing it any earlier would make every live workspace read as
+    unrecognized. Both tests were mutation-checked — they passed on
+    first run, as a coverage gap should, so each was confirmed against a
+    deliberately broken implementation.
 
 26. ~~**Publish the SDK — it is not installable.**~~ Done for 0.2.0
     (2026-08-28); the AUTOMATED path is not. All FOUR library packages

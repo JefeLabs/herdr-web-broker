@@ -1420,3 +1420,71 @@ test("GET agents?evidence=1 on a FEDERATED instance omits evidence rather than c
     await teardown(t);
   }
 });
+
+test("GET .../orphans wires classifySession to the HTTP surface", async () => {
+  // Roadmap 25(g). classifySession is fully unit-tested; this is the wiring —
+  // that the route reaches it, feeds it herdr's live list and the broker's
+  // index in the right order, and returns all three buckets.
+  const t = await setup();
+  try {
+    t.ops.index.set("default", "w1", { cwd: "/work/known-and-live" });
+    t.ops.index.set("default", "w2", { cwd: "/work/known-but-gone" });
+    t.fake.handlers.set("workspace.list", () => ({
+      type: "workspace_list",
+      workspaces: [{ workspace_id: "w1", cwd: "/work/known-and-live" }, { workspace_id: "w3", cwd: "/work/never-indexed" }],
+    }));
+
+    const body = (await (await t.authed("/instances/runtime/sessions/default/orphans")).json()) as {
+      session: string;
+      adopt: string[];
+      forget: string[];
+      orphans: string[];
+    };
+    assert.equal(body.session, "default");
+    assert.deepEqual(body.adopt, ["w1"], "indexed AND live");
+    assert.deepEqual(body.forget, ["w2"], "indexed but herdr no longer lists it");
+    assert.deepEqual(body.orphans, ["w3"], "live but the broker never indexed it");
+  } finally {
+    await teardown(t);
+  }
+});
+
+test("teardown reports unrecognized workspaces, and still closes them", async () => {
+  // Two things at once. The `unrecognized` field is the orphans bucket
+  // computed against the PRE-teardown index — if the index were cleared
+  // before classifySession ran, `known` would be empty and EVERY live
+  // workspace would read as unrecognized. 25(a) added that clear to the end
+  // of this same function, so this assertion is the ordering guard.
+  //
+  // And report-never-reap: an unrecognized workspace is still closed, because
+  // the herdr process dies immediately after regardless — declining to close
+  // it would only turn a graceful close into an abrupt kill.
+  const t = await setup({ ownership: true });
+  try {
+    const auth = await t.authed("/auth", { method: "POST", body: JSON.stringify({ email: "nadia@example.com" }) });
+    const { session } = (await auth.json()) as { session: string };
+    const owned = t.provisionedFakes.get(session)!;
+    const closed: string[] = [];
+    owned.handlers.set("workspace.list", () => ({
+      type: "workspace_list",
+      workspaces: [{ workspace_id: "w9" }, { workspace_id: "w5" }],
+    }));
+    owned.handlers.set("workspace.close", (p) => {
+      closed.push(String((p as { workspace_id?: string })?.workspace_id));
+      return { type: "workspace_closed" };
+    });
+    // the broker knows about w9 only; w5 is live but was never indexed
+    t.ops.index.set(session, "w9", { cwd: "/work/known" });
+
+    const down = await t.authed(`/instances/runtime/sessions/${session}`, { method: "DELETE" });
+    assert.equal(down.status, 200);
+    const body = (await down.json()) as { unrecognized: string[]; workspaces_closed: number };
+
+    assert.deepEqual(body.unrecognized, ["w5"], "only the un-indexed one — not every live workspace");
+    assert.equal(body.workspaces_closed, 2, "report-never-reap: unrecognized still gets closed");
+    assert.deepEqual(closed.sort(), ["w5", "w9"]);
+  } finally {
+    await teardown(t);
+    for (const fh of t.provisionedFakes.values()) await fh.close();
+  }
+});
