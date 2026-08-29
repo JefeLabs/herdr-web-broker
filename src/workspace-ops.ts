@@ -368,8 +368,27 @@ async function herdrWorkspaces(deps: OpsDeps, session: string): Promise<Map<stri
   return out;
 }
 
+/** The ONE cwd lookup, shared by every caller: herdr's own view first, the
+ * broker's index as fallback.
+ *
+ * Non-throwing on purpose (roadmap 25(b)). `wait` and `ask` used to resolve
+ * differently — ask through resolveCwd, wait by reading the index directly —
+ * so on a mode-C worktree spawn, where the index deliberately holds the
+ * CHECKOUT path while herdr reports its own, the two produced different
+ * `cwdSlug`s and therefore two different transcript paths for ONE pane. It
+ * degraded safely (wrong slug -> no file -> status tier), which is exactly
+ * why it went unnoticed.
+ *
+ * `wait` could not simply adopt resolveCwd, because throwing
+ * `unknown_workspace` would turn a currently-succeeding wait into an error.
+ * So the shared part returns undefined and each caller keeps its own failure
+ * mode: resolveCwd throws, wait treats it as "no transcript tier". */
+async function lookupCwd(deps: OpsDeps, session: string, workspaceId: string): Promise<string | undefined> {
+  return (await herdrWorkspaces(deps, session)).get(workspaceId)?.cwd ?? deps.index.get(session, workspaceId)?.cwd;
+}
+
 async function resolveCwd(deps: OpsDeps, session: string, workspaceId: string): Promise<string> {
-  const cwd = (await herdrWorkspaces(deps, session)).get(workspaceId)?.cwd ?? deps.index.get(session, workspaceId)?.cwd;
+  const cwd = await lookupCwd(deps, session, workspaceId);
   if (!cwd) {
     throw new BrokerError(
       "unknown_workspace",
@@ -759,7 +778,10 @@ async function waitAgent(deps: OpsDeps, session: string, p: Record<string, unkno
     const raw = String(r?.agent?.agent_status ?? "unknown");
     const meta = deps.agents.get(session, pane);
     const profile = meta ? deps.profiles.get(meta.kind) : undefined;
-    const cwd = deps.index.get(session, pane.split(":")[0])?.cwd;
+    // The same lookup ask uses — herdr's view first, index as fallback — so
+    // one pane cannot yield two transcript paths. Non-throwing: an
+    // unresolvable cwd just means no transcript tier for this wait.
+    const cwd = await lookupCwd(deps, session, pane.split(":")[0]);
     const t = meta && profile && cwd ? readTurnState(profile, meta, cwd, undefined, deps.stateDir) : null;
     const d = decideTurn(t, { status: foldStatus(raw), raw_status: raw }, requestedAt);
     return { waited: true, status: d.status, raw_status: d.raw_status, evidence: d.evidence, pane_id: pane };

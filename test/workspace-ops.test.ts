@@ -6,6 +6,7 @@ import { EnvRegistry } from "../src/env-registry.js";
 import { BrokerError } from "../src/errors.js";
 import { ModelRegistry } from "../src/model-registry.js";
 import { CliProfiles } from "../src/cli-profiles.js";
+import { claudeCwdSlug } from "../src/transcript.js";
 import { isBrokerMethod, runBrokerMethod } from "../src/workspace-ops.js";
 import { FakeHerdr, FakeHerdrError } from "./fake-herdr.js";
 import { setup } from "./ops-harness.js";
@@ -1780,6 +1781,87 @@ test("spawn: a pane that renders ready then goes unready within the settle windo
     );
     assert.ok(calls >= 2, "must have sampled at least twice to observe the drop");
     assert.equal(t.deps.agents.get("default", "w9:p1"), undefined, "no orphan row for a pane that never survived its settle window");
+  } finally {
+    await t.teardown();
+  }
+});
+
+test("broker.agent.wait resolves cwd the way ask does — herdr's view wins over the index", async () => {
+  // Roadmap 25(b). ask went through resolveCwd (herdr's cwd, index as
+  // fallback); wait read the index directly. On a mode-C worktree spawn the
+  // index deliberately holds the CHECKOUT path, so the two could disagree and
+  // produce different cwdSlugs — two different transcript paths for ONE pane.
+  // It degraded safely (wrong slug -> no file -> status tier), which is why
+  // it shipped, and also why nothing caught it.
+  const t = await setup();
+  try {
+    const dir = join(tmpDir(), "claude-transcripts");
+    const HERDR_CWD = "/work/from-herdr";
+    const INDEX_CWD = "/work/from-index";
+    mkdirSync(join(dir, claudeCwdSlug(HERDR_CWD)), { recursive: true });
+    t.deps.profiles = new CliProfiles({
+      profiles: [
+        {
+          kind: "claude",
+          pin: { flag: "--session-id" },
+          // the cwd is now IN the path, so which resolver won is observable
+          transcript: { via: "path", template: join(dir, "{cwdSlug}", "{sessionId}.jsonl") },
+          terminal: CLAUDE_TERMINAL,
+        },
+      ],
+    });
+    t.fake.agents.push({ pane_id: "w7:p1", name: "claude-a", agent: "claude", agent_status: "working" });
+    t.fake.handlers.set("workspace.list", () => ({
+      type: "workspace_list",
+      workspaces: [{ workspace_id: "w7", cwd: HERDR_CWD }],
+    }));
+    t.deps.index.set("default", "w7", { cwd: INDEX_CWD });
+    t.deps.agents.set("default", "w7:p1", { sessionId: "sid-w7", kind: "claude", startedAt: 0 });
+    // the transcript exists ONLY under herdr's cwd
+    writeFileSync(
+      join(dir, claudeCwdSlug(HERDR_CWD), "sid-w7.jsonl"),
+      '{"type":"assistant","timestamp":"2030-01-01T00:00:00.000Z","message":{"role":"assistant","stop_reason":"end_turn"}}\n',
+    );
+    t.fake.handlers.set("agent.wait", () => ({
+      type: "agent_info",
+      agent: { pane_id: "w7:p1", name: "claude-a", agent: "claude", agent_status: "working" },
+    }));
+
+    const out = (await runBrokerMethod(t.deps, "default", "broker.agent.wait", {
+      pane_id: "w7:p1",
+      until: ["idle"],
+    })) as { evidence?: string };
+    assert.equal(
+      out.evidence,
+      "transcript",
+      "wait must look where ask looks — reading the index instead finds no file and falls to the status tier",
+    );
+  } finally {
+    await t.teardown();
+  }
+});
+
+test("broker.agent.wait still succeeds when NO cwd is resolvable", async () => {
+  // The constraint that rules out simply adopting resolveCwd: it throws
+  // unknown_workspace, which would turn a currently-succeeding wait into an
+  // error. The shared resolver must stay non-throwing.
+  const t = await setup();
+  try {
+    t.fake.agents.push({ pane_id: "w8:p1", name: "claude-a", agent: "claude", agent_status: "idle" });
+    t.deps.agents.set("default", "w8:p1", { sessionId: "sid-w8", kind: "claude", startedAt: 0 });
+    // no index row, and herdr lists nothing
+    t.fake.handlers.set("workspace.list", () => ({ type: "workspace_list", workspaces: [] }));
+    t.fake.handlers.set("agent.wait", () => ({
+      type: "agent_info",
+      agent: { pane_id: "w8:p1", name: "claude-a", agent: "claude", agent_status: "idle" },
+    }));
+
+    const out = (await runBrokerMethod(t.deps, "default", "broker.agent.wait", {
+      pane_id: "w8:p1",
+      until: ["idle"],
+    })) as { waited?: boolean; status?: string };
+    assert.equal(out.waited, true, "an unresolvable cwd must not throw — it just means no transcript tier");
+    assert.equal(out.status, "idle");
   } finally {
     await t.teardown();
   }

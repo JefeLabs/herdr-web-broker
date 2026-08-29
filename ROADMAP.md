@@ -106,23 +106,32 @@ missing endpoints/SDK/UI, not missing reachability):
     test through the teardown route seeding BOTH a listed and an unlisted
     workspace row — the unlisted one is what survived even a per-workspace
     cleanup, because nothing iterated it — then re-authenticating to prove
-    the reborn session starts clean. (b) **`ask` and `wait` resolve cwd
-    differently.** `resolveCwd` prefers HERDR's cwd and falls back to
-    the index; `waitAgent` reads the index directly. For a mode-C
-    worktree spawn — where the index deliberately holds the CHECKOUT
-    path — the two can disagree, yielding different `cwdSlug` values and
-    so different `claude` transcript paths for one pane. It degrades
-    safely (wrong slug → no file → status tier), which is why it
-    shipped, but the fix needs a shared NON-THROWING resolver: `wait`
-    cannot simply adopt `resolveCwd`, which throws `unknown_workspace`
-    and would turn a currently-succeeding wait into an error.
+    the reborn session starts clean. (b) ~~**`ask` and `wait` resolve cwd
+    differently.**~~ **Done 2026-08-29.** `resolveCwd` preferred HERDR's
+    cwd and fell back to the index; `waitAgent` read the index directly.
+    On a mode-C worktree spawn — where the index deliberately holds the
+    CHECKOUT path — the two could disagree, yielding different `cwdSlug`
+    values and so two different `claude` transcript paths for ONE pane.
+    It degraded safely (wrong slug → no file → status tier), which is why
+    it shipped and equally why nothing caught it. Fixed by extracting the
+    shared `lookupCwd` — herdr's view first, index as fallback — and
+    pointing both callers at it. It is deliberately NON-THROWING, because
+    `wait` could not simply adopt `resolveCwd`: that throws
+    `unknown_workspace` and would turn a currently-succeeding wait into an
+    error. `resolveCwd` is now a thin throwing wrapper over it, so each
+    caller keeps its own failure mode while both agree on WHICH cwd.
+    2 tests: one seeding a transcript only under herdr's cwd while the
+    index holds a different one, so the resolver that won is observable in
+    `evidence`; one asserting a wait with no resolvable cwd still succeeds
+    — mutation-checked by pointing `wait` at the throwing resolver and
+    watching it go red.
     (c) **`GET .../agents` carries no `evidence`.** The spec claimed it
     would; only `wait`'s reply and `ask`'s `agent_unresponsive` details
     do. Wiring it means a transcript read per agent per list call
     against a registry fed by push WS events rather than per-request
     computation — a deliberate design decision, not an oversight.
-    (d) **`agy`'s concurrent-same-cwd collision — WON'T FIX, answered
-    2026-08-29.** The `startedAt` bound rejects a transcript older than
+    (d) ~~**`agy`'s concurrent-same-cwd collision.**~~ **WON'T FIX,
+    answered 2026-08-29.** The `startedAt` bound rejects a transcript older than
     the agent, so a STALE map entry can't be claimed, but two `agy`
     agents live in one cwd still resolve to the same conversation. WT-2
     was the thing that could have closed it, and the answer is no: agy
