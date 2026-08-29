@@ -267,8 +267,12 @@ it was written describes the status quo; it does not gate anything.
 
 ## The NAT flip — and why it does not gate this seam
 
-The NAT flip is a real condition, recorded in the smithagents 2026-08-27
-assessment and relayed here on 2026-08-29. It is **not** the taxonomy above:
+The NAT flip is a real condition. Its ruling is Edwin's, given verbatim as
+"the flip is announced hosts — my definition stands" and confirmed to this
+session directly. The three-part expansion below is a **reconstruction from
+the smithagents 2026-08-27 assessment note**, made by the session that holds
+it and relayed here on 2026-08-29 — it is not his wording, and is recorded as
+reconstruction rather than quotation. It is **not** the taxonomy above:
 
 - **What would have to become true:** the product must drive agents on other
   people's machines and roaming laptops, over NAT, reachable only outbound.
