@@ -98,13 +98,20 @@ That is the same hazard as the codex update menu one screen earlier, and the
 same rule applies: a probe must never send input into a screen it has not
 positively identified, because in a menu a prompt is a SELECTION.
 
-**The way through is to stop driving the TUI at all.** copilot can start from
-a PAT, and the broker already has the seam for handing one to a spawn:
-`[[env_hooks]]` in config.toml runs a command per `kind` and
-`EnvRegistry.resolveForSpawn` injects the result, with only the drop-file PATH
-crossing the PTY. A pre-authenticated copilot should not present login-shaped
-gates at all, which turns this probe from one that fights a terminal into one
-that reads a store.
+**The way through is to stop driving the TUI at all — DEFERRED 2026-08-29,
+pending a PAT service already in progress.** copilot can start from a PAT, and
+the broker already has the seam for handing one to a spawn: `[[env_hooks]]` in
+config.toml runs a command per `kind` and `EnvRegistry.resolveForSpawn` injects
+the result, with only the drop-file PATH crossing the PTY. The hook's `command`
+is what calls that service. A pre-authenticated copilot should not present
+login-shaped gates at all, which turns this probe from one that fights a
+terminal into one that reads a store.
+
+So WT-5 is not blocked on anything in this repo. Retry it once the service can
+mint a copilot PAT; until then the schema answer stands and copilot stays on
+the status tier. Do NOT spend more attempts driving the gates — four rounds of
+correct fixes each revealed another screen, which is the signal that the
+instrument is the wrong KIND of instrument, not that it needs a fifth fix.
 
 The three CLIs each want something different, from their own `--help`: claude
 is "strictly ANTHROPIC_API_KEY or apiKeyHelper (OAuth and keychain are never
