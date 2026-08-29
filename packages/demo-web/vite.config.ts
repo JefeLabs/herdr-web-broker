@@ -1,3 +1,4 @@
+import { API_VERSION } from "@jefelabs/herdr-broker-client";
 import react from "@vitejs/plugin-react";
 import type { Connect, HttpProxy, Plugin } from "vite";
 import { defineConfig } from "vitest/config";
@@ -9,7 +10,7 @@ import { defineConfig } from "vitest/config";
 // upgrade time — the broker only reads the pathname.
 const target = process.env.VITE_BROKER_TARGET ?? "http://127.0.0.1:7591";
 
-const proxy = {
+export const proxy = {
   "/events": {
     target,
     ws: true,
@@ -20,6 +21,14 @@ const proxy = {
       });
     },
   },
+  // Keyed off the SDK's own constant, not a literal: 78c77b2 moved every
+  // SDK URL under /v1 and this table kept listing only the bare paths, so
+  // the prefixed calls fell through to the SPA fallback and came back as
+  // 200 text/html instead of reaching the broker. A version bump must
+  // break the test, not the demo.
+  [`/${API_VERSION}`]: { target },
+  // Deprecated unversioned aliases — the broker still serves them, and the
+  // demo's own hand-built requests (the API catalog page) still send them.
   "/instances": { target },
   "/auth": { target },
   "/health": { target },

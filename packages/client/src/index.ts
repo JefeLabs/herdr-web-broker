@@ -1,6 +1,6 @@
 export { AgentHandle, type ScreenOpts, type WatchScreenOpts } from "./agent.js";
 export { BundleScope, type FollowOpts } from "./bundles.js";
-export { BrokerClient, InstanceHandle, RepoHandle, SessionHandle, type BrokerClientOpts } from "./client.js";
+export { API_VERSION, BrokerClient, InstanceHandle, RepoHandle, SessionHandle, type BrokerClientOpts } from "./client.js";
 export { BrokerApiError, BrokerNetworkError } from "./errors.js";
 export {
   EventChannel,
