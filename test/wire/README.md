@@ -70,14 +70,21 @@ back empty — so the machinery that defeated WT-1 and WT-2 is already ruled
 out. What remains unverified is the half only a spawn can reach: what a
 FRESHLY created session writes. Do not record either answer until they run.
 
-## WT-5's remaining step: `copilot` then `/login`
+## WT-5's remaining step: stop driving the TUI
 
-Run `copilot` once by hand and `/login`. Every probe run on 2026-08-29 reached
-copilot in the right cwd and submitted the prompt — the pane shows
-`❯ say hello` above the correct folder — and every one came back
-`Authorization error, you may need to run /login`. So `assistant_response`
-stayed NULL for a reason that has nothing to do with the schema, and the
-completion signal is the one thing still unconfirmed.
+`/login` was done on 2026-08-29 and did NOT close this. The auth error is
+gone; the probe still cannot drive a turn to completion, and the reason has
+been a different screen every attempt.
+
+The gate ORDER is not stable. It was restore-then-trust in one run and
+trust-then-restore in the next, so handling each once in a fixed sequence
+clears one and walks into the other — where the probe's own prompt text
+becomes a menu selection. The probe now loops, handling whichever gate is on
+screen and re-checking readiness each pass, which is strictly better and still
+did not produce a completed turn.
+
+The schema half stays answered. What is unconfirmed is only the completion
+SIGNAL: `assistant_response` going non-null.
 
 Two gates stand in front of copilot, and BOTH defaults are wrong for a probe.
 It opens on a "Restore interrupted sessions" picker where `enter` RESTORES a
@@ -90,3 +97,19 @@ prompt. The probe now handles both explicitly, in that order.
 That is the same hazard as the codex update menu one screen earlier, and the
 same rule applies: a probe must never send input into a screen it has not
 positively identified, because in a menu a prompt is a SELECTION.
+
+**The way through is to stop driving the TUI at all.** copilot can start from
+a PAT, and the broker already has the seam for handing one to a spawn:
+`[[env_hooks]]` in config.toml runs a command per `kind` and
+`EnvRegistry.resolveForSpawn` injects the result, with only the drop-file PATH
+crossing the PTY. A pre-authenticated copilot should not present login-shaped
+gates at all, which turns this probe from one that fights a terminal into one
+that reads a store.
+
+The three CLIs each want something different, from their own `--help`: claude
+is "strictly ANTHROPIC_API_KEY or apiKeyHelper (OAuth and keychain are never
+read)", codex takes `--remote-auth-token-env <ENV_VAR>` — the NAME of a
+variable rather than a value — and copilot documents only `login`, so its PAT
+route is an env var it does not advertise. `env_hooks` being keyed by `kind`
+is the right shape for that spread; what is missing is a builtin hook per
+kind, not new machinery.

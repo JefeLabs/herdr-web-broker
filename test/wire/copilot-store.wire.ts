@@ -166,15 +166,26 @@ test("WT-5: copilot's session-store records a completed turn, not just a session
   try {
     // One recognised gate may stand between spawn and readiness; clearing it
     // is explicit and narrow, and readiness is then re-proved either way.
-    await awaitAgentReady(pane, 20_000).catch(async (first: unknown) => {
-      // Two gates stand between spawn and readiness, in this order: the
-      // restore picker, then the directory-trust prompt. Each is handled
-      // explicitly; anything else re-throws the ORIGINAL error, which carries
-      // the pane dump that is the whole diagnostic value of refusing to act.
-      const fresh = await startFreshSession(pane);
-      const trusted = await clearTrustGate(pane);
-      if (!fresh && !trusted) throw first;
-      await awaitAgentReady(pane);
+    // Two gates stand between spawn and a usable prompt, and their ORDER IS
+    // NOT FIXED — observed 2026-08-29 as trust-then-restore, having been
+    // restore-then-trust earlier the same day. Handling them once each in a
+    // hardcoded sequence clears one and walks into the other, where the
+    // probe's own prompt text becomes a menu selection. So: loop, handle
+    // whichever is on screen, and re-check readiness each pass.
+    await awaitAgentReady(pane, 15_000).catch(async (first: unknown) => {
+      for (let pass = 0; pass < 6; pass++) {
+        const acted = (await startFreshSession(pane)) || (await clearTrustGate(pane));
+        try {
+          await awaitAgentReady(pane, 15_000);
+          return;
+        } catch {
+          // Nothing recognised on screen AND still not ready: re-throw the
+          // ORIGINAL error, which carries the pane dump that is the whole
+          // diagnostic value of refusing to act.
+          if (!acted) throw first;
+        }
+      }
+      throw first;
     });
     await call(`/agents/${encodeURIComponent(pane)}/prompt`, "POST", { text: "say hello" });
 
