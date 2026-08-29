@@ -125,11 +125,28 @@ missing endpoints/SDK/UI, not missing reachability):
     `evidence`; one asserting a wait with no resolvable cwd still succeeds
     — mutation-checked by pointing `wait` at the throwing resolver and
     watching it go red.
-    (c) **`GET .../agents` carries no `evidence`.** The spec claimed it
-    would; only `wait`'s reply and `ask`'s `agent_unresponsive` details
-    do. Wiring it means a transcript read per agent per list call
-    against a registry fed by push WS events rather than per-request
-    computation — a deliberate design decision, not an oversight.
+    (c) ~~**`GET .../agents` carries no `evidence`.**~~ **Done 2026-08-29,
+    as an OPT-IN.** The spec claimed the list carried evidence; only
+    `wait`'s reply and `ask`'s `agent_unresponsive` details did. It was
+    left open as a design decision rather than an oversight, and the
+    decision went to `?evidence=1` — because the default list is a FREE
+    registry read (push-fed, no disk, no herdr) and it is the endpoint a
+    UI polls, while evidence costs one transcript read per agent: a 256KB
+    tail for `claude`, two file reads for `agy`, a SQLite open/query/close
+    for `opencode`. Paying that per poll on the hottest path was the wrong
+    trade; `?fresh=1` on this same handler already set the precedent for
+    opting into cost. When asked, the one `workspace.list` is hoisted out
+    of the loop (cwd is per-workspace, not per-agent) and the transcript
+    decides `status` as well as naming the tier, exactly as `wait` does.
+    The bound is the agent's own `startedAt`, not a turn boundary — a
+    roster has no turn. RUNTIME ONLY: a federated child's transcripts live
+    on the CHILD's disk, so `evidence` is left ABSENT for a remote
+    instance rather than reported as `"status"`, which would be
+    indistinguishable from "looked and found nothing" — the same ambiguity
+    that hid 25(b). Documented in the API catalog, so the generated
+    OpenAPI and the demo's spec page carry it. 4 tests, including that the
+    default roster gains no field AND makes no herdr call, and that a
+    federated instance omits rather than fabricates.
     (d) ~~**`agy`'s concurrent-same-cwd collision.**~~ **WON'T FIX,
     answered 2026-08-29.** The `startedAt` bound rejects a transcript older than
     the agent, so a STALE map entry can't be claimed, but two `agy`

@@ -387,6 +387,43 @@ async function lookupCwd(deps: OpsDeps, session: string, workspaceId: string): P
   return (await herdrWorkspaces(deps, session)).get(workspaceId)?.cwd ?? deps.index.get(session, workspaceId)?.cwd;
 }
 
+/** Attach `evidence` to a whole roster — OPT-IN, roadmap 25(c).
+ *
+ * `GET .../agents` is a free registry read: push-fed, no disk, no herdr, and
+ * the endpoint a UI polls most. Evidence costs a transcript read PER AGENT —
+ * a 256KB tail for claude, two file reads for agy, a SQLite open/query/close
+ * for opencode — so it is paid only when a caller asks, the same way
+ * `?fresh=1` on this handler already trades a round trip for freshness.
+ *
+ * The one `workspace.list` is hoisted out of the loop: cwd resolution is
+ * per-workspace, not per-agent, so N agents in one workspace cost one call.
+ *
+ * `promptedAt` is the agent's own `startedAt`, not a turn boundary. A roster
+ * has no turn — the question it answers is "has this agent produced a
+ * transcript record since it started", which is the per-AGENT bound. See
+ * readTurnState's own note on the two bounds being different things.
+ *
+ * Callers must not run this for a federated instance: the child's transcripts
+ * are on the CHILD's disk, so every read would miss and every agent would
+ * report "status" — indistinguishable from "computed, found nothing". The
+ * route leaves `evidence` absent there instead. */
+export async function withEvidence<T extends { id: string; status: string; raw_status?: string }>(
+  deps: OpsDeps,
+  session: string,
+  agents: T[],
+): Promise<Array<T & { evidence: "transcript" | "status" }>> {
+  const fromHerdr = await herdrWorkspaces(deps, session);
+  return agents.map((a) => {
+    const ws = a.id.split(":")[0];
+    const cwd = fromHerdr.get(ws)?.cwd ?? deps.index.get(session, ws)?.cwd;
+    const meta = deps.agents.get(session, a.id);
+    const profile = meta ? deps.profiles.get(meta.kind) : undefined;
+    const t = meta && profile && cwd ? readTurnState(profile, meta, cwd, undefined, deps.stateDir) : null;
+    const d = decideTurn(t, { status: foldStatus(a.status), raw_status: a.raw_status }, meta?.startedAt ?? 0);
+    return { ...a, status: d.status, raw_status: d.raw_status, evidence: d.evidence };
+  });
+}
+
 async function resolveCwd(deps: OpsDeps, session: string, workspaceId: string): Promise<string> {
   const cwd = await lookupCwd(deps, session, workspaceId);
   if (!cwd) {

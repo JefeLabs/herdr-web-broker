@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
-import { writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import type { AddressInfo } from "node:net";
 import { join } from "node:path";
 import { hashSecret } from "../src/auth.js";
@@ -9,6 +9,7 @@ import { AuthLimiter } from "../src/auth-limit.js";
 import { Audit } from "../src/audit.js";
 import { EnvRegistry } from "../src/env-registry.js";
 import { OwnerRegistry } from "../src/owners.js";
+import { claudeCwdSlug } from "../src/transcript.js";
 import { Presence } from "../src/presence.js";
 import { ModelRegistry } from "../src/model-registry.js";
 import { Registry } from "../src/registry.js";
@@ -1320,6 +1321,101 @@ test("git verbs over HTTP: pull fast-forwards, stash round-trips, discard needs 
       await fetch(t.base + "/admin/audit", { headers: { "x-admin-token": "admin-tok" } })
     ).json()) as { entries: { action: string; actor: string }[] };
     assert.ok(audit.entries.some((e) => e.action === "git.discard" && e.actor === "t"), "executed discard audited");
+  } finally {
+    await teardown(t);
+  }
+});
+
+const EV_TERMINAL = { done: ["end_turn", "stop_sequence", "max_tokens", "refusal"], blocked: ["tool_use"], running: [] };
+
+/** Seeds a claude agent whose transcript proves a finished turn, under a
+ * {cwdSlug} template so the read genuinely depends on cwd resolution. */
+function seedTranscript(t: Awaited<ReturnType<typeof setup>>, cwd: string, pane: string, sessionId: string): void {
+  const dir = join(tmpDir(), `ev-${sessionId}`);
+  mkdirSync(join(dir, claudeCwdSlug(cwd)), { recursive: true });
+  t.ops.profiles = new CliProfiles({
+    profiles: [
+      {
+        kind: "claude",
+        pin: { flag: "--session-id" },
+        transcript: { via: "path", template: join(dir, "{cwdSlug}", "{sessionId}.jsonl") },
+        terminal: EV_TERMINAL,
+      },
+    ],
+  });
+  t.ops.index.set("default", pane.split(":")[0], { cwd });
+  t.ops.agents.set("default", pane, { sessionId, kind: "claude", startedAt: 0 });
+  writeFileSync(
+    join(dir, claudeCwdSlug(cwd), `${sessionId}.jsonl`),
+    '{"type":"assistant","timestamp":"2030-01-01T00:00:00.000Z","message":{"role":"assistant","stop_reason":"end_turn"}}\n',
+  );
+}
+
+test("GET agents: the default roster stays a free registry read, with no evidence field", async () => {
+  // Roadmap 25(c). The whole reason evidence is opt-in: this endpoint is the
+  // one a UI polls, and today it touches no disk and no herdr.
+  const t = await setup();
+  try {
+    seedTranscript(t, "/work/proj", "w1:p1", "sid-plain");
+    const before = t.fake.received.length;
+    const body = (await (await t.authed("/instances/runtime/sessions/default/agents")).json()) as {
+      agents: Array<{ id: string; evidence?: string }>;
+    };
+    assert.equal(body.agents[0].evidence, undefined, "no evidence field unless asked for");
+    assert.equal(t.fake.received.length, before, "and not one call to herdr");
+  } finally {
+    await teardown(t);
+  }
+});
+
+test("GET agents?evidence=1: a transcript decides the status and names itself as the tier", async () => {
+  const t = await setup();
+  try {
+    seedTranscript(t, "/work/proj", "w1:p1", "sid-ev");
+    t.fake.handlers.set("workspace.list", () => ({
+      type: "workspace_list",
+      workspaces: [{ workspace_id: "w1", cwd: "/work/proj" }],
+    }));
+    const body = (await (await t.authed("/instances/runtime/sessions/default/agents?evidence=1")).json()) as {
+      agents: Array<{ id: string; status: string; evidence?: string }>;
+    };
+    const a = body.agents.find((x) => x.id === "w1:p1")!;
+    assert.equal(a.evidence, "transcript");
+    assert.equal(a.status, "idle", "the transcript decided it, exactly as it does on wait");
+  } finally {
+    await teardown(t);
+  }
+});
+
+test("GET agents?evidence=1: no transcript means the status tier decided, and says so", async () => {
+  const t = await setup();
+  try {
+    // an agent the broker has no AgentIndex row for at all
+    const body = (await (await t.authed("/instances/runtime/sessions/default/agents?evidence=1")).json()) as {
+      agents: Array<{ id: string; evidence?: string }>;
+    };
+    assert.equal(body.agents[0].evidence, "status");
+  } finally {
+    await teardown(t);
+  }
+});
+
+test("GET agents?evidence=1 on a FEDERATED instance omits evidence rather than claiming 'status'", async () => {
+  // The transcripts live on the CHILD's disk. Reporting "status" here would
+  // be indistinguishable from "computed, found nothing" — the same ambiguity
+  // that hid 25(b) for weeks. Absent means "not computable on this side".
+  const t = await setup();
+  try {
+    t.registry.replaceSnapshot("laptop", {
+      platform: "macos",
+      herdr_version: "0.8.0-test",
+      sessions: [{ name: "default", agents: [{ id: "w1:p1", title: "claude", status: "working" as const }] }],
+    });
+    const body = (await (await t.authed("/instances/laptop/sessions/default/agents?evidence=1")).json()) as {
+      agents: Array<{ id: string; status: string; evidence?: string }>;
+    };
+    assert.equal(body.agents[0].evidence, undefined, "absent, not 'status'");
+    assert.equal(body.agents[0].status, "working", "the roster itself is untouched");
   } finally {
     await teardown(t);
   }

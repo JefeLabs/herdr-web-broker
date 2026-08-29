@@ -178,15 +178,23 @@ export const CATALOG: EndpointSpec[] = [
     id: "agents",
     group: "Sessions & Agents",
     title: "List agents",
-    summary: "Agents in the session with pane ids and folded status. fresh=1 re-queries herdr instead of serving the cached snapshot.",
+    summary:
+      "Agents in the session with pane ids and folded status. fresh=1 re-queries herdr instead of serving the cached snapshot; evidence=1 adds the deciding tier.",
     docs:
       "status folds herdr's five states to working/blocked/idle for counts; raw_status carries the unfolded " +
       "truth (unknown/done fold to idle, so a dead-but-listed agent is only visible there) and fresh=1 also " +
-      "returns interactive_ready/launch_pending.",
+      "returns interactive_ready/launch_pending. evidence=1 reads each agent's transcript and reports which " +
+      "tier decided its status — 'transcript' when the agent's own log proves the turn, 'status' when only " +
+      "herdr's screen-inferred state was available. It is opt-in because the default is a free cached read " +
+      "and evidence costs one transcript read per agent. Absent (not 'status') for a federated instance: " +
+      "the child's transcripts live on the child's disk, so this side cannot compute it at all.",
     method: "GET",
     pathTemplate: "/instances/{instance}/sessions/{session}/agents",
     auth: "bearer",
-    fields: [{ key: "fresh", label: "fresh — re-query herdr", kind: "toggle" }],
+    fields: [
+      { key: "fresh", label: "fresh — re-query herdr", kind: "toggle" },
+      { key: "evidence", label: "evidence — which tier decided the status", kind: "toggle" },
+    ],
     response: {
       type: "object",
       properties: {

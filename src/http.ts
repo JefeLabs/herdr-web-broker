@@ -18,7 +18,7 @@ import type { ChildrenStore } from "./state.js";
 import type { TunnelHub } from "./tunnel.js";
 import { API_VERSION, PLUGIN_VERSION } from "./version.js";
 import type { CallInstance } from "./ws-server.js";
-import { isBrokerMethod, runBrokerMethod, type OpsDeps } from "./workspace-ops.js";
+import { isBrokerMethod, runBrokerMethod, withEvidence, type OpsDeps } from "./workspace-ops.js";
 
 export interface HttpDeps {
   registry: Registry;
@@ -502,6 +502,15 @@ export function createHttpHandler(deps: HttpDeps) {
       if (url.searchParams.get("fresh") === "1") {
         agents = mapAgentList(await callInstance(instance, session, "agent.list", {}));
         deps.registry.applySessionAdded(instance, { name: session, agents });
+      }
+      // Opt-in evidence (roadmap 25(c)). Off by default because this is a
+      // free registry read and the endpoint a UI polls; on, it costs one
+      // transcript read per agent. Runtime only: a child's transcripts live
+      // on the CHILD's disk, so computing here would report "status" for
+      // every agent — indistinguishable from "looked, found nothing". Absent
+      // says "not computable on this side of the tunnel" instead.
+      if (url.searchParams.get("evidence") === "1" && instance === "runtime") {
+        agents = await withEvidence(deps.ops, session, agents);
       }
       json(res, 200, { instance, session, online: entry.online, as_of: entry.as_of, agents });
       return;
