@@ -26,7 +26,10 @@ answer in the spec's wire-truth table and, where it is a per-CLI fact, as a
 | WT-4 | ~~codex `rollout-*.jsonl` terminal record shape~~ **ANSWERED 2026-08-29** (codex-cli 0.151.0, live) — rollout IS findable by cwd for a freshly spawned session via `session_meta.payload.cwd`, and a finished turn ends `event_msg` with `payload.type: "task_complete"` carrying a top-level ISO `timestamp`. Record kinds seen: `session_meta`, `event_msg/task_started`, `response_item/message`, `world_state`, `turn_context`, `event_msg/item_completed`, `event_msg/task_complete` | — codex CAN leave the status tier: `via: "path"` discovery by cwd, `terminal.done: ["task_complete"]` |
 | WT-5 | copilot `session-store.db` schema — probe RUN 2026-08-29, schema ANSWERED, completion signal still open. `sessions(id, cwd, …)` gains a row per fresh cwd (cwd -> session_id discovery works) and `turns(id, session_id, turn_index, user_message, assistant_response, timestamp)` IS written — a row appears on SUBMISSION, ~65s after the prompt, with `assistant_response` NULL until the turn finishes. Every run hit `Authorization error, you may need to run /login`, so no turn ever completed and `assistant_response` going non-null is UNCONFIRMED | copilot stays on the status tier until an authenticated run confirms the completion signal |
 | WT-6 | does herdr's `pane.exited` carry an exit code? | agent-death cause stays unreported (the exec endpoint is unaffected — it reads its own `; echo $?` drop file, not `pane.exited`) |
-| WT-7 | ~~does `pane.wait_for_output` match the pane's OWN echoed input, or only program output?~~ **ANSWERED 2026-08-29** (herdr 0.8.2) — the pane's OWN echoed input, on `visible` AND `recent`; `matched_line` comes back as the echoed command itself. The inference from `source:`'s vocabulary was right | — the spawn-readiness sentinel is viable; roadmap 27 is unblocked |
+| WT-7 | ~~does `pane.wait_for_output` match the pane's OWN echoed input, or only program output?~~ **ANSWERED 2026-08-29** (herdr 0.8.2) — the pane's OWN echoed input, on `visible` AND `recent`; `matched_line` comes back as the echoed command itself | — **and this answer was then MISAPPLIED.** Roadmap 27's sentinel was built on "when it echoes, the shell is at its prompt", which this answer disproves rather than supports: it matched its own echo and reported cold panes ready. Fixed 26235cd; see the instrument note below |
+
+| WT-8 | ~~does herdr's agent detection fire for an agent TYPED into a pane, or only one started via `agent.start`?~~ **ANSWERED 2026-08-29** — NOT bound to `agent.start`. A `claude` typed into a pane via `send_input` is detected with `agent=claude` and reaches `agent_status=idle`; sampled every 5s for 60s, the typed path and the `agent.start` control are indistinguishable from the 5s mark. Run by the smithagents session; **not independently reproduced here**, because it spawns a real agent | a command-string runtime would get no detection and would have to drive `agent.start` by kind |
+| WT-9 | ~~is `keys: ["C-c"]` accepted by `pane.send_input`, and does it interrupt?~~ **ANSWERED 2026-08-29** — accepted via `{pane_id, keys}` with no `text` field, AND effective: a negative control confirmed `sleep 300` held the pane first. `Escape` is accepted through the same shape. Reproduced here independently — though it failed once first, on a cold shell that never reached a prompt inside its 15s readiness window. Not flakiness in the probe: see the load note below | a runtime sending tmux key names would need a translation layer; outcome 3 (accepted but no-op) would have been the silent one |
 
 WT-3's answer already shipped and needs no probe: `src/cli-profiles.ts`'s
 `opencode` profile (`via: "sqlite"`) and `src/transcript.ts`'s
@@ -96,6 +99,33 @@ the copilot `cwd -> session_id` query resolves and its negative control comes
 back empty — so the machinery that defeated WT-1 and WT-2 is already ruled
 out. What remains unverified is the half only a spawn can reach: what a
 FRESHLY created session writes. Do not record either answer until they run.
+
+## A probe that spawns agents contaminates its own later trials
+
+Cold-shell readiness is a measurement of the MACHINE as much as of the code,
+and a probe run that spawns real agents degrades the conditions for everything
+after it.
+
+Measured 2026-08-29, same code and same call ordering, minutes apart: with
+eight `claude` processes alive from earlier probe spawns and load average
+~3.0, cold shells failed to reach a prompt within TWENTY seconds, three
+consecutive trials. As the load cleared, three consecutive trials succeeded in
+~525-630ms. Arm-first versus send-first was tested explicitly and made no
+difference; the variable was the box.
+
+Two things follow. `DEFAULT_TIMEOUT_MS = 5000` in `src/spawn-readiness.ts` is
+tight enough that ordinary load defeats it — the gate then degrades to false
+and the `agent_pane_busy` retry carries the spawn, which is the designed
+floor, so nothing breaks; but the gate contributes nothing exactly when panes
+are slowest, which is when it would help most. Whether 5000 is the right
+number needs usage data nobody has yet, so it is recorded as a measurement and
+not a recommendation.
+
+The second is the one that costs time. Both sessions working on this
+independently read a load-induced timeout as "the fix does not work", because
+it contradicted a clean run minutes earlier. Before concluding anything from a
+slow or timing-out probe, check what else is running — very possibly your own
+earlier spawns.
 
 ## WT-5's remaining step: stop driving the TUI
 
