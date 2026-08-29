@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync } from "node:fs";
+import { existsSync, mkdtempSync, realpathSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -52,16 +52,69 @@ async function rpc(method: string, params: unknown): Promise<unknown> {
   return res?.result;
 }
 
-async function clearFirstRunGate(pane: string): Promise<void> {
-  for (let i = 0; i < 16; i++) {
-    const r = (await rpc("pane.read", { pane_id: pane, source: "visible" })) as { read?: { text?: string } };
-    if (/trust|do you want to|allow|proceed\?/i.test(r.read?.text ?? "")) {
-      await rpc("pane.send_input", { pane_id: pane, text: "", keys: ["Enter"] });
-      await new Promise((res) => setTimeout(res, 4000));
-      return;
-    }
-    await new Promise((res) => setTimeout(res, 500));
+/** Prove the agent is at ITS OWN prompt before sending anything.
+ *
+ * The first version of this pattern-matched the screen for known gate wordings
+ * and pressed Enter. That is unsafe by construction: into a MENU, a prompt is
+ * a SELECTION. On 2026-08-29 the codex probe sent "say hello" into an update
+ * menu, which selected the highlighted "1. Update now", and the workspace
+ * close in the finally block then killed `npm install -g` midway — leaving the
+ * CLI installed but without its platform binary. A blocklist of known gate
+ * wordings can never be complete; that is the same lesson the git.raw denylist
+ * taught in 80786f2, and it is worse here because the failure ACTS.
+ *
+ * So: no blind input, ever. herdr's own `interactive_ready` is the readiness
+ * signal. If it never arrives, ABORT and print the pane so a human can see
+ * what is blocking, instead of gambling on whatever happens to be highlighted.
+ * A gate is then cleared once by hand and the probe re-run. */
+/** Clear ONE precisely-recognised gate: the first-run directory-trust prompt.
+ *
+ * This is deliberately NOT the pattern-match-and-press-Enter that broke the
+ * codex run. Two differences make it safe. It fires only when the screen
+ * matches the trust wording AND offers a numbered affirmative, so an
+ * unrecognised menu still aborts. And it sends THAT NUMBER explicitly rather
+ * than Enter, so it cannot action whatever happens to be highlighted — the
+ * exact failure that selected "Update now".
+ *
+ * It exists because probes spawn into a fresh mkdtemp by design, which is
+ * always an untrusted directory: no amount of trusting folders by hand can
+ * pre-clear a path that does not exist yet. */
+async function clearTrustGate(pane: string): Promise<boolean> {
+  const r = (await rpc("pane.read", { pane_id: pane, source: "visible" })) as { read?: { text?: string } };
+  const text = r.read?.text ?? "";
+  // Wording and chrome vary per CLI: codex says "contents of this directory",
+  // copilot says "files in this folder" and draws its menu inside box-drawing
+  // borders with a U+276F pointer. So match the QUESTION loosely and find the
+  // option by scanning lines for a numbered "Yes" rather than anchoring on a
+  // glyph. The FIRST such option is taken deliberately — copilot also offers
+  // "2. Yes, and remember this folder for future sessions", and a probe must
+  // not persist trust for a temp directory it is about to delete.
+  if (!/do you trust the (contents|files)/i.test(text)) return false;
+  const affirmative = text
+    .split("\n")
+    .map((line) => /(\d+)\.\s+Yes\b/.exec(line))
+    .find((m): m is RegExpExecArray => m !== null);
+  if (!affirmative) return false;
+  await rpc("pane.send_input", { pane_id: pane, text: affirmative[1], keys: ["Enter"] });
+  await new Promise((res) => setTimeout(res, 5000));
+  return true;
+}
+
+async function awaitAgentReady(pane: string, timeoutMs = 45_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const list = (await rpc("agent.list", {})) as {
+      agents?: Array<{ pane_id?: string; interactive_ready?: boolean }>;
+    };
+    if ((list.agents ?? []).find((a) => a.pane_id === pane)?.interactive_ready === true) return;
+    await new Promise((r) => setTimeout(r, 1000));
   }
+  const screen = (await rpc("pane.read", { pane_id: pane, source: "visible" })) as { read?: { text?: string } };
+  throw new Error(
+    `agent never reported interactive_ready within ${timeoutMs}ms — refusing to send input into ` +
+      `whatever is on screen, because into a menu a prompt is a selection. Clear it by hand once, ` +
+      `then re-run.\nPane:\n${(screen.read?.text ?? "(empty)").slice(-800)}`,
+  );
 }
 
 /** Read-only, and through the WAL — a live copilot session is mid-write, so
@@ -79,7 +132,8 @@ function query<T>(sql: string, ...params: string[]): T[] {
 test("WT-5: copilot's session-store records a completed turn, not just a session", { skip: !process.env.HERDR_WIRE }, async () => {
   assert.ok(existsSync(DB_PATH), `no store at ${DB_PATH} — run copilot once before probing`);
 
-  const cwd = mkdtempSync(join(tmpdir(), "hwb-wt5-"));
+  // realpath: macOS mkdtemp returns /var/..., the CLI records /private/var/...
+  const cwd = realpathSync(mkdtempSync(join(tmpdir(), "hwb-wt5-")));
   const spawned = (await call("/agents", "POST", { kind: "copilot", cwd })) as {
     workspace_id?: string;
     pane_id?: string;
@@ -89,7 +143,14 @@ test("WT-5: copilot's session-store records a completed turn, not just a session
   if (!pane || !workspaceId) throw new Error("agents spawn returned no pane/workspace id");
 
   try {
-    await clearFirstRunGate(pane);
+    // One recognised gate may stand between spawn and readiness; clearing it
+    // is explicit and narrow, and readiness is then re-proved either way.
+    await awaitAgentReady(pane, 20_000).catch(async (first: unknown) => {
+      // Re-throw the ORIGINAL error on failure: it carries the pane dump, which
+      // is the entire diagnostic value of refusing to act.
+      if (!(await clearTrustGate(pane))) throw first;
+      await awaitAgentReady(pane);
+    });
     await call(`/agents/${encodeURIComponent(pane)}/prompt`, "POST", { text: "say hello" });
 
     // ── 1. cwd discovery: does a session row appear for THIS cwd? ────────
