@@ -23,8 +23,8 @@ answer in the spec's wire-truth table and, where it is a per-CLI fact, as a
 | WT-1 | ~~does `pane.send_input` bracket multi-line paste?~~ **ANSWERED 2026-08-29** (herdr 0.8.2) — YES. A four-line heredoc arrives as one paste; the shell shows `heredoc>` continuation prompts and echoes the body. No bug, no fix needed | — |
 | WT-2 | ~~does `agy --conversation <fresh-uuid>` mint that id, or reject it?~~ **ANSWERED 2026-08-29** (herdr 0.8.2) — NEITHER, quite: agy ACCEPTS the flag (it reaches the terminal title) but mints nothing under that id within 45s, and `last_conversations.json` never learns it | agy stays on cwd-map + `startedAt` discovery — roadmap 25(d) closes as won't-fix |
 | WT-3 | ~~`opencode export` output shape~~ **ANSWERED 2026-08-27** — opencode's real store is `~/.local/share/opencode/opencode.db` (SQLite+WAL); a finished assistant turn carries `time.completed`, and `session.directory` makes cwd discovery a SQL predicate | — |
-| WT-4 | codex `rollout-*.jsonl` terminal record shape | codex stays on the status tier |
-| WT-5 | copilot `session-store.db` schema | copilot stays on the status tier |
+| WT-4 | codex `rollout-*.jsonl` terminal record shape — probe written 2026-08-29 (`codex-rollout.wire.ts`), NOT YET RUN. Inspection of existing rollouts says every line is `{timestamp,type,payload}`, `session_meta.payload.cwd` makes cwd discovery possible, and a finished turn ends `event_msg`/`task_complete`; the probe proves that for a session the broker itself spawned | codex stays on the status tier |
+| WT-5 | copilot `session-store.db` schema — probe written 2026-08-29 (`copilot-store.wire.ts`), NOT YET RUN. Inspection found `sessions(id,cwd,…)` populated (so cwd -> session_id discovery works) but `turns`, `forge_trajectory_events` and `assistant_usage_events` ALL EMPTY across 7 sessions. Static reading cannot separate "never writes turns" from "those sessions never finished one" — only a driven session can | copilot stays on the status tier; the store stays useful for discovery only |
 | WT-6 | does herdr's `pane.exited` carry an exit code? | agent-death cause stays unreported (the exec endpoint is unaffected — it reads its own `; echo $?` drop file, not `pane.exited`) |
 | WT-7 | ~~does `pane.wait_for_output` match the pane's OWN echoed input, or only program output?~~ **ANSWERED 2026-08-29** (herdr 0.8.2) — the pane's OWN echoed input, on `visible` AND `recent`; `matched_line` comes back as the echoed command itself. The inference from `source:`'s vocabulary was right | — the spawn-readiness sentinel is viable; roadmap 27 is unblocked |
 
@@ -60,3 +60,12 @@ so it no longer races the cold-shell window roadmap 27 exists to close.
 Once a question is ANSWERED its probe's assertion is inverted to pin the
 answer, so it passes as a regression guard and goes red only if the behavior
 CHANGES — see WT-2.
+
+WT-4 and WT-5 were written the same day and have the same status the broken
+pair once had: compiled, committed, unrun. Their DISCOVERY halves were
+smoke-tested against the stores already on disk — `findRolloutForCwd` locates
+a real rollout by its recorded cwd and returns undefined for an unused one;
+the copilot `cwd -> session_id` query resolves and its negative control comes
+back empty — so the machinery that defeated WT-1 and WT-2 is already ruled
+out. What remains unverified is the half only a spawn can reach: what a
+FRESHLY created session writes. Do not record either answer until they run.
