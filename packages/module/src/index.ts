@@ -34,9 +34,22 @@ export type RouteHandler = (ctx: RouteCtx) => Promise<unknown> | unknown;
 
 export interface GitApi {
   /** granted by `git.read`. argv is an ARRAY — there is no shell, so
-   * there is nothing to inject into. argv[0] is checked against a
-   * denylist of the operations whose broker equivalents audit and
-   * confirm. */
+   * there is nothing to inject into.
+   *
+   * READ-ONLY, always. argv[0] must be a bare subcommand drawn from a
+   * read-only ALLOWLIST — a denylist over git's surface can never be
+   * complete, and the earlier one left `commit`, `merge`, `apply`,
+   * `am`, `update-ref`, `branch` and `config` reachable under a
+   * `git.read` grant. Requiring a bare subcommand also blocks git's
+   * pre-subcommand globals, since `git -c alias.x='!sh -c …' x` spawns a
+   * shell: the argv array stops metacharacter injection, but nothing
+   * stops git from running a shell itself. The few exec-bearing options
+   * that survive as subcommand options (`--upload-pack`,
+   * `--receive-pack`, `--output`, `--open-files-in-pager`) are refused
+   * wherever they appear.
+   *
+   * Mutations go through the audited verbs below, which is what the
+   * read/write capability split intended all along. */
   raw(workspaceId: string, repo: string, argv: string[]): Promise<string>;
   diff(workspaceId: string, repo: string, base?: string): Promise<unknown>;
   log(workspaceId: string, repo: string, limit?: number): Promise<unknown>;
