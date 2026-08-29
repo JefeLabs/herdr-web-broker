@@ -661,12 +661,17 @@ map!), `pane.close`, `agent.wait`, and `agent.prompt`'s
 
 ## Suggested order
 
-The numbered roadmap is COMPLETE — 24 of 24, item 24 (agent lifecycle
-determinism) landing after publication. What remains is the maintainer's
-release act (an NPM_TOKEN that bypasses 2FA, then a tag — see item 26),
-the still-pending `codex`/`copilot` transcript formats (WT-4, WT-5) and
-herdr's `pane.exited` exit code (WT-6), which have no probe files yet —
-WT-1 and WT-2 were answered live on 2026-08-29 — and the
+The numbered roadmap is COMPLETE — 29 of 29 as of 2026-08-29, every item
+closed, deferred with a stated condition, or documented. Nothing on it is
+waiting on an answer.
+
+Publishing is not pending work: interactive OAuth is the recorded decision
+(item 26), and 0.3.0 shipped that way. Of the wire questions, `codex` is
+ANSWERED and off the status tier (item 27's profile, 2b8406f); `copilot`'s
+schema is answered with only its completion signal open, behind a PAT service
+being built elsewhere; and **WT-6 — herdr's `pane.exited` exit code — is the
+only question with no probe file at all**. WT-8 and WT-9 were added the same
+day and are answered. What else remains is the
 demand-driven tails recorded in the strike notes (skins, framework
 adapters, federated multi-user, PDF extraction, quotas) plus the
 in-flight model-discovery spikes. In flight, pending credentialed spikes: per-user
