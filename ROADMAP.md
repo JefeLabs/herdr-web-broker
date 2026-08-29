@@ -355,11 +355,19 @@ missing endpoints/SDK/UI, not missing reachability):
     `HerdrProvisioner`'s structural guard does not extend to someone else's
     implementation; and be honest that the consumer is an in-process embedder
     importing from `dist/`, because the broker is not published to npm.
-    **The trigger is deliberately UNDEFINED.** The condition named as the
-    "NAT flip" is not written down in this repo or in smithagents, and is
-    left blank rather than guessed — see the write-up for exactly what the
-    maintainer needs to supply. The seam is documented; the reason to act on
-    it is not.
+    **The trigger — the NAT flip — is defined (2026-08-29).** Today a child
+    dials out to TELL the parent where it is; location is announced because
+    it cannot be known in advance. The flip fires when the parent already
+    knows where the child is, because it was PLACED rather than announced —
+    a container started, a remote host provisioned, a socket that existed
+    before the session did. Enrolled hosts announce (`pair`, the
+    child-initiated tunnel); placed hosts are known at creation
+    (`localEndpoints`/`SessionProvisioner`). The two are halves of one
+    problem, not alternatives, which is why `HerdrEndpoint` carrying only
+    `{session, socketPath}` lets them converge — downstream of attach the
+    broker cannot tell which way an endpoint arrived. Observable rather than
+    a judgement call: true the first time a session's socket is known before
+    the session exists.
 
 28. ~~**Module system — capabilities, not internals.**~~ Done. Spec:
     `docs/superpowers/specs/2026-08-28-extension-model-design.md`.

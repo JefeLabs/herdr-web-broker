@@ -238,32 +238,31 @@ it is worth paying. What this records is narrower and more useful: *if* that
 path is ever taken, this is the seam it goes through, and the seam already
 works.
 
-## The trigger — UNDEFINED, and needs the maintainer
+## The trigger — the NAT flip
 
-The condition that would make this path worth building is referred to as the
-**"NAT flip condition"**. It is not defined anywhere in this repo, and not in
-smithagents either — `grep -ri "flip"` across both returns only a tunnel test
-and a probe script.
+Today a child **dials out to tell the parent where it is**. Location is
+announced, because it cannot be known in advance: the laptop roams, the
+address is whatever it happens to be, and `pair --address ws://parent:7591`
+points the child at the one side that is reachable.
 
-It is deliberately left blank rather than guessed at. Today's model is stated
-in the README: children dial out, "all over one child-initiated tunnel that
-works behind NAT", and roadmap item 26 calls client unreachability "the single
-largest adoption barrier". A "flip" could plausibly mean inbound reachability
-becoming normal, or the assumption inverting so that agent hosts need remote
-provisioning rather than dialling out — but a roadmap item gated on an
-invented trigger is worse than no roadmap item, and this project has spent
-real time this year correcting confident text that nobody had checked.
+**The flip fires when the parent already knows where the child is** — because
+it was placed rather than announced. A container you started, a remote host
+you provisioned, a socket that existed before the session did.
 
-**To finish this section, the maintainer needs to supply:**
+That is the line the two mechanisms fall on:
 
-- What specific thing would have to become true for the flip to have fired.
-- Whether it is observable (something the broker or an operator could detect)
-  or a judgement call.
-- What it changes: does the flip make this path *possible*, *necessary*, or
-  merely *cheaper*?
+| | how the parent learns the location | mechanism |
+| --- | --- | --- |
+| **enrolled** | the child announces it, on connect | `pair`, child-initiated tunnel, `TunnelHub` |
+| **placed** | already known, at creation | `localEndpoints` / `SessionProvisioner` |
 
-Until then the seam is documented and the trigger is not, which is the honest
-split.
+So federation and this seam are two halves of one problem rather than
+alternatives. `HerdrEndpoint` being `{session, socketPath}` and nothing else
+is why they converge: downstream of attach, the broker cannot tell which way
+an endpoint arrived, and does not need to.
+
+The condition is observable rather than a judgement call — it is true the
+first time a session's socket is known before the session exists.
 
 ## Status
 
