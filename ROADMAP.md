@@ -603,7 +603,9 @@ with more evidence behind it. These are the two it was right about.
     priced at read time, absent everywhere else.
 
 31. **Resume — the broker mints a session id, hides it, and deletes it.**
-    The other half of item 30's review. The broker identifies unexpected
+    **WT-11 ran 2026-08-30 and answered every part of this for `claude`**
+    (2.1.251, herdr 0.8.2); the shape below is no longer a proposal. The
+    other half of item 30's review. The broker identifies unexpected
     agent states well and can act on none of them: `grep -i resume src/`
     returns three comments and zero code. The evidence tier can PROVE an
     agent finished its turn and died without answering (item 24), and the
@@ -625,15 +627,20 @@ with more evidence behind it. These are the two it was right about.
     not to stop deleting; it is that a transcript pointer and a
     resumption handle have different lifetimes and are currently one
     field.
-    (c) **`--resume` is already reachable, by nobody.** `args` go
-    verbatim to `agent.start` (`:480`, `:657`) and the broker never
-    interprets them, so a caller holding an id could pass
-    `args: ["--resume", "<id>"]` today. Two things stop it: (a), and a
-    collision — `:648` appends the pin flag with a FRESH uuid whenever
-    the profile has one, so a caller-supplied resume flag would ship
-    alongside `--session-id <new>` and the CLI would be told to be two
-    conversations at once. Mode D has to make pin and resume mutually
-    exclusive, which is a one-line rule and an easy one to omit.
+    (c) **`--resume` is already reachable, by nobody — and the collision
+    is REAL.** `args` go verbatim to `agent.start` (`:480`, `:657`) and
+    the broker never interprets them, so a caller holding an id could
+    pass `args: ["--resume", "<id>"]` today. Two things stop it: (a), and
+    the collision `:648` creates by appending the pin flag with a FRESH
+    uuid. WT-11 confirmed the CLI rejects that pairing outright —
+    *"--session-id can only be used with --continue or --resume if
+    --fork-session is also specified"* — and, worse, that **`agent.start`
+    STILL RETURNS SUCCESS**: herdr only TYPES the command, so the CLI
+    rejects the argv and exits to the shell while the broker records a
+    clean spawn. A spawn that succeeded and an agent that never existed
+    are indistinguishable from this side, which is its own small item.
+    The error also names the fix, so the rule is not "suppress the pin"
+    as first written — see (e).
     (d) **Per-kind syntax is a wire fact, not a given** — **WT-11**,
     probed for `claude` in `test/wire/claude-resume.wire.ts` (the other
     three kinds still need their own; the candidate syntax for each is
@@ -646,12 +653,25 @@ with more evidence behind it. These are the two it was right about.
     WT-2 is the standing precedent for why acceptance proves nothing:
     `agy` ACCEPTS `--conversation <uuid>`, reaches the terminal title
     with it, and mints nothing. Accepting a flag is not honoring it.
-    (e) **Shape.** A `resume?: { flag, style }` field beside `pin` on
-    `CliProfile` — same builtin-plus-`[[cli.profiles]]` table as
-    everything else per-kind — and a spawn **mode D** that reattaches
-    where A/B/C start fresh. Keep the id paired with what KIND of handle
-    it is rather than reconstructing a command from a bare string; the
-    review's `sessionRef {kind, value}` warning applies directly, and
+    (e) **Shape, now evidence-backed.** A `resume?: { flag, style }`
+    field beside `pin` on `CliProfile` — same builtin-plus-
+    `[[cli.profiles]]` table as everything else per-kind — and a spawn
+    **mode D** that reattaches where A/B/C start fresh. WT-11 settled
+    which of the two possible modes D it should be:
+    **fork and KEEP the pin** (`--resume <id> --fork-session`, the
+    combination the CLI's own error names), not suppress the pin. It
+    carries prior context — the resumed agent produced a token given to
+    a conversation whose pane had already closed, reproduced across two
+    runs — and the fork lands under **the id the broker minted**, so
+    `AgentMeta.sessionId` still points at the live record and nothing has
+    to be re-captured after spawn. Suppressing the pin would have forced
+    the broker to adopt an id it did not mint, giving up the
+    launch-time-known path that `pin` exists for; the fork keeps it.
+    The original record is left byte-identical, so a resume never
+    disturbs the evidence the previous turn is read from.
+    Keep the id paired with what KIND of handle it is rather than
+    reconstructing a command from a bare string; the review's
+    `sessionRef {kind, value}` warning applies directly, and
     `codex resume [ID]` versus `claude --resume <id>` is the same trap
     `pin` already avoids by storing the flag rather than assuming one.
     (f) **The other gap this exposes: identification is pull-based.**
@@ -821,10 +841,11 @@ schema is answered with only its completion signal open, behind a PAT service
 being built elsewhere; and **two questions have no probe file at all** —
 **WT-6** (herdr's `pane.exited` exit code) and **WT-10** (whether each CLI's
 store records token counts, and in what shape). WT-8 and WT-9 were added
-2026-08-29 and are answered. **WT-11** was registered 2026-08-30 with item 31
-and its `claude` probe is written but UNRUN — the answer is what unblocks
-mode D, and nothing should be built on a guess about it. It and WT-10 share
-a spawn fixture; run WT-11 first — see the note under the wire table.
+2026-08-29 and are answered. **WT-11** was registered, written and RUN on
+2026-08-30: `claude` answers all of it, mode D's shape is settled on evidence
+(item 31(e)), and the run found a shipped bug on the way — claude's trust
+pre-answer had never applied to any directory. The other three kinds in
+WT-11's row remain unprobed, and it still shares a spawn fixture with WT-10.
 What else remains is the demand-driven tails recorded in the strike notes
 (skins, framework adapters, federated multi-user, PDF extraction, quotas)
 plus the in-flight model-discovery spikes. In flight, pending credentialed spikes: per-user

@@ -64,6 +64,14 @@ const STATE_DIR = process.env.HERDR_PLUGIN_STATE_DIR ?? join(homedir(), ".local/
  * assuming one, and why the review's `sessionRef {kind, value}` warning
  * applies: a resume command cannot be reconstructed from a bare id. */
 const RESUME_SYNTAX: Record<string, (id: string) => string[]> = {
+  // claude ANSWERED 2026-08-30 (2.1.251): `--resume <id>` is accepted, but
+  // NOT alongside the `--session-id` the broker appends for any pinned kind —
+  //   Error: --session-id can only be used with --continue or --resume
+  //          if --fork-session is also specified.
+  // agent.start still returns success, because herdr only types the command;
+  // the rejection happens in the CLI, which exits straight back to the shell.
+  // So a spawn that "succeeded" and an agent that never existed look the same
+  // from the broker's side — see roadmap 31(c).
   claude: (id) => ["--resume", id],
   copilot: (id) => [`--resume=${id}`],
   opencode: (id) => ["--session", id],
@@ -86,12 +94,36 @@ async function rpc(method: string, params: unknown): Promise<unknown> {
   return res?.result;
 }
 
+/** Name what is actually on screen instead of guessing.
+ *
+ * The first version of the throw below asserted a trust gate unconditionally
+ * ("the broker-owned config dir was not applied"). On 2026-08-30 that
+ * message fired for a pane where the CLI had REJECTED ITS ARGV and exited to
+ * the shell — a launch failure reported as a config-dir failure, which is
+ * the misleading-instrument problem this directory's README is about. An
+ * exited CLI and a waiting dialog need opposite fixes, so they must not
+ * share a diagnosis. */
+function readinessDiagnosis(text: string): string {
+  const err = /^\s*Error:.*$/m.exec(text);
+  if (err) {
+    return (
+      `the CLI EXITED rather than waiting on anything — it printed: ${err[0].trim()}\n` +
+      "That is an argv rejection, not a trust gate. Fix the flags, not the config dir."
+    );
+  }
+  if (/do you trust|quick safety check/i.test(text)) {
+    return (
+      "a TRUST DIALOG is on screen, so the per-directory pre-answer did not cover this cwd — " +
+      "check that prepare-workspace.ts's trustProject wrote projects[<cwd>] under the config dir below."
+    );
+  }
+  return "nothing recognised is on screen; the pane dump is the whole diagnostic.";
+}
+
 /** Prove the agent is at ITS OWN prompt before sending anything — never
  * pattern-match a screen and press Enter, because into a menu a prompt is a
  * SELECTION (see copilot-store.wire.ts's note on the codex update menu that
- * selected "Update now"). claude's `prepare` block pre-answers its trust
- * dialog, so readiness here should be uneventful; if it is not, ABORT with
- * the pane so a human can see what is actually blocking. */
+ * selected "Update now"). */
 async function awaitAgentReady(pane: string, timeoutMs = 45_000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -102,11 +134,12 @@ async function awaitAgentReady(pane: string, timeoutMs = 45_000): Promise<void> 
     await new Promise((r) => setTimeout(r, 1000));
   }
   const screen = (await rpc("pane.read", { pane_id: pane, source: "visible" })) as { read?: { text?: string } };
+  const text = screen.read?.text ?? "(empty)";
   throw new Error(
     `claude never reported interactive_ready within ${timeoutMs}ms — refusing to send input into ` +
-      `whatever is on screen. claude has a \`prepare\` block, so a trust gate here means the ` +
-      `broker-owned config dir under ${STATE_DIR} was not applied.\nPane:\n` +
-      (screen.read?.text ?? "(empty)").slice(-800),
+      `whatever is on screen. Diagnosis: ${readinessDiagnosis(text)}\n` +
+      `State dir: ${STATE_DIR}\nPane:\n` +
+      text.slice(-900),
   );
 }
 
@@ -150,6 +183,21 @@ function bytesSince(path: string, from: number): string {
   if (!existsSync(path)) return "";
   const buf = readFileSync(path);
   return from >= buf.length ? "" : buf.subarray(from).toString("utf8");
+}
+
+/** The session id the broker minted for a pane, straight out of its own
+ * index. There is no endpoint for this (roadmap 31a) and the row is deleted
+ * when the pane closes (31b), so a probe that needs it has to read the state
+ * dir, and has to do it while the agent is still running. */
+function readPinnedId(pane: string): string | undefined {
+  const file = join(STATE_DIR, "agents.json");
+  if (!existsSync(file)) return undefined;
+  try {
+    const data = JSON.parse(readFileSync(file, "utf8")) as Record<string, Record<string, { sessionId?: string }>>;
+    return data.default?.[pane]?.sessionId;
+  } catch {
+    return undefined;
+  }
 }
 
 type Verdict = "reattached" | "reattached-forked" | "started-clean" | "inconclusive";
@@ -256,8 +304,13 @@ test("WT-11: claude --resume <id> reattaches prior context", { skip: !process.en
     // The broker appends `--session-id <fresh>` because claude has a pin,
     // so agent.start receives BOTH flags. Whether that errors, whether the
     // resume wins, or whether the fresh pin wins is precisely the finding.
-    const args = RESUME_SYNTAX.claude(sessionId);
-    console.log(`WT-11 resume args (broker will append ${new CliProfiles().get("claude")?.pin?.flag} <fresh-uuid>): ${args.join(" ")}`);
+    // --fork-session is the escape hatch the CLI's own error names, and it is
+    // mode D option (b): the fork gets a NEW id, and because that id is the
+    // one the BROKER minted via its pin flag, the invariant pin exists for
+    // survives a resume. Option (a) — suppress the pin and keep the original
+    // id — needs a broker change and is deliberately not probed here.
+    const args = [...RESUME_SYNTAX.claude(sessionId), "--fork-session"];
+    console.log(`WT-11 resume args (broker appends ${new CliProfiles().get("claude")?.pin?.flag} <fresh-uuid>): ${args.join(" ")}`);
     let spawnError: string | undefined;
     let resumedPane: string | undefined;
     try {
@@ -270,16 +323,32 @@ test("WT-11: claude --resume <id> reattaches prior context", { skip: !process.en
     } catch (e) {
       spawnError = String(e);
     }
-    console.log(`WT-11 resume spawn: ${spawnError ? `FAILED — ${spawnError}` : "accepted"}`);
-    assert.ok(
-      !spawnError && resumedPane,
-      "THIS FAILING IS THE ANSWER TO SUB-QUESTION 3: the resume flag and the pin flag cannot " +
-        "coexist on one agent.start, so mode D must suppress the pin when resuming rather than " +
-        "appending both (workspace-ops.ts:648). Record that and stop here.",
-    );
+    // Says only that herdr TYPED the command. The CLI can still reject the
+    // argv and exit — which is exactly what an unforked resume does — and
+    // that shows up at readiness below, not here. Do not read this line as
+    // "the flags were accepted"; it was misread that way once already.
+    console.log(`WT-11 agent.start returned: ${spawnError ? `FAILED — ${spawnError}` : "ok (says nothing about the CLI's argv)"}`);
+    assert.ok(!spawnError && resumedPane, `agent.start itself failed, before the CLI was reached: ${spawnError}`);
 
     // ── Phase 4: ask for something only the old conversation knows ────────
     await awaitAgentReady(resumedPane);
+
+    // With --fork-session the fork gets a NEW id, and mode D option (b)
+    // rests on that id being the one the BROKER minted — if it is,
+    // AgentMeta.sessionId still points at the live record after a resume
+    // and nothing has to be re-captured.
+    //
+    // Read from the broker's OWN index, not from herdr's agent title. The
+    // title was tried first and is the wrong instrument: it is screen-derived,
+    // so it carries the argv only while the command line is still visible.
+    // It was populated in the run where the CLI REJECTED its flags and exited
+    // (the argv sat in the shell scrollback) and empty in both runs where the
+    // CLI actually started and its TUI took over the pane — exactly backwards
+    // from what the check needs. agents.json holds the minted id directly, and
+    // must be read while the agent is ALIVE: closing the pane deletes the row
+    // (roadmap 31b), which is why the id could not be recovered afterwards.
+    const forkedId = readPinnedId(resumedPane);
+    console.log(`WT-11 fresh pin id the broker minted: ${forkedId ?? "(no agents.json row)"}`);
     await call(`/agents/${encodeURIComponent(resumedPane)}/prompt`, "POST", {
       text: "What exact token did I ask you to remember? Reply with just that token, or NONE if you were not told one.",
     });
@@ -308,9 +377,11 @@ test("WT-11: claude --resume <id> reattaches prior context", { skip: !process.en
     }
 
     const verdict = classifyResume(echoed, grew, forked);
+    const after = recordsIn(dir);
+    const freshIds = Object.keys(after).filter((id) => !(id in recordsBefore));
     console.log(`WT-11 nonce echoed after resume: ${echoed}`);
-    console.log(`WT-11 original record grew: ${grew} (${sizeBefore} -> ${recordsIn(dir)[sessionId] ?? 0} bytes)`);
-    console.log(`WT-11 new record appeared: ${forked}`);
+    console.log(`WT-11 original record grew: ${grew} (${sizeBefore} -> ${after[sessionId] ?? 0} bytes)`);
+    console.log(`WT-11 new record appeared: ${forked} ${freshIds.join(", ")}`);
     console.log(`WT-11 VERDICT: ${verdict}`);
 
     // Open question as of 2026-08-30 — this asserts the OUTCOME MODE D NEEDS,
@@ -330,12 +401,30 @@ test("WT-11: claude --resume <id> reattaches prior context", { skip: !process.en
     // Once this is answered, invert the assertion to pin the answer, as WT-2's
     // probe does, so it guards a regression instead of re-asking a settled
     // question.
-    assert.equal(
-      verdict,
-      "reattached",
-      `WT-11 answered as "${verdict}" rather than "reattached" — see the consequence table above ` +
-        "this assertion and record it in test/wire/README.md and roadmap 31 before changing any code.",
+    assert.ok(
+      echoed,
+      `WT-11 SUB-QUESTION 1 ANSWERED "no": verdict "${verdict}". The resumed agent could not produce ` +
+        `the token ${nonce} that the earlier conversation was given, so --resume --fork-session does ` +
+        "NOT carry prior context and mode D option (b) is dead. Rule out the probe first — check the " +
+        "pane reached a prompt and the model was actually asked — then record it in " +
+        "test/wire/README.md and roadmap 31 as the WT-2 shape: a flag accepted and not honored.",
     );
+
+    // Sub-question 2 is REPORTED, not asserted: --fork-session forks by
+    // construction, so "reattached-forked" is the expected verdict here and
+    // says nothing bad. What matters for mode D (b) is narrower — that the
+    // forked record carries the id the BROKER minted, so AgentMeta.sessionId
+    // still points at the live file after a resume. If it does not, (b) buys
+    // nothing over (a) and the id has to be re-captured either way.
+    if (forked && forkedId) {
+      assert.ok(
+        freshIds.includes(forkedId),
+        `the fork landed under ${freshIds.join(", ")} but the broker minted ${forkedId} — mode D ` +
+          "option (b) does not preserve the broker's knowledge of the session id, so the resumed id " +
+          "must be re-captured after spawn regardless of which option ships.",
+      );
+      console.log(`WT-11 forked record IS the broker-minted id — mode D option (b) is viable`);
+    }
   } finally {
     for (const w of workspaces) {
       await call(`/workspaces/${encodeURIComponent(w)}`, "DELETE").catch(() => undefined);

@@ -30,13 +30,13 @@ answer in the spec's wire-truth table and, where it is a per-CLI fact, as a
 | WT-8 | ~~does herdr's agent detection fire for an agent TYPED into a pane, or only one started via `agent.start`?~~ **ANSWERED 2026-08-29** — NOT bound to `agent.start`. A `claude` typed into a pane via `send_input` is detected with `agent=claude` and reaches `agent_status=idle`; sampled every 5s for 60s, the typed path and the `agent.start` control are indistinguishable from the 5s mark. Run by the smithagents session; **not independently reproduced here**, because it spawns a real agent | a command-string runtime would get no detection and would have to drive `agent.start` by kind |
 | WT-9 | ~~is `keys: ["C-c"]` accepted by `pane.send_input`, and does it interrupt?~~ **ANSWERED 2026-08-29** — accepted via `{pane_id, keys}` with no `text` field, AND effective: a negative control confirmed `sleep 300` held the pane first. `Escape` is accepted through the same shape. Reproduced here independently — though it failed once first, on a cold shell that never reached a prompt inside its 15s readiness window. Not flakiness in the probe: see the load note below | a runtime sending tmux key names would need a translation layer; outcome 3 (accepted but no-op) would have been the silent one |
 | WT-10 | do the CLI stores record TOKEN COUNTS, and in what shape? Four kinds have a resolvable transcript (`claude` path, `agy` map, `opencode` sqlite, `codex` scan) and only `claude` is a confident yes. Per kind: does a completed turn carry counts at all, under what field names, are the input/output/cache-creation/cache-read classes kept SEPARATE or pre-summed, and is a row a per-turn DELTA or a running session TOTAL? That last one decides whether accumulation is a sum or a max — backwards in either direction and every multi-turn session is wrong, silently and in a plausible-looking way | roadmap 30 ships `claude`-only and usage is ABSENT for every other kind — absent, never `0`, per the rule 25(c) set for `evidence` |
-| WT-11 | does each CLI RESUME a conversation by id from a cold start, and with what syntax? The shapes to try are `claude --resume <id>`, `copilot --resume=<id>`, `opencode --session <id>`, `codex resume [ID]` — none verified here. Three things must come back separately: does the flag REATTACH prior context or merely start clean without erroring (WT-2's `agy` result is the standing warning — it accepted the flag, reached the terminal title, and minted nothing); does the resumed process append to the SAME transcript record or open a new one, since transcript resolution keys off exactly that; and does the resume flag collide with the pin flag the broker already appends | roadmap 31's mode D never ships, and every state the evidence tier detects stays diagnosable and unrecoverable |
+| WT-11 | ~~does each CLI RESUME a conversation by id from a cold start, and with what syntax?~~ **ANSWERED for `claude` 2026-08-30** (2.1.251, herdr 0.8.2), in three parts. (1) `--resume <id> --fork-session` DOES carry prior context: the resumed agent produced a token it had been given before its pane was closed — reproduced on two independent runs, so this is NOT the WT-2 shape. (2) It FORKS rather than appends — the original record is byte-identical afterwards (14430 -> 14430) and a new one appears whose first assistant row carries `parentUuid` back into the original. (3) The pin collision is REAL: `--resume` plus the `--session-id` the broker appends is rejected outright — `--session-id can only be used with --continue or --resume if --fork-session is also specified` — and **`agent.start` still returns SUCCESS**, because herdr only TYPES the command; the CLI rejects the argv and exits to the shell. A spawn that "succeeded" and an agent that never existed are indistinguishable from the broker's side. (4) The fork lands under the id the BROKER minted — the pin uuid and the new record's name matched exactly — so `AgentMeta.sessionId` still points at the live record after a resume, with nothing to re-capture | roadmap 31's mode D has an evidence-backed shape: option (b), fork and keep the pin, which is also the option that preserves the launch-time-known id `pin` exists for. The other three kinds in this row are still unprobed |
 
 WT-3's answer already shipped and needs no probe: `src/cli-profiles.ts`'s
 `opencode` profile (`via: "sqlite"`) and `src/transcript.ts`'s
 `parseOpencode`.
 
-WT-6 and WT-10 have NO PROBE FILE. WT-11's is written for `claude` only
+WT-6 and WT-10 have NO PROBE FILE. WT-11's is written and RUN for `claude` only
 (`claude-resume.wire.ts`) — the one kind with a verified pin AND a `prepare`
 block, so no trust gate stands in front of it, and a `via: "path"` transcript
 that makes "same record vs new record" observable rather than inferred. The
@@ -60,6 +60,42 @@ fixture: WT-11 must reach a completed turn before it can resume one, and
 that same turn is what WT-10 needs to read counts off, so running WT-11
 first and having WT-10 read the transcript it leaves behind costs one spawn
 instead of two.
+
+## What WT-11 found on the way to its own question
+
+The first run never reached WT-11. It died at a claude trust dialog, which
+should have been impossible: `cli-profiles.ts`'s claude profile has a
+`prepare` block whose whole job is pre-answering it.
+
+The block was working. `CLAUDE_CONFIG_DIR` was applied — claude wrote its own
+`machineID`, `userID`, `firstStartVersion` and migration flags into the
+broker-owned dir, so it was demonstrably reading from there. The pre-answer
+was simply written where nothing reads it: `hasTrustDialogAccepted` sat at the
+TOP level of `.claude.json`, and claude records trust PER PROJECT PATH, under
+`projects[<cwd>]`. A real `~/.claude.json` carries no top-level copy at all.
+
+So the flag had never answered anything, for any directory, since the block
+was written. Mode C is where that bites hardest — an isolated checkout is a
+new path by construction, so every worktree spawn met the dialog — and the
+highlighted default is `No, exit`, which is why the probe's refusal to press
+Enter on an unrecognised screen mattered more than usual.
+
+`test/prepare-workspace.test.ts` asserted `cfg.hasTrustDialogAccepted === true`
+and passed the whole time. It proved the broker WROTE the key, never that the
+CLI READ it — the same shape as an instrument reading zero and calling it a
+measurement. The test now asserts the structure claude actually consults, and
+a second bug fell out with it: the write was a wholesale rewrite, so every
+spawn reset both the CLI's accumulated state and any trust entries earlier
+spawns had added. Per-directory entries cannot accumulate under a clobber.
+
+Two smaller instrument lessons from the same probe. `agent.start` returning
+success says only that herdr TYPED the command — an argv the CLI rejects
+still looks like a successful spawn, and this was misread once in exactly
+that direction. And herdr's agent `title` is SCREEN-DERIVED: it carried the
+full argv in the run where the CLI exited and left it in the scrollback, and
+was empty in both runs where the CLI started and its TUI took over the pane.
+It is not a source of truth for how an agent was launched; the broker's own
+`agents.json` is, and only while the agent is alive.
 
 ## A probe is an instrument, not a test
 
