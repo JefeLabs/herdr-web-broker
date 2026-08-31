@@ -634,12 +634,18 @@ with more evidence behind it. These are the two it was right about.
     alongside `--session-id <new>` and the CLI would be told to be two
     conversations at once. Mode D has to make pin and resume mutually
     exclusive, which is a one-line rule and an easy one to omit.
-    (d) **Per-kind syntax is a wire fact, not a given** — registered as
-    **WT-11**. The shapes the review listed (`claude --resume <id>`,
-    `copilot --resume=<id>`, `opencode --session <id>`) are unverified
-    here, and WT-2 is the standing precedent for why that matters: `agy`
-    ACCEPTS `--conversation <uuid>`, reaches the terminal title with it,
-    and mints nothing. Accepting a flag is not honoring it.
+    (d) **Per-kind syntax is a wire fact, not a given** — **WT-11**,
+    probed for `claude` in `test/wire/claude-resume.wire.ts` (the other
+    three kinds still need their own; the candidate syntax for each is
+    recorded in that file's `RESUME_SYNTAX` table, which is what becomes
+    the profile field in (e) once answered — an unverified profile entry
+    reads like live config, the trap 25(e) closed). Not one of those
+    shapes is verified, and they are not even uniform — a flag, an
+    `=`-joined flag, a different flag name, and a SUBCOMMAND — which is
+    the concrete reason (e) stores the flag instead of assuming one.
+    WT-2 is the standing precedent for why acceptance proves nothing:
+    `agy` ACCEPTS `--conversation <uuid>`, reaches the terminal title
+    with it, and mints nothing. Accepting a flag is not honoring it.
     (e) **Shape.** A `resume?: { flag, style }` field beside `pin` on
     `CliProfile` — same builtin-plus-`[[cli.profiles]]` table as
     everything else per-kind — and a spawn **mode D** that reattaches
@@ -812,13 +818,13 @@ Publishing is not pending work: interactive OAuth is the recorded decision
 (item 26), and 0.3.0 shipped that way. Of the wire questions, `codex` is
 ANSWERED and off the status tier (item 27's profile, 2b8406f); `copilot`'s
 schema is answered with only its completion signal open, behind a PAT service
-being built elsewhere; and **three questions have no probe file at all** —
-**WT-6** (herdr's `pane.exited` exit code), **WT-10** (whether each CLI's
-store records token counts, and in what shape) and **WT-11** (whether each
-CLI resumes by id, and with what syntax). WT-8 and WT-9 were added
-2026-08-29 and are answered; WT-10 and WT-11 were registered 2026-08-30
-alongside items 30 and 31, and writing them is the first act of each. They
-share a spawn fixture — see the note under the wire table.
+being built elsewhere; and **two questions have no probe file at all** —
+**WT-6** (herdr's `pane.exited` exit code) and **WT-10** (whether each CLI's
+store records token counts, and in what shape). WT-8 and WT-9 were added
+2026-08-29 and are answered. **WT-11** was registered 2026-08-30 with item 31
+and its `claude` probe is written but UNRUN — the answer is what unblocks
+mode D, and nothing should be built on a guess about it. It and WT-10 share
+a spawn fixture; run WT-11 first — see the note under the wire table.
 What else remains is the demand-driven tails recorded in the strike notes
 (skins, framework adapters, federated multi-user, PDF extraction, quotas)
 plus the in-flight model-discovery spikes. In flight, pending credentialed spikes: per-user

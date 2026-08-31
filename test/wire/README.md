@@ -36,15 +36,30 @@ WT-3's answer already shipped and needs no probe: `src/cli-profiles.ts`'s
 `opencode` profile (`via: "sqlite"`) and `src/transcript.ts`'s
 `parseOpencode`.
 
-WT-6, WT-10 and WT-11 have NO PROBE FILE — the three open questions with
-nothing written. WT-10 and WT-11 are also the heaviest spawners on this
-table: four kinds each, every one needing a real completed turn, which is
-precisely the shape the contamination note below warns about. Run them one
-kind per run, and read a slow trial as load before reading it as an answer.
-They share a fixture — WT-11 has to reach a completed turn before it can
-resume one, and that same turn is what WT-10 needs to read counts off — so
-writing WT-11 first and having WT-10 read the transcript it leaves behind
-costs one spawn instead of two.
+WT-6 and WT-10 have NO PROBE FILE. WT-11's is written for `claude` only
+(`claude-resume.wire.ts`) — the one kind with a verified pin AND a `prepare`
+block, so no trust gate stands in front of it, and a `via: "path"` transcript
+that makes "same record vs new record" observable rather than inferred. The
+other three kinds in that row still need their own.
+
+    HERDR_WIRE=1 HERDR_TOKEN=… node --test dist/test/wire/claude-resume.wire.js
+
+That probe needs `HERDR_PLUGIN_STATE_DIR` to match the running daemon's.
+claude's transcripts do NOT live under `~/.claude` when the broker spawned
+them — the profile's `prepare` block redirects `CLAUDE_CONFIG_DIR` to a
+broker-owned dir under the state dir, and that redirect moves projects/ with
+it. Reading the wrong tree returns an empty record set, which is an
+instrument reading zero, not an answer; the probe's discovery half is a
+separate test precisely so that failure is caught before two spawns.
+
+WT-10 and WT-11 are the heaviest spawners on this table — four kinds each,
+every one needing a real completed turn — which is the shape the
+contamination note below warns about. Run them one kind per run, and read a
+slow trial as load before reading it as an answer. They also share a
+fixture: WT-11 must reach a completed turn before it can resume one, and
+that same turn is what WT-10 needs to read counts off, so running WT-11
+first and having WT-10 read the transcript it leaves behind costs one spawn
+instead of two.
 
 ## A probe is an instrument, not a test
 
