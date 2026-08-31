@@ -426,8 +426,21 @@ test("WT-11: claude --resume <id> reattaches prior context", { skip: !process.en
       console.log(`WT-11 forked record IS the broker-minted id — mode D option (b) is viable`);
     }
   } finally {
+    // Cleanup REPORTS. The first version swallowed every failure with
+    // `.catch(() => undefined)`, which hid a real one four runs running:
+    // closing the workspace's only agent makes herdr reap the workspace, so
+    // this DELETE answers `workspace_not_found` and the broker's index row
+    // survives forever (roadmap 32). A silent catch made a leak that the
+    // orphans endpoint could see look like a clean teardown.
+    //
+    // It must not THROW — a cleanup failure would mask the test result it
+    // runs after — so it logs and carries on to the next workspace.
     for (const w of workspaces) {
-      await call(`/workspaces/${encodeURIComponent(w)}`, "DELETE").catch(() => undefined);
+      try {
+        await call(`/workspaces/${encodeURIComponent(w)}`, "DELETE");
+      } catch (e) {
+        console.log(`WT-11 cleanup: workspace ${w} NOT closed — ${String(e).split("\n")[0]}`);
+      }
     }
   }
 });

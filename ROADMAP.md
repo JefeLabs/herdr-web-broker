@@ -675,6 +675,12 @@ with more evidence behind it. These are the two it was right about.
     `codex resume [ID]` versus `claude --resume <id>` is the same trap
     `pin` already avoids by storing the flag rather than assuming one.
     (f) **The other gap this exposes: identification is pull-based.**
+    **Reproduced live 2026-08-30** while tearing down WT-11's stack: the
+    broker listed five workspaces where herdr had one, and had done so
+    across a daemon restart, with nothing announcing the divergence. The
+    stale rows themselves are item 32 — a defect on the removal path, not
+    an argument for this — but the fact that the disagreement sat there
+    unremarked until somebody asked is precisely this item.
     `classifySession` is called from two sites only
     (`src/http.ts:162` teardown, `src/workspace-ops.ts:144` the orphans
     route), both on demand, neither at boot. The indices are file-backed
@@ -688,6 +694,47 @@ with more evidence behind it. These are the two it was right about.
     what a session cost; resume makes every state the evidence tier
     already detects ACTIONABLE, and that tier is the most expensive
     thing in the repo to have built.
+
+## Index/herdr divergence (2026-08-30, found tearing down WT-11)
+
+32. **A workspace herdr has already reaped can never leave the broker's
+    index.**
+    Reproduced 4 times out of 4 WT-11 runs, then confirmed against the
+    live pair: herdr's own `workspace.list` returned `[w1]` while
+    `GET .../workspaces` returned five, and `GET .../orphans` named the
+    difference exactly — `forget: [w2S, w2V, w2X, w2Z]`, `orphans: [w1]`.
+    The classifier was right. Nothing consumed it.
+    The chain is short and every link is a documented, first-class route.
+    `DELETE .../agents/{pane}` on a workspace's only agent closes the pane;
+    herdr then reaps the workspace, which is wire truth this repo already
+    records ("herdr reaps a workspace when its last pane closes",
+    federation probe). `stopAgent` clears the AGENT row and never touches
+    the workspace index. The row is now stale, and the only two calls that
+    could remove it cannot: `deps.index.remove` is reached from exactly two
+    sites, `broker.workspace.close` (`src/workspace-ops.ts:131`) and
+    `broker.worktree.remove` (`:165`), and BOTH `await` herdr first and
+    throw `workspace_not_found` before the removal line. So the row is
+    unremovable through the API, permanently, by design of the ordering.
+    `listWorkspaces` then UNIONS the index with herdr's live set —
+    `[...fromHerdr.keys(), ...agentsByWs.keys(), ...Object.keys(indexed)]`
+    — so the dead row appears in every response with a `cwd` and no
+    agents, indistinguishable from a real empty workspace. A client
+    listing working sets is told about workspaces that do not exist, and
+    the only surface that knows better is an endpoint nobody calls.
+    **The fix is ordering, not a new verb.** `workspace_not_found` from
+    herdr means the goal state ALREADY HOLDS, so it is a success for index
+    purposes and the removal should still run — close becomes idempotent,
+    the way `POST /v1/permissions/{id}` is idempotent in the gateway
+    review's §4 for the same reason: two callers racing a teardown must
+    both see the terminal state, not one success and one error. Anything
+    else (reaping on a schedule, reconciling at boot) is a bigger change
+    that this does not need.
+    Worth separating from that bigger change, though: item 31(f) asks for
+    a boot-time reconciliation pass, and this bug is NOT an argument for
+    one. A row that cannot be removed by the call whose whole job is
+    removing it is a defect on that path. Reconciliation would paper over
+    it, and would still leave the API lying between one spawn and the next
+    sweep.
 
 ## Blocked on herdr (needs a live schema probe)
 
@@ -829,10 +876,11 @@ map!), `pane.close`, `agent.wait`, and `agent.prompt`'s
 
 The numbered roadmap ran 29 of 29 as of 2026-08-29 — every item closed,
 deferred with a stated condition, or documented, and nothing waiting on an
-answer. **Items 30 and 31 opened it back up on 2026-08-30** — usage and
-cost, and resume — and they are the only two that are neither built nor
-gated: unbuilt because nobody asked, each with a first slice named in its
-own entry. Take 31 first; its reasoning is at the end of that item.
+answer. **Items 30, 31 and 32 opened it back up on 2026-08-30** — usage and
+cost, resume, and the index rows that cannot be removed. None is gated on
+anything external. Take **32** first: it is a bug on a shipped route with a
+one-line-shaped fix, and it is the only one of the three that makes the API
+report something untrue today. Then 31, whose shape WT-11 settled; then 30.
 
 Publishing is not pending work: interactive OAuth is the recorded decision
 (item 26), and 0.3.0 shipped that way. Of the wire questions, `codex` is

@@ -88,6 +88,22 @@ a second bug fell out with it: the write was a wholesale rewrite, so every
 spawn reset both the CLI's accumulated state and any trust entries earlier
 spawns had added. Per-directory entries cannot accumulate under a clobber.
 
+A third finding came out of tearing the stack down rather than running it.
+The probe's cleanup swallowed every failure with `.catch(() => undefined)`,
+and it had been failing on all four runs: closing a workspace's only agent
+makes herdr reap the workspace, so the probe's `DELETE .../workspaces/{w}`
+answers `workspace_not_found` — and the broker's index row survives that
+error permanently, because both sites that remove index rows call herdr
+first and throw before reaching the removal. herdr's own `workspace.list`
+said `[w1]`; the broker's said five. `GET .../orphans` named the difference
+exactly, having been asked for the first time. Roadmap 32.
+
+A cleanup `catch` that returns `undefined` is the same instrument problem as
+a test asserting the write instead of the effect: it makes a leak the broker
+could already see look like a clean teardown. The probe logs cleanup
+failures now, without throwing — a cleanup that throws would mask the
+result it runs after.
+
 Two smaller instrument lessons from the same probe. `agent.start` returning
 success says only that herdr TYPED the command — an argv the CLI rejects
 still looks like a successful spawn, and this was misread once in exactly
