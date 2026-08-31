@@ -632,13 +632,26 @@ with more evidence behind it. These are the two it was right about.
     An agent with no pinned id records nothing — an unpinnable CLI has
     nothing to resume BY, and a listing entry that cannot be acted on is
     worse than none.
-    **Verification status.** Unit-tested (9 tests, mutation-checked) and
-    NOT yet wire-verified: WT-11 proved the CLI reattaches, nothing has yet
-    driven `resume` through the broker against a live claude. **WT-12**
-    (`test/wire/resume-mode-d.wire.ts`) is written for exactly that and is
-    UNRUN — it exercises the parts unit tests cannot reach, since a fake
-    herdr proves the argv while only a live run proves the conversation
-    came back.
+    **Verification status — read this before trusting the item above.**
+    Unit-tested (9 tests, mutation-checked) and NOT wire-verified. The
+    SHAPE is safe: it rests on WT-11's sub-questions 2, 3 and 4, which are
+    direct observations — the record forks, the pin collides, the fork
+    lands under the broker-minted id — and none of them needs the model to
+    say anything. What is NOT established is that a resumed agent comes
+    back with its context.
+    **WT-11's "yes" to that was a false positive, found 2026-08-31.** The
+    probe searched post-resume transcript BYTES for a token, and
+    `--fork-session` COPIES the parent conversation into the new record, so
+    the search succeeds whether or not a model ever spoke. It was proven by
+    forking with a prompt that never mentioned the token, using an agent
+    that was not logged in: the token still landed, on two copied lines,
+    with every assistant row `<synthetic>`. The probe now requires the
+    token in a REAL model's row timestamped after the recall prompt, and
+    refuses to measure when the seed conversation has no model output.
+    **WT-12** (`test/wire/resume-mode-d.wire.ts`) ran the same day and
+    could not reach its question either: its seeding `ask` returned
+    `agent_unresponsive` with `evidence: "transcript"`. Both are blocked on
+    the same thing, which is item 33, not on anything in this item.
     **Not fixed here:** (f) below, still.
     The original reasoning, which stands as the case for having built it:
     the broker identified unexpected agent states well and could act on none
@@ -793,6 +806,49 @@ with more evidence behind it. These are the two it was right about.
     and cannot know whether herdr reaped the workspace, since a multi-agent
     workspace survives. That gap is 31(f)'s, not this one's.
 
+## Agent credentials (2026-08-31, found running WT-12)
+
+33. **A broker-spawned `claude` is not logged in, and nothing says so.**
+    Every one of them. `prepare` redirects `CLAUDE_CONFIG_DIR` to a
+    broker-owned directory so a trust dialog is answered inside the
+    broker's blast radius rather than the user's global config — and that
+    redirect relocates the CLI's WHOLE config tree, credentials with it.
+    The pane reads `Not logged in · Please run /login`, each turn ends in
+    about zero seconds, and the transcript fills with `<synthetic>`
+    assistant rows carrying the CLI's own error.
+    This is the same shape as the trust bug in `prepare` fixed the same
+    day: a redirect written to scope ONE thing quietly took everything
+    else with it. The difference is that the trust bug announced itself
+    with a dialog, and this one produces an agent that looks like it is
+    working. `agent.list` reports it detected and `interactive_ready`;
+    `agent.prompt` succeeds; the transcript grows; the evidence tier reads
+    a completed turn — correctly, because a turn DID complete. Every
+    signal the broker has is green for an agent that cannot do anything.
+    **What it cost before anyone noticed.** WT-12's seeding `ask` failed
+    with `agent_unresponsive` / `evidence: "transcript"` — "finished its
+    turn but wrote no answer file" — which is precisely accurate and reads
+    like a product bug in `ask`. Chasing that exposed this, and this in
+    turn exposed a FALSE POSITIVE in WT-11 (item 31's verification note):
+    a probe that measured transcript bytes could not tell a copied
+    conversation from a remembered one, and the logged-out agent made the
+    difference invisible. Two conclusions were wrong because one
+    precondition was never checked.
+    Also established on the way: **`ask` has never run against a live
+    agent.** It is unit-tested against `FakeHerdr` only, and WT-12 was the
+    first caller ever to reach a real CLI with it.
+    **The mechanism to use probably already exists** — `POST .../env` with
+    `ANTHROPIC_API_KEY`, the same path that carries `COPILOT_GITHUB_TOKEN`
+    into copilot spawns in the demo stack. What is missing is anything
+    saying claude REQUIRES it. Open questions, none of them answered here:
+    whether an API key through the env registry is the intended answer for
+    a subscription-authenticated user at all; whether `prepare` should
+    inherit or copy credentials out of the user's real config rather than
+    orphaning them; and whether spawn should DETECT a logged-out agent and
+    fail loudly instead of handing back a green pane. The last one matters
+    most — a wrong answer is cheap to fix, a silently useless agent is not.
+    Registered as **WT-13**, no probe file. Blocks WT-11's sub-question 1
+    and all of WT-12.
+
 ## Blocked on herdr (needs a live schema probe)
 
 The 2026-08-21 schema probe against live herdr (protocol 19, via the demo
@@ -933,12 +989,13 @@ map!), `pane.close`, `agent.wait`, and `agent.prompt`'s
 
 The numbered roadmap ran 29 of 29 as of 2026-08-29 — every item closed,
 deferred with a stated condition, or documented, and nothing waiting on an
-answer. **Items 30, 31 and 32 opened it back up on 2026-08-30** — usage and
-cost, resume, and the index rows that could not be removed. **31 and 32 are
-both fixed (2026-08-31)**, which leaves **30 (usage and cost)** as the only
-open item, unbuilt because nobody asked and with a first slice named in its
-own entry. 31(f)'s boot-time reconciliation is the other loose thread, and it
-is deliberately still open — neither 31 nor 32 substituted for it.
+answer. **Items 30-33 opened it back up on 2026-08-30/31.** 31 and 32 are
+built; 30 (usage and cost) is unbuilt because nobody asked, with a first
+slice named in its own entry. **Take 33 first** — a broker-spawned claude is
+logged out and every signal the broker has says otherwise, which makes it the
+only open item that can make other work draw wrong conclusions, as it already
+did twice. 31(f)'s boot-time reconciliation stays a deliberate loose thread;
+neither 31 nor 32 substituted for it.
 
 Publishing is not pending work: interactive OAuth is the recorded decision
 (item 26), and 0.3.0 shipped that way. Of the wire questions, `codex` is

@@ -176,13 +176,65 @@ function recordsIn(dir: string): Record<string, number> {
   return out;
 }
 
-/** Only the bytes written after `from` — the phase-1 nonce is already in the
- * record, so a whole-file search would report "reattached" for an agent that
- * started clean and appended nothing. */
-function bytesSince(path: string, from: number): string {
-  if (!existsSync(path)) return "";
-  const buf = readFileSync(path);
-  return from >= buf.length ? "" : buf.subarray(from).toString("utf8");
+/** Rows of a JSONL transcript, parse failures skipped. */
+function rows(path: string): Record<string, unknown>[] {
+  if (!existsSync(path)) return [];
+  const out: Record<string, unknown>[] = [];
+  for (const line of readFileSync(path, "utf8").split("\n")) {
+    const t = line.trim();
+    if (!t) continue;
+    try {
+      const o = JSON.parse(t) as unknown;
+      if (o && typeof o === "object") out.push(o as Record<string, unknown>);
+    } catch {
+      // a row being written right now is not evidence either way
+    }
+  }
+  return out;
+}
+
+function ts(row: Record<string, unknown>): number {
+  const t = row.timestamp;
+  return typeof t === "string" ? Date.parse(t) : 0;
+}
+
+/** Did a REAL model produce anything in this record?
+ *
+ * An unauthenticated claude still writes a transcript: it records the user's
+ * prompt, emits `<synthetic>` assistant rows carrying its own error, and ends
+ * the turn in ~0s. Every byte-level signal in this probe reads that as a
+ * conversation. This is the precondition that stops it — on 2026-08-30 the
+ * probe answered "reattached" against an agent that was never logged in,
+ * because the broker's `prepare` block redirects CLAUDE_CONFIG_DIR and takes
+ * the credentials with it. */
+function hasRealModelOutput(path: string): boolean {
+  return rows(path).some((r) => {
+    if (r.type !== "assistant") return false;
+    const m = r.message as { model?: unknown } | undefined;
+    return typeof m?.model === "string" && m.model !== "<synthetic>";
+  });
+}
+
+/** Did the model SAY `needle` after `after`, as opposed to it merely being
+ * present in the file?
+ *
+ * The distinction is the whole correctness of this probe. `--fork-session`
+ * COPIES the parent conversation into the new record, so a substring search
+ * over the fork's bytes finds the phase-1 nonce whether or not the model ever
+ * produced it — which is exactly how this probe returned a false "yes".
+ * Proven 2026-08-31: a fork made with a post-resume prompt that never
+ * mentioned the nonce, by an agent that was not logged in, still contained it
+ * on two copied lines, with all three assistant rows `<synthetic>`.
+ *
+ * So: only ASSISTANT rows, only from a real model, only timestamped after the
+ * recall prompt went in. */
+function modelSaidAfter(path: string, needle: string, after: number): boolean {
+  return rows(path).some((r) => {
+    if (r.type !== "assistant" || ts(r) < after) return false;
+    const m = r.message as { model?: unknown } | undefined;
+    if (typeof m?.model !== "string" || m.model === "<synthetic>") return false;
+    return JSON.stringify(r).includes(needle);
+  });
 }
 
 /** The session id the broker minted for a pane, straight out of its own
@@ -292,6 +344,17 @@ test("WT-11: claude --resume <id> reattaches prior context", { skip: !process.en
       if (!seeded) await new Promise((r) => setTimeout(r, 1000));
     }
     assert.ok(seeded, `nonce ${nonce} never reached ${record} — the first turn did not complete, so there is nothing to resume`);
+    // PRECONDITION, not a finding: an unauthenticated agent writes a
+    // transcript that looks like a conversation and contains no model output
+    // at all. Refuse to measure anything rather than answer from it.
+    assert.ok(
+      hasRealModelOutput(record),
+      "the seeded conversation contains no REAL model output — every assistant row is `<synthetic>`, " +
+        "which is what an unauthenticated claude writes. The broker's prepare block redirects " +
+        "CLAUDE_CONFIG_DIR and takes the credentials with it, so a broker-spawned claude is logged out " +
+        "unless a key is supplied (POST .../env ANTHROPIC_API_KEY). Fix that before reading anything " +
+        "from this probe: on 2026-08-30 it answered `reattached` in exactly this state, and was wrong.",
+    );
     console.log(`WT-11 session id: ${sessionId}`);
     console.log(`WT-11 record seeded: ${record} (${statSync(record).size} bytes)`);
 
@@ -349,6 +412,7 @@ test("WT-11: claude --resume <id> reattaches prior context", { skip: !process.en
     // (roadmap 31b), which is why the id could not be recovered afterwards.
     const forkedId = readPinnedId(resumedPane);
     console.log(`WT-11 fresh pin id the broker minted: ${forkedId ?? "(no agents.json row)"}`);
+    const askedAt = Date.now();
     await call(`/agents/${encodeURIComponent(resumedPane)}/prompt`, "POST", {
       text: "What exact token did I ask you to remember? Reply with just that token, or NONE if you were not told one.",
     });
@@ -362,13 +426,11 @@ test("WT-11: claude --resume <id> reattaches prior context", { skip: !process.en
       grew = (now[sessionId] ?? 0) > sizeBefore;
       const fresh = Object.keys(now).filter((id) => !(id in recordsBefore));
       forked = fresh.length > 0;
-      // Only bytes written after the resume count — the nonce is already in
-      // the original record from phase 1.
-      const written = [
-        bytesSince(record, sizeBefore),
-        ...fresh.map((id) => bytesSince(join(dir, `${id}.jsonl`), 0)),
-      ].join("");
-      if (written.includes(nonce)) {
+      // NOT a substring search over new bytes: a fork copies the parent
+      // conversation in, nonce and all. Only the model's own words, only
+      // after the recall prompt.
+      const candidates = [record, ...fresh.map((id) => join(dir, `${id}.jsonl`))];
+      if (candidates.some((f) => modelSaidAfter(f, nonce, askedAt))) {
         echoed = true;
         break;
       }
