@@ -697,8 +697,10 @@ with more evidence behind it. These are the two it was right about.
 
 ## Index/herdr divergence (2026-08-30, found tearing down WT-11)
 
-32. **A workspace herdr has already reaped can never leave the broker's
-    index.**
+32. ~~**A workspace herdr has already reaped can never leave the broker's
+    index.**~~ **Done 2026-08-31.** `broker.workspace.close` is idempotent:
+    `workspace_not_found` from herdr no longer throws past the index
+    removals, and the response carries `already_closed` beside `closed`.
     Reproduced 4 times out of 4 WT-11 runs, then confirmed against the
     live pair: herdr's own `workspace.list` returned `[w1]` while
     `GET .../workspaces` returned five, and `GET .../orphans` named the
@@ -734,7 +736,26 @@ with more evidence behind it. These are the two it was right about.
     one. A row that cannot be removed by the call whose whole job is
     removing it is a defect on that path. Reconciliation would paper over
     it, and would still leave the API lying between one spawn and the next
-    sweep.
+    sweep. 31(f) stands on its own merits and is untouched by this.
+    **What shipped, and the boundary that was nearly missed.** The
+    existing test asserted the OLD contract in as many words — "herdr
+    refusing an unknown workspace surfaces as its own error" — and a
+    blanket absorb would have turned a typo'd id into a silent success
+    claiming to have reaped something that never existed. So not-found is
+    absorbed only when the BROKER HOLDS A ROW for that id: a row here and
+    nothing at herdr is the reaped case and the row is ours to clear; an
+    id neither side knows still errors. Both halves are mutation-checked
+    independently — dropping the row guard fails the typo case, dropping
+    the catch fails the reaped case, neither fails the other.
+    `closed` is the POSTCONDITION and stays `true` on every success, since
+    an idempotent delete answering false invites a retry that can never
+    work; `already_closed` carries who did it. That deliberately reads
+    differently from the git verbs (`{committed:false, clean:true}`),
+    where false means the thing you expected does not exist.
+    Still true afterwards, and NOT fixed by this: nothing removes the row
+    if a caller never calls close at all. `stopAgent` clears the agent row
+    and cannot know whether herdr reaped the workspace, since a multi-agent
+    workspace survives. That gap is 31(f)'s, not this one's.
 
 ## Blocked on herdr (needs a live schema probe)
 
@@ -877,10 +898,9 @@ map!), `pane.close`, `agent.wait`, and `agent.prompt`'s
 The numbered roadmap ran 29 of 29 as of 2026-08-29 — every item closed,
 deferred with a stated condition, or documented, and nothing waiting on an
 answer. **Items 30, 31 and 32 opened it back up on 2026-08-30** — usage and
-cost, resume, and the index rows that cannot be removed. None is gated on
-anything external. Take **32** first: it is a bug on a shipped route with a
-one-line-shaped fix, and it is the only one of the three that makes the API
-report something untrue today. Then 31, whose shape WT-11 settled; then 30.
+cost, resume, and the index rows that could not be removed. **32 is fixed
+(2026-08-31)**, which leaves two, neither gated on anything external: take
+31 next, whose shape WT-11 settled, then 30.
 
 Publishing is not pending work: interactive OAuth is the recorded decision
 (item 26), and 0.3.0 shipped that way. Of the wire questions, `codex` is

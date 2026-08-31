@@ -125,15 +125,48 @@ export async function runBrokerMethod(
   switch (method) {
     case "broker.workspace.close": {
       const workspaceId = str(p.workspace_id, "workspace_id");
-      // Wire-verified herdr surface (schema probe 2026-08-21): closes the
-      // workspace and every pane in it — the mode-B leak's cleanup path.
-      await deps.local.request(session, "workspace.close", { workspace_id: workspaceId }, 15_000);
+      // IDEMPOTENT (roadmap 32). herdr reaps a workspace when its last pane
+      // closes, which `DELETE .../agents/{pane}` routinely causes, so by the
+      // time a caller cleans up the workspace is often already gone. This
+      // used to await herdr FIRST and let workspace_not_found throw past the
+      // two index removals below — leaving a row that no API call could ever
+      // remove, since these are the only two sites that remove one, and
+      // listWorkspaces unions the index with herdr's live set and reported it
+      // as a real workspace forever after. Observed 4 of 4 WT-11 runs.
+      // An id NEITHER side knows still errors — see below.
+      //
+      // Not-found means the goal state ALREADY HOLDS, so it is a success for
+      // index purposes — but only when the broker HAS a row for it. That
+      // condition is what keeps a typo an error: an id neither side knows is
+      // simply unknown, and answering success would tell a caller it had
+      // reaped something that never existed. A row on this side and nothing
+      // on herdr's is the reaped case, and the row is ours to clear.
+      //
+      // Narrow on the code too: any other failure still throws and still
+      // leaves the row, because dropping one while the workspace lives is the
+      // worse direction — the broker would forget the cwd of running panes.
+      let alreadyClosed = false;
+      try {
+        // Wire-verified herdr surface (schema probe 2026-08-21): closes the
+        // workspace and every pane in it — the mode-B leak's cleanup path.
+        await deps.local.request(session, "workspace.close", { workspace_id: workspaceId }, 15_000);
+      } catch (e) {
+        if (!(e instanceof BrokerError) || e.code !== "workspace_not_found") throw e;
+        if (deps.index.get(session, workspaceId) === undefined) throw e;
+        alreadyClosed = true;
+      }
       deps.index.remove(session, workspaceId);
       // Every agent row for this workspace dies with it — a pane id herdr
       // later reuses must not inherit a stale kind/sessionId pointing a
       // transcript read at a previous agent that no longer exists.
       deps.agents.removeWorkspace(session, workspaceId);
-      return { workspace_id: workspaceId, closed: true };
+      // `closed` is the POSTCONDITION, not a report of who did it: an
+      // idempotent delete whose goal state holds must not answer false, which
+      // a caller would read as failure and retry. `already_closed` carries
+      // the distinction for anyone who wants it. This deliberately reads
+      // differently from the git verbs (`{committed:false, clean:true}`),
+      // where false means the thing you expected to exist does not.
+      return { workspace_id: workspaceId, closed: true, already_closed: alreadyClosed };
     }
     case "broker.workspace.list":
       return listWorkspaces(deps, session);

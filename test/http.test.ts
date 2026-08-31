@@ -652,7 +652,7 @@ test("workspace close route: DELETE .../workspaces/{w} reaps it", async () => {
     t.fake.handlers.set("workspace.close", () => ({ type: "ok" }));
     const res = await t.authed("/instances/runtime/sessions/default/workspaces/w1", { method: "DELETE" });
     assert.equal(res.status, 200);
-    assert.deepEqual(await res.json(), { workspace_id: "w1", closed: true });
+    assert.deepEqual(await res.json(), { workspace_id: "w1", closed: true, already_closed: false });
     assert.equal(t.ops.index.get("default", "w1"), undefined);
   } finally {
     await teardown(t);

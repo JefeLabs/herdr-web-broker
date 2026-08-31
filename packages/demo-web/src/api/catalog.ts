@@ -403,7 +403,11 @@ export const CATALOG: EndpointSpec[] = [
     docs:
       "Rides herdr's workspace.close (wire-verified against live 0.8.x). Destructive and immediate: running " +
       "agents in the workspace are terminated with their panes, and the broker forgets the workspace's " +
-      "recorded cwd. There is no undo — spawn again to rebuild.",
+      "recorded cwd. There is no undo — spawn again to rebuild. " +
+      "IDEMPOTENT: herdr reaps a workspace when its last pane closes, so stopping a lone agent often " +
+      "closes it first. `closed` is the postcondition and is always true on success; `already_closed` " +
+      "says whether herdr had got there first. An id the broker has no record of is still a 502 — " +
+      "idempotence covers a workspace that WAS yours, not one that never existed.",
     method: "DELETE",
     pathTemplate: "/instances/{instance}/sessions/{session}/workspaces/{workspace_id}",
     auth: "bearer",
@@ -413,8 +417,9 @@ export const CATALOG: EndpointSpec[] = [
       properties: {
         workspace_id: { type: "string" },
         closed: { type: "boolean" },
+        already_closed: { type: "boolean" },
       },
-      required: ["workspace_id", "closed"],
+      required: ["workspace_id", "closed", "already_closed"],
     },
     build: (v, ctx) => ({
       method: "DELETE",

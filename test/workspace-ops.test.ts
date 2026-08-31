@@ -591,14 +591,18 @@ test("broker.workspace.close: closes at herdr and drops the index entry", async 
     const out = (await runBrokerMethod(t.deps, "default", "broker.workspace.close", {
       workspace_id: "w7",
     })) as { workspace_id: string; closed: boolean };
-    assert.deepEqual(out, { workspace_id: "w7", closed: true });
+    assert.deepEqual(out, { workspace_id: "w7", closed: true, already_closed: false });
     const closed = t.fake.received.find((r) => r.method === "workspace.close");
     assert.deepEqual(closed?.params, { workspace_id: "w7" });
     assert.equal(t.deps.index.get("default", "w7"), undefined, "index entry removed");
     assert.equal(t.deps.agents.get("default", "w7:p1"), undefined, "closed workspace's agent row removed");
     assert.equal(t.deps.agents.get("default", "w8:p1")?.kind, "claude", "a different workspace's row is untouched");
 
-    // herdr refusing an unknown workspace surfaces as its own error
+    // herdr refusing an id the BROKER has no row for either surfaces as its
+    // own error. This is the boundary of roadmap 32's idempotence: not-found
+    // is absorbed only when the broker is holding a row that herdr has
+    // already reaped, so a typo'd id is still an error rather than a silent
+    // success claiming to have reaped something that never existed.
     t.fake.handlers.set("workspace.close", () => {
       throw new FakeHerdrError("workspace_not_found", "no workspace w9");
     });
@@ -606,6 +610,57 @@ test("broker.workspace.close: closes at herdr and drops the index entry", async 
       runBrokerMethod(t.deps, "default", "broker.workspace.close", { workspace_id: "w9" }),
       (e: BrokerError) => e.code === "workspace_not_found",
     );
+  } finally {
+    await t.teardown();
+  }
+});
+
+test("broker.workspace.close: a workspace herdr already reaped still leaves the index", async () => {
+  // Roadmap 32, observed 4 of 4 WT-11 runs. herdr reaps a workspace when its
+  // last pane closes, so DELETE .../agents/{pane} on a lone agent routinely
+  // gets there first. This used to throw past both removals, and since these
+  // are the ONLY two sites that remove an index row, the row became
+  // permanent — and listWorkspaces unions the index with herdr's live set,
+  // so the broker reported a workspace that did not exist, forever.
+  const t = await setup();
+  try {
+    const cwd = scratchRepo();
+    t.deps.index.set("default", "w7", { cwd, label: "reaped" });
+    t.deps.agents.set("default", "w7:p1", { kind: "claude", startedAt: 0 });
+    t.fake.handlers.set("workspace.close", () => {
+      throw new FakeHerdrError("workspace_not_found", "workspace w7 not found");
+    });
+    const out = (await runBrokerMethod(t.deps, "default", "broker.workspace.close", {
+      workspace_id: "w7",
+    })) as { workspace_id: string; closed: boolean; already_closed: boolean };
+    // closed is the POSTCONDITION — answering false here would read as a
+    // failure and invite a retry that can never succeed.
+    assert.deepEqual(out, { workspace_id: "w7", closed: true, already_closed: true });
+    assert.equal(t.deps.index.get("default", "w7"), undefined, "the stale index row is gone");
+    assert.equal(t.deps.agents.get("default", "w7:p1"), undefined, "and so are its agent rows");
+  } finally {
+    await t.teardown();
+  }
+});
+
+test("broker.workspace.close: any OTHER herdr error still throws and keeps the index", async () => {
+  // The complement, and the one that keeps the fix narrow. Dropping the row
+  // on a genuine failure is the worse direction: the broker would forget the
+  // cwd of a workspace whose panes are still running.
+  const t = await setup();
+  try {
+    const cwd = scratchRepo();
+    t.deps.index.set("default", "w7", { cwd });
+    t.deps.agents.set("default", "w7:p1", { kind: "claude", startedAt: 0 });
+    t.fake.handlers.set("workspace.close", () => {
+      throw new FakeHerdrError("internal_error", "herdr fell over");
+    });
+    await assert.rejects(
+      runBrokerMethod(t.deps, "default", "broker.workspace.close", { workspace_id: "w7" }),
+      /herdr fell over/,
+    );
+    assert.equal(t.deps.index.get("default", "w7")?.cwd, cwd, "index row survives a real failure");
+    assert.equal(t.deps.agents.get("default", "w7:p1")?.kind, "claude", "and so does the agent row");
   } finally {
     await t.teardown();
   }
