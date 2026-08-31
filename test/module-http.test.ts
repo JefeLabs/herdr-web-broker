@@ -15,7 +15,7 @@ import { ModelRegistry } from "../src/model-registry.js";
 import { loadModules, type ModuleSpec } from "../src/module-loader.js";
 import { Presence } from "../src/presence.js";
 import { Registry } from "../src/registry.js";
-import { AgentIndex, ChildrenStore, WorkspaceIndex } from "../src/state.js";
+import { AgentIndex, ChildrenStore, ResumableIndex, WorkspaceIndex } from "../src/state.js";
 import { TunnelHub } from "../src/tunnel.js";
 import type { OpsDeps } from "../src/workspace-ops.js";
 import { FakeHerdr } from "./fake-herdr.js";
@@ -44,6 +44,7 @@ async function setup(specs: ModuleSpec[]) {
     env: new EnvRegistry({ stateDir: tmpDir() }),
     models: new ModelRegistry(),
     agents: new AgentIndex(tmpDir()),
+    resumable: new ResumableIndex(tmpDir()),
     profiles: new CliProfiles(),
     stateDir: tmpDir(),
     settleMsOverride: 0,

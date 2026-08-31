@@ -19,7 +19,16 @@ import { Presence } from "./presence.js";
 import { Projection } from "./projection.js";
 import { Registry } from "./registry.js";
 import { ParentLink } from "./south.js";
-import { AgentIndex, ChildrenStore, WorkspaceIndex, clearLock, ensureAdminToken, readLock, writeLock } from "./state.js";
+import {
+  AgentIndex,
+  ChildrenStore,
+  ResumableIndex,
+  WorkspaceIndex,
+  clearLock,
+  ensureAdminToken,
+  readLock,
+  writeLock,
+} from "./state.js";
 import { CliProfiles } from "./cli-profiles.js";
 import { BrokerEvents } from "./broker-events.js";
 import { loadModules, type LoadedModule } from "./module-loader.js";
@@ -94,6 +103,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<DaemonHandle | u
   const children = new ChildrenStore(opts.stateDir);
   const index = new WorkspaceIndex(opts.stateDir);
   const agents = new AgentIndex(opts.stateDir);
+  const resumable = new ResumableIndex(opts.stateDir);
   const adminToken = ensureAdminToken(opts.stateDir);
 
   const local = new LocalHerdr({
@@ -112,6 +122,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<DaemonHandle | u
     env: new EnvRegistry({ stateDir: opts.stateDir, hooks: config.env_hooks, enabled: config.env_registry.enabled }),
     models: new ModelRegistry(config.models),
     agents,
+    resumable,
     profiles: new CliProfiles(config.cli),
     stateDir: opts.stateDir,
     ...(config.spawn?.readiness_timeout_ms !== undefined

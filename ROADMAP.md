@@ -602,15 +602,44 @@ with more evidence behind it. These are the two it was right about.
     slice is `claude` alone, whole-file re-read, raw payload stored and
     priced at read time, absent everywhere else.
 
-31. **Resume — the broker mints a session id, hides it, and deletes it.**
-    **WT-11 ran 2026-08-30 and answered every part of this for `claude`**
-    (2.1.251, herdr 0.8.2); the shape below is no longer a proposal. The
-    other half of item 30's review. The broker identifies unexpected
-    agent states well and can act on none of them: `grep -i resume src/`
-    returns three comments and zero code. The evidence tier can PROVE an
-    agent finished its turn and died without answering (item 24), and the
-    only remedy on offer is a fresh spawn with no memory of the
-    conversation that was in flight. Identification without continuation.
+31. ~~**Resume — the broker mints a session id, hides it, and deletes it.**~~
+    **Done 2026-08-31**, on the shape WT-11 settled the day before. Spawn
+    takes `resume: {session_id | pane_id}`, `GET .../sessions/{s}/resumable`
+    lists what can be reattached, and a `ResumableIndex` keeps the id after
+    the pane that held it is gone. What follows is the reasoning, kept
+    because each sub-item became a decision in the implementation.
+    **What shipped, against (a)-(e).** (a) the ids are reachable — the
+    resumable listing is where a caller finally sees one, deliberately NOT
+    added to `GET .../agents`, which is a free push-fed registry read and the
+    endpoint a UI polls. (b) `ResumableIndex` is keyed by SESSION ID, not by
+    pane, because that is the only identifier that survives the pane and the
+    only one `--resume` takes; `AgentIndex.remove`/`removeWorkspace` now
+    return what they removed so the conversation can be archived on the way
+    out. (c) the pin is KEPT and `--fork-session` added, per WT-11. (d) only
+    `claude` has a `resume` profile entry; every other kind answers
+    `resume_unsupported` rather than being sent a guessed flag — WT-2's agy
+    result is why. (e) built as described.
+    **Three calls made in the building that the item did not anticipate.**
+    A resume into a different cwd is REFUSED (`bad_request`): the CLI keys
+    transcripts on the directory, so a resume from elsewhere starts a fresh
+    conversation wearing an old id and looks like success from every angle
+    the broker can see — the most convincing lie available here. Omitting
+    `cwd` and `workspace_id` defaults to the conversation's own directory,
+    which makes the common case one field. And `worktree.remove` archives
+    NOTHING, unlike `workspace.close`: it deletes the checkout, so an entry
+    would list a conversation that fails the moment anyone picked it.
+    Teardown purges the session's archive for the same reason.
+    An agent with no pinned id records nothing — an unpinnable CLI has
+    nothing to resume BY, and a listing entry that cannot be acted on is
+    worse than none.
+    **Not fixed here:** (f) below, still.
+    The original reasoning, which stands as the case for having built it:
+    the broker identified unexpected agent states well and could act on none
+    of them — `grep -i resume src/` returned three comments and zero code.
+    The evidence tier can PROVE an agent finished its turn and died without
+    answering (item 24), and the only remedy on offer was a fresh spawn with
+    no memory of the conversation that was in flight. Identification without
+    continuation.
     (a) **The id exists and is unreachable.** `spawn` mints
     `randomUUID()` when the kind has a pin flag
     (`src/workspace-ops.ts:648`) and stores it as `AgentMeta.sessionId`
@@ -898,9 +927,11 @@ map!), `pane.close`, `agent.wait`, and `agent.prompt`'s
 The numbered roadmap ran 29 of 29 as of 2026-08-29 — every item closed,
 deferred with a stated condition, or documented, and nothing waiting on an
 answer. **Items 30, 31 and 32 opened it back up on 2026-08-30** — usage and
-cost, resume, and the index rows that could not be removed. **32 is fixed
-(2026-08-31)**, which leaves two, neither gated on anything external: take
-31 next, whose shape WT-11 settled, then 30.
+cost, resume, and the index rows that could not be removed. **31 and 32 are
+both fixed (2026-08-31)**, which leaves **30 (usage and cost)** as the only
+open item, unbuilt because nobody asked and with a first slice named in its
+own entry. 31(f)'s boot-time reconciliation is the other loose thread, and it
+is deliberately still open — neither 31 nor 32 substituted for it.
 
 Publishing is not pending work: interactive OAuth is the recorded decision
 (item 26), and 0.3.0 shipped that way. Of the wire questions, `codex` is

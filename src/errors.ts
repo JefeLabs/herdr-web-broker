@@ -27,6 +27,10 @@ const STATUS: Record<string, number> = {
   unknown_file: 404,
   agent_unresponsive: 504,
   model_switch_unsupported: 400,
+  // roadmap 31: the kind has no wire-verified resume syntax — a property of
+  // the request, not a missing resource, so 400 rather than 404.
+  resume_unsupported: 400,
+  unknown_session_ref: 404,
 };
 
 /** Unknown codes are herdr passthrough errors → 502 per spec §6. */

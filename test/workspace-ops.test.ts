@@ -1921,3 +1921,193 @@ test("broker.agent.wait still succeeds when NO cwd is resolvable", async () => {
     await t.teardown();
   }
 });
+
+// ── Mode D: resume (roadmap 31) ──────────────────────────────────────────
+
+test("stopping an agent ARCHIVES its conversation, keyed by the id that survives the pane", async () => {
+  // Roadmap 31(b). The agent row is deleted so a reused pane id cannot
+  // inherit a stale transcript pointer; the CONVERSATION has to outlive it,
+  // because stopping is precisely when you want the thing back.
+  const t = await setup();
+  try {
+    const cwd = scratchRepo();
+    t.deps.index.set("default", "w2", { cwd, label: "team" });
+    t.deps.agents.set("default", "w2:p1", { kind: "claude", sessionId: "sess-a", startedAt: 1 });
+    t.fake.handlers.set("agent.list", () => ({ type: "agent_list", agents: [{ pane_id: "w2:p1", agent: "claude" }] }));
+    t.fake.handlers.set("pane.close", () => ({ type: "ok" }));
+
+    await runBrokerMethod(t.deps, "default", "broker.agent.stop", { pane_id: "w2:p1" });
+
+    assert.equal(t.deps.agents.get("default", "w2:p1"), undefined, "the pane-keyed row is gone");
+    const row = t.deps.resumable.get("default", "sess-a");
+    assert.equal(row?.kind, "claude");
+    assert.equal(row?.cwd, cwd, "the cwd rides along — a resume elsewhere would not reattach");
+    assert.equal(row?.label, "team");
+  } finally {
+    await t.teardown();
+  }
+});
+
+test("an agent with no pinned id archives NOTHING — there is nothing to resume by", async () => {
+  const t = await setup();
+  try {
+    const cwd = scratchRepo();
+    t.deps.index.set("default", "w2", { cwd });
+    t.deps.agents.set("default", "w2:p1", { kind: "codex", startedAt: 1 });
+    t.fake.handlers.set("agent.list", () => ({ type: "agent_list", agents: [{ pane_id: "w2:p1", agent: "codex" }] }));
+    t.fake.handlers.set("pane.close", () => ({ type: "ok" }));
+
+    await runBrokerMethod(t.deps, "default", "broker.agent.stop", { pane_id: "w2:p1" });
+
+    assert.deepEqual(t.deps.resumable.all("default"), [], "a listing entry nobody can act on is worse than none");
+  } finally {
+    await t.teardown();
+  }
+});
+
+test("closing a workspace archives every conversation in it", async () => {
+  const t = await setup();
+  try {
+    const cwd = scratchRepo();
+    t.deps.index.set("default", "w7", { cwd });
+    t.deps.agents.set("default", "w7:p1", { kind: "claude", sessionId: "sess-a", startedAt: 1 });
+    t.deps.agents.set("default", "w7:p2", { kind: "claude", sessionId: "sess-b", startedAt: 2 });
+    t.fake.handlers.set("workspace.close", () => ({ type: "ok" }));
+
+    await runBrokerMethod(t.deps, "default", "broker.workspace.close", { workspace_id: "w7" });
+
+    const ids = t.deps.resumable.all("default").map((r) => r.sessionId).sort();
+    assert.deepEqual(ids, ["sess-a", "sess-b"], "a mode-B team's whole roster survives as conversations");
+    assert.equal(t.deps.resumable.get("default", "sess-a")?.cwd, cwd, "cwd read BEFORE the index row was dropped");
+  } finally {
+    await t.teardown();
+  }
+});
+
+test("removing a WORKTREE archives nothing — the directory the transcript is keyed on is gone", async () => {
+  const t = await setup();
+  try {
+    const cwd = scratchRepo();
+    t.deps.index.set("default", "w7", { cwd });
+    t.deps.agents.set("default", "w7:p1", { kind: "claude", sessionId: "sess-a", startedAt: 1 });
+    t.fake.handlers.set("worktree.remove", () => ({ type: "ok", path: cwd }));
+
+    await runBrokerMethod(t.deps, "default", "broker.worktree.remove", { workspace_id: "w7" });
+
+    assert.deepEqual(t.deps.resumable.all("default"), [], "an entry here would fail the moment anyone picked it");
+  } finally {
+    await t.teardown();
+  }
+});
+
+test("mode D: resume by session_id renders the CLI's flags and KEEPS the pin", async () => {
+  // WT-11's answer, encoded: --fork-session is required for the two to
+  // coexist, and forking under the broker-minted id is what lets
+  // AgentMeta.sessionId keep pointing at the live record.
+  const t = await setup();
+  try {
+    const cwd = scratchRepo();
+    t.deps.resumable.record("default", { kind: "claude", sessionId: "sess-a", startedAt: 1 }, cwd);
+    t.fake.handlers.set("workspace.create", () => ({ root_pane: { pane_id: "w2:p1" } }));
+    t.fake.handlers.set("agent.start", () => ({ type: "agent_started" }));
+    // claude's prepare block yields CLAUDE_CONFIG_DIR, so the env-injection
+    // path (drop file + send_input) runs for this kind.
+    t.fake.handlers.set("pane.send_input", () => ({ type: "ok" }));
+    const out = (await runBrokerMethod(t.deps, "default", "broker.agent.spawn", {
+      resume: { session_id: "sess-a" },
+    })) as { pane_id: string };
+
+    const started = t.fake.received.find((r) => r.method === "agent.start");
+    const args = (started?.params as { args: string[] }).args;
+    assert.equal(args[0], "--session-id", "the pin is still there");
+    assert.match(args[1], /^[0-9a-f-]{36}$/);
+    assert.deepEqual(args.slice(2), ["--resume", "sess-a", "--fork-session"]);
+    // and it landed in the conversation's own directory, unasked
+    const created = t.fake.received.find((r) => r.method === "workspace.create");
+    assert.equal((created?.params as { cwd: string }).cwd, cwd);
+    assert.ok(out.pane_id);
+  } finally {
+    await t.teardown();
+  }
+});
+
+test("mode D: resuming into a DIFFERENT cwd is refused, not silently faked", async () => {
+  // The failure this exists to prevent: the CLI keys transcripts on the
+  // directory, so a resume from elsewhere starts a fresh conversation
+  // wearing an old id and looks like success from every angle.
+  const t = await setup();
+  try {
+    const cwd = scratchRepo();
+    const other = scratchRepo();
+    t.deps.resumable.record("default", { kind: "claude", sessionId: "sess-a", startedAt: 1 }, cwd);
+    await assert.rejects(
+      runBrokerMethod(t.deps, "default", "broker.agent.spawn", { resume: { session_id: "sess-a" }, cwd: other }),
+      (e: BrokerError) => e.code === "bad_request" && /the conversation happened in/.test(e.message),
+    );
+    assert.equal(t.fake.received.find((r) => r.method === "agent.start"), undefined, "nothing was spawned");
+  } finally {
+    await t.teardown();
+  }
+});
+
+test("mode D: a kind with no verified resume syntax is refused rather than guessed", async () => {
+  // WT-2's lesson as a guard: agy ACCEPTS --conversation and honors nothing,
+  // which is indistinguishable from a real resume until someone asks the
+  // agent something only the old conversation knew.
+  const t = await setup();
+  try {
+    const cwd = scratchRepo();
+    t.deps.resumable.record("default", { kind: "opencode", sessionId: "sess-a", startedAt: 1 }, cwd);
+    await assert.rejects(
+      runBrokerMethod(t.deps, "default", "broker.agent.spawn", { resume: { session_id: "sess-a" } }),
+      (e: BrokerError) => e.code === "resume_unsupported",
+    );
+  } finally {
+    await t.teardown();
+  }
+});
+
+test("mode D: resume by pane_id reads the LIVE index, and unknown refs are rejected", async () => {
+  const t = await setup();
+  try {
+    const cwd = scratchRepo();
+    t.deps.index.set("default", "w2", { cwd });
+    t.deps.agents.set("default", "w2:p1", { kind: "claude", sessionId: "sess-live", startedAt: 1 });
+    t.fake.handlers.set("workspace.create", () => ({ root_pane: { pane_id: "w3:p1" } }));
+    t.fake.handlers.set("agent.start", () => ({ type: "agent_started" }));
+    // claude's prepare block yields CLAUDE_CONFIG_DIR, so the env-injection
+    // path (drop file + send_input) runs for this kind.
+    t.fake.handlers.set("pane.send_input", () => ({ type: "ok" }));
+    await runBrokerMethod(t.deps, "default", "broker.agent.spawn", { resume: { pane_id: "w2:p1" } });
+    const started = t.fake.received.find((r) => r.method === "agent.start");
+    const args = (started?.params as { args: string[] }).args;
+    assert.deepEqual(args.slice(2), ["--resume", "sess-live", "--fork-session"]);
+
+    await assert.rejects(
+      runBrokerMethod(t.deps, "default", "broker.agent.spawn", { resume: { session_id: "nope" } }),
+      (e: BrokerError) => e.code === "unknown_session_ref",
+    );
+    await assert.rejects(
+      runBrokerMethod(t.deps, "default", "broker.agent.spawn", { resume: { session_id: "a", pane_id: "b" } }),
+      (e: BrokerError) => e.code === "bad_request",
+    );
+  } finally {
+    await t.teardown();
+  }
+});
+
+test("broker.session.resumable lists conversations newest-ended first", async () => {
+  const t = await setup();
+  try {
+    const cwd = scratchRepo();
+    t.deps.resumable.record("default", { kind: "claude", sessionId: "old", startedAt: 1 }, cwd);
+    await new Promise((r) => setTimeout(r, 2));
+    t.deps.resumable.record("default", { kind: "claude", sessionId: "new", startedAt: 2 }, cwd);
+    const out = (await runBrokerMethod(t.deps, "default", "broker.session.resumable", {})) as {
+      resumable: Array<{ sessionId: string }>;
+    };
+    assert.deepEqual(out.resumable.map((r) => r.sessionId), ["new", "old"], "you resume what you were just doing");
+  } finally {
+    await t.teardown();
+  }
+});

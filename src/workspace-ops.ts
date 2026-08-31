@@ -32,8 +32,8 @@ import {
 } from "./git-exec.js";
 import type { LocalHerdr } from "./local-attach.js";
 import type { Registry } from "./registry.js";
-import type { AgentIndex, WorkspaceIndex } from "./state.js";
-import type { CliProfiles } from "./cli-profiles.js";
+import type { AgentIndex, ResumableIndex, WorkspaceIndex } from "./state.js";
+import type { CliProfile, CliProfiles } from "./cli-profiles.js";
 import { prepareWorkspace, trustProject } from "./prepare-workspace.js";
 import { holdsReady } from "./readiness.js";
 import { classifySession } from "./reconcile.js";
@@ -46,6 +46,9 @@ export interface OpsDeps {
   env: EnvRegistry;
   models: ModelRegistry;
   agents: AgentIndex;
+  /** conversations whose pane is gone but which a CLI can still resume
+   * (roadmap 31b) — see ResumableIndex */
+  resumable: ResumableIndex;
   profiles: CliProfiles;
   /** broker's own state dir — prepareWorkspace materializes broker-owned
    * CLI config dirs (e.g. trust-dialog pre-acceptance) under here */
@@ -155,11 +158,19 @@ export async function runBrokerMethod(
         if (deps.index.get(session, workspaceId) === undefined) throw e;
         alreadyClosed = true;
       }
+      // Read the cwd BEFORE dropping the row — it is what makes the
+      // archived conversations resumable, and index.remove takes it away.
+      const closedCwd = deps.index.get(session, workspaceId)?.cwd;
+      const closedLabel = deps.index.get(session, workspaceId)?.label;
       deps.index.remove(session, workspaceId);
       // Every agent row for this workspace dies with it — a pane id herdr
       // later reuses must not inherit a stale kind/sessionId pointing a
-      // transcript read at a previous agent that no longer exists.
-      deps.agents.removeWorkspace(session, workspaceId);
+      // transcript read at a previous agent that no longer exists. The
+      // CONVERSATIONS outlive the panes though (roadmap 31b), so each one is
+      // archived on the way out.
+      for (const meta of deps.agents.removeWorkspace(session, workspaceId)) {
+        deps.resumable.record(session, meta, closedCwd, closedLabel);
+      }
       // `closed` is the POSTCONDITION, not a report of who did it: an
       // idempotent delete whose goal state holds must not answer false, which
       // a caller would read as failure and retry. `already_closed` carries
@@ -176,6 +187,11 @@ export async function runBrokerMethod(
       const live = [...(await herdrWorkspaces(deps, session)).keys()];
       return { session, ...classifySession(deps.index.all(session), live) };
     }
+    // Conversations whose agent is gone and whose CLI can still reattach.
+    // The answer to roadmap 31(a): the broker mints these ids and this is
+    // where a caller can finally see one.
+    case "broker.session.resumable":
+      return { session, resumable: deps.resumable.all(session) };
     case "broker.worktree.list": {
       const workspaceId = str(p.workspace_id, "workspace_id");
       const cwd = await resolveCwd(deps, session, workspaceId);
@@ -196,6 +212,11 @@ export async function runBrokerMethod(
         15_000,
       )) as { path?: unknown };
       deps.index.remove(session, workspaceId);
+      // Deliberately NOT archived as resumable, unlike workspace.close: this
+      // call DELETES the checkout, and a conversation whose directory is gone
+      // cannot be resumed — the CLI keys its transcript on that path. An
+      // entry here would list a conversation that fails the moment anyone
+      // picks it.
       deps.agents.removeWorkspace(session, workspaceId);
       return { workspace_id: workspaceId, removed: true, path: typeof r?.path === "string" ? r.path : null };
     }
@@ -512,11 +533,96 @@ async function listWorkspaces(deps: OpsDeps, session: string): Promise<unknown> 
  * the same cwd and inherited label, since herdr 0.8.0's pane-create method
  * is unverified. args go verbatim to agent.start (model/effort flags live
  * there — the broker never interprets them). */
+/** Render a CLI's resume flag. The three styles are real differences
+ * observed across the manifest set, not speculation about future ones —
+ * `claude --resume <id>`, `copilot --resume=<id>`, `codex resume <id>` —
+ * which is why the profile stores the shape rather than assuming one.
+ * `extraArgs` follows the id (claude's --fork-session lives there). */
+function renderResume(r: NonNullable<CliProfile["resume"]>, sessionId: string): string[] {
+  const head =
+    r.style === "equals"
+      ? [`${r.flag}=${sessionId}`]
+      : r.style === "subcommand"
+        ? [r.flag, sessionId]
+        : [r.flag, sessionId];
+  return [...head, ...(r.extraArgs ?? [])];
+}
+
+interface ResumeTarget {
+  sessionId: string;
+  kind: string;
+  cwd: string;
+  profile: CliProfile;
+}
+
+/** Resolve `resume: {session_id}` or `resume: {pane_id}` to a conversation.
+ *
+ * Two forms because there are two moments you want this. `session_id` reads
+ * the archive and is the one that matters — resume is wanted precisely when
+ * the agent is GONE, which is when its pane row no longer exists. `pane_id`
+ * is the convenience for an agent still on screen, resolved from the live
+ * index. Both end at the same place: an id, a kind, and the directory the
+ * conversation belongs to. */
+function resolveResume(deps: OpsDeps, session: string, p: Record<string, unknown>): ResumeTarget | undefined {
+  if (p.resume === undefined) return undefined;
+  const r = p.resume as Record<string, unknown> | null;
+  const bySession = typeof r?.session_id === "string" ? r.session_id : undefined;
+  const byPane = typeof r?.pane_id === "string" ? r.pane_id : undefined;
+  if (!bySession === !byPane) {
+    throw new BrokerError("bad_request", "'resume' needs exactly one of 'session_id' and 'pane_id'");
+  }
+
+  let sessionId: string;
+  let kind: string;
+  let cwd: string | undefined;
+  if (bySession) {
+    const row = deps.resumable.get(session, bySession);
+    if (!row) {
+      throw new BrokerError("unknown_session_ref", `no resumable conversation '${bySession}' in session '${session}'`);
+    }
+    ({ sessionId, kind, cwd } = row);
+  } else {
+    const meta = deps.agents.get(session, byPane as string);
+    if (!meta) throw new BrokerError("bad_request", `no agent recorded for pane '${byPane as string}'`);
+    if (!meta.sessionId) {
+      throw new BrokerError(
+        "bad_request",
+        `the agent in pane '${byPane as string}' (${meta.kind}) has no pinned session id, so there is ` +
+          "nothing to resume BY — only kinds with a `pin` in cli-profiles.ts can be resumed",
+      );
+    }
+    sessionId = meta.sessionId;
+    kind = meta.kind;
+    cwd = deps.index.get(session, (byPane as string).split(":")[0])?.cwd;
+    if (!cwd) throw new BrokerError("bad_request", `no recorded cwd for pane '${byPane as string}'`);
+  }
+
+  const profile = deps.profiles.get(kind);
+  // Absent rather than guessed, same rule as `transcript`. Sending an
+  // unverified flag is how WT-2's agy result happens: accepted, honored by
+  // nothing, and indistinguishable from a real resume until someone asks the
+  // agent something only the old conversation knew.
+  if (!profile?.resume) {
+    throw new BrokerError(
+      "resume_unsupported",
+      `'${kind}' has no verified resume syntax, so the broker will not guess one. Kinds gain a ` +
+        "`resume` profile entry only once a wire probe has watched it reattach (WT-11).",
+    );
+  }
+  return { sessionId, kind, cwd: cwd as string, profile };
+}
+
 async function spawn(deps: OpsDeps, session: string, p: Record<string, unknown>): Promise<unknown> {
-  const kind = str(p.kind, "kind");
+  // Mode D (roadmap 31): reattach an existing conversation instead of
+  // starting a fresh one. NOT a fourth placement mode — a resumed agent
+  // still needs a pane, so this composes with A/B/C rather than replacing
+  // them. What it adds is WHICH conversation, and a cwd when the caller
+  // does not name one.
+  const resumeReq = resolveResume(deps, session, p);
+  const kind = resumeReq ? resumeReq.kind : str(p.kind, "kind");
   const hasCwd = typeof p.cwd === "string";
   const hasWs = typeof p.workspace_id === "string";
-  if (hasCwd === hasWs) {
+  if (hasCwd === hasWs && !(resumeReq && !hasCwd && !hasWs)) {
     throw new BrokerError("bad_request", "exactly one of 'cwd' and 'workspace_id' is required");
   }
   let args: string[] | undefined;
@@ -542,7 +648,12 @@ async function spawn(deps: OpsDeps, session: string, p: Record<string, unknown>)
 
   let cwd: string;
   const label = typeof p.label === "string" ? p.label : undefined;
-  if (!hasWs) {
+  if (resumeReq && !hasCwd && !hasWs) {
+    // The conversation's own directory. Defaulting rather than demanding it
+    // keeps the common case one field: you resume by id and land where the
+    // conversation lived.
+    cwd = resumeReq.cwd;
+  } else if (!hasWs) {
     cwd = p.cwd as string;
     if (!isAbsolute(cwd)) throw new BrokerError("bad_request", "'cwd' must be an absolute path");
     let stat;
@@ -554,6 +665,20 @@ async function spawn(deps: OpsDeps, session: string, p: Record<string, unknown>)
     if (!stat.isDirectory()) throw new BrokerError("bad_request", `'cwd' is not a directory: ${cwd}`);
   } else {
     cwd = await resolveCwd(deps, session, p.workspace_id as string);
+  }
+
+  // A resume into the WRONG directory is the failure this guards. claude
+  // stores transcripts under a slug of the cwd, so `--resume <id>` from
+  // elsewhere does not reattach — it starts a fresh conversation wearing an
+  // old id, which looks exactly like success from every angle the broker can
+  // see. Refuse instead of producing a convincing lie.
+  if (resumeReq && cwd !== resumeReq.cwd) {
+    throw new BrokerError(
+      "bad_request",
+      `cannot resume session '${resumeReq.sessionId}' from '${cwd}': the conversation happened in ` +
+        `'${resumeReq.cwd}', and this CLI keys its transcripts on the directory. Omit 'cwd' and ` +
+        "'workspace_id' to resume where it lived.",
+    );
   }
 
   // Env spec §5: resolve first — a failing hook must not leave an orphan
@@ -701,6 +826,15 @@ async function spawn(deps: OpsDeps, session: string, p: Record<string, unknown>)
   if (profile?.pin) {
     pinnedId = randomUUID();
     args = [...(args ?? []), profile.pin.flag, pinnedId];
+  }
+  // Mode D's argv. The pin above is KEPT deliberately: WT-11 showed the fork
+  // lands under the id the broker just minted, so AgentMeta.sessionId goes on
+  // pointing at the live record and nothing has to be re-captured after
+  // spawn. Suppressing the pin instead would have forced the broker to adopt
+  // an id it did not mint, giving up the launch-time-known path that is the
+  // whole reason `pin` exists.
+  if (resumeReq) {
+    args = [...(args ?? []), ...renderResume(resumeReq.profile.resume!, resumeReq.sessionId)];
   }
   for (let attempt = 0; ; attempt++) {
     try {
@@ -893,7 +1027,12 @@ async function stopAgent(deps: OpsDeps, session: string, p: Record<string, unkno
   await deps.local.request(session, "pane.close", { pane_id: pane }, 15_000);
   // The agent's life ends with its pane — a reused pane id must not
   // inherit this agent's stale kind/sessionId for a future transcript read.
-  deps.agents.remove(session, pane);
+  // Its CONVERSATION does not end with the pane, though: archive it first,
+  // which is the whole of roadmap 31(b). This is the moment resume exists
+  // for — an agent that stopped is exactly the one you want back.
+  const ended = deps.agents.remove(session, pane);
+  const ws = deps.index.get(session, pane.split(":")[0]);
+  if (ended) deps.resumable.record(session, ended, ws?.cwd, ws?.label);
   return { stopped: true, pane_id: pane, agent, kind };
 }
 

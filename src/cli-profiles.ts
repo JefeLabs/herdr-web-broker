@@ -21,6 +21,17 @@ export interface CliProfile {
   kind: string;
   /** launch flag that fixes the session id, when the CLI has one */
   pin?: { flag: string };
+  /** how this CLI reattaches an existing conversation (roadmap 31, spawn
+   * mode D). `style` is not cosmetic — the shapes genuinely differ across
+   * CLIs (`--resume <id>`, `--resume=<id>`, `resume <id>` as a SUBCOMMAND),
+   * which is why the flag is stored rather than assumed, exactly as `pin`
+   * does. `extraArgs` carries whatever else that CLI needs alongside it.
+   *
+   * Same rule as `transcript`: a kind whose resume is unverified ships with
+   * this ABSENT rather than guessed, and spawn refuses to resume it rather
+   * than sending a flag nobody has watched work. WT-2 is why — `agy`
+   * ACCEPTS `--conversation <uuid>` and honors nothing. */
+  resume?: { flag: string; style?: "arg" | "equals" | "subcommand"; extraArgs?: string[] };
   transcript?: TranscriptSource;
   /** per-kind vocabulary read out of the transcript */
   terminal?: { done: string[]; blocked: string[]; running: string[] };
@@ -52,6 +63,15 @@ const BUILTIN: Array<Omit<CliProfile, "source">> = [
   {
     kind: "claude",
     pin: { flag: "--session-id" },
+    // WT-11, live 2026-08-30 (2.1.251). --fork-session is REQUIRED, not
+    // optional decoration: --resume alongside the --session-id that `pin`
+    // appends is rejected outright ("--session-id can only be used with
+    // --continue or --resume if --fork-session is also specified"), and the
+    // CLI exits while agent.start still reports success. Forking is also the
+    // better half of that trade — the fork lands under the id the BROKER
+    // minted, so AgentMeta.sessionId keeps pointing at the live record and
+    // the launch-time-known path `pin` exists for survives a resume.
+    resume: { flag: "--resume", extraArgs: ["--fork-session"] },
     // {configDir} is $CLAUDE_CONFIG_DIR when `prepare` (below) redirected
     // it for this spawn, else {home}/.claude — readTurnState resolves
     // which (transcript.ts): CLAUDE_CONFIG_DIR relocates this CLI's WHOLE

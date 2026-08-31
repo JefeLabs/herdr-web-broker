@@ -15,7 +15,7 @@ import { ModelRegistry } from "../src/model-registry.js";
 import { Registry } from "../src/registry.js";
 import { LocalHerdr } from "../src/local-attach.js";
 import { TunnelHub } from "../src/tunnel.js";
-import { AgentIndex, ChildrenStore } from "../src/state.js";
+import { AgentIndex, ChildrenStore, ResumableIndex } from "../src/state.js";
 import { CliProfiles } from "../src/cli-profiles.js";
 import { loadConfig } from "../src/config.js";
 import { createHttpHandler } from "../src/http.js";
@@ -65,6 +65,7 @@ async function setup(opts: { limiter?: AuthLimiter; ownership?: boolean } = {}) 
     env: new EnvRegistry({ stateDir: tmpDir() }),
     models: new ModelRegistry(),
     agents: new AgentIndex(tmpDir()),
+    resumable: new ResumableIndex(tmpDir()),
     profiles: new CliProfiles(),
     stateDir: tmpDir(),
     askPollMs: 25,

@@ -8,7 +8,7 @@ import { ModelRegistry } from "../src/model-registry.js";
 import { LocalHerdr } from "../src/local-attach.js";
 import { Registry } from "../src/registry.js";
 import { ParentLink } from "../src/south.js";
-import { AgentIndex, WorkspaceIndex } from "../src/state.js";
+import { AgentIndex, ResumableIndex, WorkspaceIndex } from "../src/state.js";
 import { CliProfiles } from "../src/cli-profiles.js";
 import { PROTO_VERSION } from "../src/tunnel.js";
 import { FakeHerdr } from "./fake-herdr.js";
@@ -65,6 +65,7 @@ test("child heartbeat: answers a server-initiated ping after enroll; stop() clea
       env: new EnvRegistry({ stateDir: tmpDir() }),
       models: new ModelRegistry(),
       agents: new AgentIndex(tmpDir()),
+      resumable: new ResumableIndex(tmpDir()),
       profiles: new CliProfiles(),
       stateDir: tmpDir(),
       settleMsOverride: 0,

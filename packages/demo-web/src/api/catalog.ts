@@ -396,6 +396,43 @@ export const CATALOG: EndpointSpec[] = [
     build: (_v, ctx) => ({ method: "GET", path: `${sess(ctx)}/workspaces`, auth: "bearer" }),
   },
   {
+    id: "session-resumable",
+    group: "Workspaces & Repos",
+    title: "Resumable conversations",
+    summary: "Conversations whose agent is gone but whose CLI can still reattach — the ids `spawn`'s `resume` takes.",
+    docs:
+      "Archived when an agent stops or its workspace closes, keyed by the CLI's own session id because that is " +
+      "the only identifier that outlives the pane. Newest-ended first. Agents with no pinned session id are not " +
+      "recorded (nothing to resume BY), and worktree removal records nothing either — it deletes the checkout, and " +
+      "the CLI keys its transcript on that directory. Resume with POST .../agents { resume: { session_id } }.",
+    method: "GET",
+    pathTemplate: "/instances/{instance}/sessions/{session}/resumable",
+    auth: "bearer",
+    fields: [],
+    response: {
+      type: "object",
+      properties: {
+        session: { type: "string" },
+        resumable: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              sessionId: { type: "string" },
+              kind: { type: "string" },
+              cwd: { type: "string" },
+              endedAt: { type: "number" },
+              label: { type: "string" },
+            },
+            required: ["sessionId", "kind", "cwd", "endedAt"],
+          },
+        },
+      },
+      required: ["session", "resumable"],
+    },
+    build: (_v, ctx) => ({ method: "GET", path: `${sess(ctx)}/resumable`, auth: "bearer" }),
+  },
+  {
     id: "workspace-close",
     group: "Workspaces & Repos",
     title: "Close workspace (reap)",

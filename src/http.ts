@@ -175,6 +175,10 @@ export function createHttpHandler(deps: HttpDeps) {
     // happened to still list (a deterministic re-provision later must not
     // inherit a stale row pointing a transcript read at a dead agent).
     deps.ops.agents.removeSession(binding.session);
+    // The archive goes with them: a resumable id names a conversation inside
+    // a herdr this call is destroying, so keeping the rows would list
+    // conversations nothing can reattach.
+    deps.ops.resumable.removeSession(binding.session);
     // ...and the same for workspaces (roadmap 25(a)). These two stores are
     // siblings and broker.workspace.close clears both; this site cleared
     // only one. Session names are deterministic, so the surviving rows were
@@ -562,6 +566,12 @@ export function createHttpHandler(deps: HttpDeps) {
 
     // GET /instances/{i}/sessions/{s}/orphans — live workspaces the broker
     // has no record of. Reports only; nothing here kills anything.
+    // GET /instances/{i}/sessions/{s}/resumable — conversations whose agent
+    // is gone but which a CLI can reattach (roadmap 31).
+    if (parts.length === 5 && parts[4] === "resumable" && req.method === "GET") {
+      json(res, 200, await callInstance(instance, session, "broker.session.resumable", {}));
+      return;
+    }
     if (parts.length === 5 && parts[4] === "orphans" && req.method === "GET") {
       json(res, 200, await callInstance(instance, session, "broker.session.orphans", {}));
       return;

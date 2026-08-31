@@ -3,7 +3,7 @@ import { EnvRegistry } from "../src/env-registry.js";
 import { LocalHerdr } from "../src/local-attach.js";
 import { ModelRegistry } from "../src/model-registry.js";
 import { Registry } from "../src/registry.js";
-import { AgentIndex, WorkspaceIndex } from "../src/state.js";
+import { AgentIndex, ResumableIndex, WorkspaceIndex } from "../src/state.js";
 import { CliProfiles } from "../src/cli-profiles.js";
 import type { OpsDeps } from "../src/workspace-ops.js";
 import { FakeHerdr } from "./fake-herdr.js";
@@ -31,6 +31,7 @@ export async function setup(): Promise<{ fake: FakeHerdr; deps: OpsDeps; teardow
     env: new EnvRegistry({ stateDir: tmpDir() }),
     models: new ModelRegistry(),
     agents: new AgentIndex(tmpDir()),
+    resumable: new ResumableIndex(tmpDir()),
     profiles: new CliProfiles(),
     stateDir: tmpDir(),
     askPollMs: 25,
