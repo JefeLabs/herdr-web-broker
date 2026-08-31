@@ -523,6 +523,80 @@ missing endpoints/SDK/UI, not missing reachability):
     module 404s and the broker still boots; and `packages/module` remains
     UNPUBLISHED until item 26.
 
+## Usage and cost accounting (2026-08-30 review)
+
+30. **Token usage and cost — nothing reads it today.**
+    Raised by an external gateway design note reviewed 2026-08-30, which
+    proposed a per-agent `usage` route read from the CLI's own transcript.
+    The gap is real and total: no route, no accounting, no price table,
+    and the word `usage` appears nowhere in `src/`. A fleet operator can
+    see what every agent is DOING and nothing about what any of it cost —
+    on the one endpoint class where the answer is already sitting on disk.
+    The transcript machinery items 24/25 built is the right place to read
+    it from, and it is NOT free reuse — which is the part worth recording
+    before someone starts and discovers it late. `readTail`
+    (`src/transcript.ts:243`) SEEKS to `size - TAIL_BYTES` (256KB) and the
+    comment above it states the reason plainly: "only the tail matters: a
+    turn's terminal record is at the end". Turn state is a LAST-RECORD
+    question. Usage is an AGGREGATE over the whole file. Pointing the
+    existing reader at it under-counts every session past 256KB and
+    reports a number that looks right and is low — the worst failure
+    shape available, and one no test would catch without a fixture built
+    to exceed the cap.
+    (a) **Which kinds can answer at all.** Availability follows the
+    `transcript` key, so `copilot` is excluded by construction (no
+    profile entry, status tier) and stays excluded until WT-5 clears.
+    For the four that have one, only `claude`'s store is a confident yes
+    — per-message token counts are what its JSONL is known to carry.
+    Whether `agy`'s transcript, `opencode`'s `message.data` blobs and
+    `codex`'s `rollout-*.jsonl` record counts AT ALL is unverified, and
+    the repo's own rule applies: a kind whose format is unverified ships
+    with the capability ABSENT rather than stubbed. Registered as
+    **WT-10** in `test/wire/README.md`; no probe file is written yet, so
+    it joins WT-6 as the second open question with nothing behind it.
+    What it has to answer is narrow — per kind, does a completed turn
+    record counts at all, under what field names, are the token classes
+    kept separate or pre-summed, and is a row a per-turn DELTA or a
+    running session TOTAL. That last distinction decides whether
+    accumulation is a sum or a max, and getting it backwards is wrong in
+    a plausible-looking way on every multi-turn session.
+    (b) **Aggregate shape, and the cursor the broker does not have.**
+    The note's advice is to tail by byte offset and never re-parse. That
+    is right and it is a NEW mechanism here: `readTail` is deliberately
+    stateless — no cursor, no per-pane bookkeeping, safe to call on any
+    poll because it always answers from the end. Accumulating requires
+    remembering a byte offset and a running total per pane, surviving
+    pane close, and handling the case `decodeBytesRead` already guards
+    for one read (a truncate racing the reader) across many. Re-reading
+    the whole file per request is the honest alternative and is fine
+    until it isn't; the decision belongs with real transcript sizes, not
+    in advance.
+    (c) **Store raw, price at read time.** Do not collapse to two
+    numbers. Anthropic bills input, output, cache-creation and cache-read
+    at materially different rates, so summing them produces a cost figure
+    wrong by a multiple, and a price table baked into the accumulator
+    makes every historical row unrepairable when prices move. The shape
+    this repo already uses twice fits exactly: builtins in code,
+    `[[...]]` rows in config.toml overriding by key, `source:
+    "builtin" | "config"` on every entry — `model-registry.ts` and
+    `cli-profiles.ts` are both instances. A price table is the third.
+    (d) **Runtime only, and absent rather than zero.** A federated
+    child's transcripts live on the CHILD's disk, so usage inherits
+    25(c)'s ruling without change: the field is OMITTED for a remote
+    instance. Reporting `0` would be indistinguishable from a genuinely
+    idle agent — the same ambiguity class that hid 25(b) — and here it
+    is worse, because zero cost is a number a caller will happily sum.
+    (e) **Its own route, not a field on the roster.** 25(c) set the
+    precedent and the cost argument is stronger here: `GET .../agents` is
+    a free push-fed registry read and the endpoint a UI polls, evidence
+    already costs a 256KB tail per agent behind `?evidence=1`, and usage
+    costs strictly more than evidence. It does not belong on that
+    handler at any opt-in level.
+    No condition gates this one — it is unbuilt because nobody asked for
+    it, not because anything is blocking. The cheapest honest first
+    slice is `claude` alone, whole-file re-read, raw payload stored and
+    priced at read time, absent everywhere else.
+
 ## Blocked on herdr (needs a live schema probe)
 
 The 2026-08-21 schema probe against live herdr (protocol 19, via the demo
@@ -661,20 +735,24 @@ map!), `pane.close`, `agent.wait`, and `agent.prompt`'s
 
 ## Suggested order
 
-The numbered roadmap is COMPLETE — 29 of 29 as of 2026-08-29, every item
-closed, deferred with a stated condition, or documented. Nothing on it is
-waiting on an answer.
+The numbered roadmap ran 29 of 29 as of 2026-08-29 — every item closed,
+deferred with a stated condition, or documented, and nothing waiting on an
+answer. **Item 30 (usage and cost) opened it back up on 2026-08-30**, and
+it is the only item that is neither built nor gated: unbuilt because
+nobody asked, with a first slice named in its own entry.
 
 Publishing is not pending work: interactive OAuth is the recorded decision
 (item 26), and 0.3.0 shipped that way. Of the wire questions, `codex` is
 ANSWERED and off the status tier (item 27's profile, 2b8406f); `copilot`'s
 schema is answered with only its completion signal open, behind a PAT service
-being built elsewhere; and **WT-6 — herdr's `pane.exited` exit code — is the
-only question with no probe file at all**. WT-8 and WT-9 were added the same
-day and are answered. What else remains is the
-demand-driven tails recorded in the strike notes (skins, framework
-adapters, federated multi-user, PDF extraction, quotas) plus the
-in-flight model-discovery spikes. In flight, pending credentialed spikes: per-user
+being built elsewhere; and **the two questions with no probe file at all are
+WT-6** (herdr's `pane.exited` exit code) **and WT-10** (whether each CLI's
+store records token counts, and in what shape). WT-8 and WT-9 were added
+2026-08-29 and are answered; WT-10 was registered 2026-08-30 alongside item
+30, and writing it is the first act of that item.
+What else remains is the demand-driven tails recorded in the strike notes
+(skins, framework adapters, federated multi-user, PDF extraction, quotas)
+plus the in-flight model-discovery spikes. In flight, pending credentialed spikes: per-user
 model discovery (probe-on-spawn keyed by credential context, `auto`
 until a list is recorded — ACP body vs pane body undecided until the
 wire truth lands).

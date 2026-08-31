@@ -29,10 +29,17 @@ answer in the spec's wire-truth table and, where it is a per-CLI fact, as a
 | WT-7 | ~~does `pane.wait_for_output` match the pane's OWN echoed input, or only program output?~~ **ANSWERED 2026-08-29** (herdr 0.8.2) — the pane's OWN echoed input, on `visible` AND `recent`; `matched_line` comes back as the echoed command itself | — **and this answer was then MISAPPLIED.** Roadmap 27's sentinel was built on "when it echoes, the shell is at its prompt", which this answer disproves rather than supports: it matched its own echo and reported cold panes ready. Fixed 26235cd; see the instrument note below |
 | WT-8 | ~~does herdr's agent detection fire for an agent TYPED into a pane, or only one started via `agent.start`?~~ **ANSWERED 2026-08-29** — NOT bound to `agent.start`. A `claude` typed into a pane via `send_input` is detected with `agent=claude` and reaches `agent_status=idle`; sampled every 5s for 60s, the typed path and the `agent.start` control are indistinguishable from the 5s mark. Run by the smithagents session; **not independently reproduced here**, because it spawns a real agent | a command-string runtime would get no detection and would have to drive `agent.start` by kind |
 | WT-9 | ~~is `keys: ["C-c"]` accepted by `pane.send_input`, and does it interrupt?~~ **ANSWERED 2026-08-29** — accepted via `{pane_id, keys}` with no `text` field, AND effective: a negative control confirmed `sleep 300` held the pane first. `Escape` is accepted through the same shape. Reproduced here independently — though it failed once first, on a cold shell that never reached a prompt inside its 15s readiness window. Not flakiness in the probe: see the load note below | a runtime sending tmux key names would need a translation layer; outcome 3 (accepted but no-op) would have been the silent one |
+| WT-10 | do the CLI stores record TOKEN COUNTS, and in what shape? Four kinds have a resolvable transcript (`claude` path, `agy` map, `opencode` sqlite, `codex` scan) and only `claude` is a confident yes. Per kind: does a completed turn carry counts at all, under what field names, are the input/output/cache-creation/cache-read classes kept SEPARATE or pre-summed, and is a row a per-turn DELTA or a running session TOTAL? That last one decides whether accumulation is a sum or a max — backwards in either direction and every multi-turn session is wrong, silently and in a plausible-looking way | roadmap 30 ships `claude`-only and usage is ABSENT for every other kind — absent, never `0`, per the rule 25(c) set for `evidence` |
 
 WT-3's answer already shipped and needs no probe: `src/cli-profiles.ts`'s
 `opencode` profile (`via: "sqlite"`) and `src/transcript.ts`'s
 `parseOpencode`.
+
+WT-10 has NO PROBE FILE — it and WT-6 are the two open questions with
+nothing written. It is also the heaviest spawner on this table: four kinds,
+each needing a real completed turn, which is precisely the shape the
+contamination note below warns about. Run it one kind per run, and read a
+slow trial as load before reading it as an answer.
 
 ## A probe is an instrument, not a test
 
