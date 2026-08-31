@@ -24,8 +24,19 @@ export interface CliProfile {
   transcript?: TranscriptSource;
   /** per-kind vocabulary read out of the transcript */
   terminal?: { done: string[]; blocked: string[]; running: string[] };
-  /** first-run prep: point the CLI at a broker-owned config dir */
-  prepare?: { configDirEnv: string; fileName: string; contents: Record<string, unknown> };
+  /** first-run prep: point the CLI at a broker-owned config dir.
+   * `contents` merges at the TOP level of the config file; `perProject`
+   * merges under `projects[<cwd>]`, which is where Claude Code actually
+   * records directory trust — verified 2026-08-30 against 2.1.251 on
+   * WT-11's first run: a top-level `hasTrustDialogAccepted` is written,
+   * the CLI reads the broker-owned dir (it wrote its own machineID and
+   * migration flags there), and the trust dialog appears anyway. */
+  prepare?: {
+    configDirEnv: string;
+    fileName: string;
+    contents: Record<string, unknown>;
+    perProject?: Record<string, unknown>;
+  };
   /** how long interactive_ready must HOLD before a spawn is believed */
   settleMs?: number;
   source: "builtin" | "config";
@@ -55,7 +66,13 @@ const BUILTIN: Array<Omit<CliProfile, "source">> = [
     prepare: {
       configDirEnv: "CLAUDE_CONFIG_DIR",
       fileName: ".claude.json",
-      contents: { hasTrustDialogAccepted: true, hasCompletedOnboarding: true },
+      contents: { hasCompletedOnboarding: true },
+      // hasTrustDialogAccepted moved OUT of `contents` deliberately. It sat
+      // at the top level from the start and never answered anything: trust
+      // is keyed by path, and a real ~/.claude.json carries no top-level
+      // copy at all. Leaving it would be config that reads live and is not
+      // — the trap 25(e) closed for opencode's terminal.done.
+      perProject: { hasTrustDialogAccepted: true },
     },
     settleMs: 2500,
   },

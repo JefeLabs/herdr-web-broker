@@ -34,7 +34,7 @@ import type { LocalHerdr } from "./local-attach.js";
 import type { Registry } from "./registry.js";
 import type { AgentIndex, WorkspaceIndex } from "./state.js";
 import type { CliProfiles } from "./cli-profiles.js";
-import { prepareWorkspace } from "./prepare-workspace.js";
+import { prepareWorkspace, trustProject } from "./prepare-workspace.js";
 import { holdsReady } from "./readiness.js";
 import { classifySession } from "./reconcile.js";
 import { decideTurn, readTurnState } from "./transcript.js";
@@ -598,6 +598,26 @@ async function spawn(deps: OpsDeps, session: string, p: Record<string, unknown>)
     paneId = rootPane;
     workspaceId = paneId.split(":")[0];
     deps.index.set(session, workspaceId, { cwd, ...(label ? { label } : {}) });
+  }
+
+  // Per-DIRECTORY trust, written now that the EFFECTIVE cwd is known.
+  //
+  // This cannot ride prepareWorkspace above. That call has to happen before
+  // the pane exists, because the env var it returns is injected at pane
+  // creation — and mode C's checkout path does not exist until
+  // worktree.create has returned, which is the branch above. Mode C is also
+  // the case that needs this most: an isolated checkout is a new path by
+  // construction, so every mode-C spawn meets the dialog on a directory no
+  // prior spawn can have trusted.
+  //
+  // Same degrade contract as prepareWorkspace, for the same reasons (a
+  // read-only stateDir, a cli-config dir the broker doesn't own): a trust
+  // convenience must never fail a spawn that would otherwise succeed. The
+  // CLI's own first-run dialog reappears, exactly as before this existed.
+  try {
+    trustProject(deps.profiles.get(kind) ?? { kind, source: "builtin" }, deps.stateDir, worktreeMade?.path ?? cwd);
+  } catch {
+    // intentionally ignored — see above
   }
 
   // Spawn readiness (spec 2026-08-28-spawn-readiness-design.md). Every path
