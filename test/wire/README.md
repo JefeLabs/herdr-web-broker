@@ -30,16 +30,21 @@ answer in the spec's wire-truth table and, where it is a per-CLI fact, as a
 | WT-8 | ~~does herdr's agent detection fire for an agent TYPED into a pane, or only one started via `agent.start`?~~ **ANSWERED 2026-08-29** — NOT bound to `agent.start`. A `claude` typed into a pane via `send_input` is detected with `agent=claude` and reaches `agent_status=idle`; sampled every 5s for 60s, the typed path and the `agent.start` control are indistinguishable from the 5s mark. Run by the smithagents session; **not independently reproduced here**, because it spawns a real agent | a command-string runtime would get no detection and would have to drive `agent.start` by kind |
 | WT-9 | ~~is `keys: ["C-c"]` accepted by `pane.send_input`, and does it interrupt?~~ **ANSWERED 2026-08-29** — accepted via `{pane_id, keys}` with no `text` field, AND effective: a negative control confirmed `sleep 300` held the pane first. `Escape` is accepted through the same shape. Reproduced here independently — though it failed once first, on a cold shell that never reached a prompt inside its 15s readiness window. Not flakiness in the probe: see the load note below | a runtime sending tmux key names would need a translation layer; outcome 3 (accepted but no-op) would have been the silent one |
 | WT-10 | do the CLI stores record TOKEN COUNTS, and in what shape? Four kinds have a resolvable transcript (`claude` path, `agy` map, `opencode` sqlite, `codex` scan) and only `claude` is a confident yes. Per kind: does a completed turn carry counts at all, under what field names, are the input/output/cache-creation/cache-read classes kept SEPARATE or pre-summed, and is a row a per-turn DELTA or a running session TOTAL? That last one decides whether accumulation is a sum or a max — backwards in either direction and every multi-turn session is wrong, silently and in a plausible-looking way | roadmap 30 ships `claude`-only and usage is ABSENT for every other kind — absent, never `0`, per the rule 25(c) set for `evidence` |
+| WT-11 | does each CLI RESUME a conversation by id from a cold start, and with what syntax? The shapes to try are `claude --resume <id>`, `copilot --resume=<id>`, `opencode --session <id>`, `codex resume [ID]` — none verified here. Three things must come back separately: does the flag REATTACH prior context or merely start clean without erroring (WT-2's `agy` result is the standing warning — it accepted the flag, reached the terminal title, and minted nothing); does the resumed process append to the SAME transcript record or open a new one, since transcript resolution keys off exactly that; and does the resume flag collide with the pin flag the broker already appends | roadmap 31's mode D never ships, and every state the evidence tier detects stays diagnosable and unrecoverable |
 
 WT-3's answer already shipped and needs no probe: `src/cli-profiles.ts`'s
 `opencode` profile (`via: "sqlite"`) and `src/transcript.ts`'s
 `parseOpencode`.
 
-WT-10 has NO PROBE FILE — it and WT-6 are the two open questions with
-nothing written. It is also the heaviest spawner on this table: four kinds,
-each needing a real completed turn, which is precisely the shape the
-contamination note below warns about. Run it one kind per run, and read a
-slow trial as load before reading it as an answer.
+WT-6, WT-10 and WT-11 have NO PROBE FILE — the three open questions with
+nothing written. WT-10 and WT-11 are also the heaviest spawners on this
+table: four kinds each, every one needing a real completed turn, which is
+precisely the shape the contamination note below warns about. Run them one
+kind per run, and read a slow trial as load before reading it as an answer.
+They share a fixture — WT-11 has to reach a completed turn before it can
+resume one, and that same turn is what WT-10 needs to read counts off — so
+writing WT-11 first and having WT-10 read the transcript it leaves behind
+costs one spawn instead of two.
 
 ## A probe is an instrument, not a test
 

@@ -523,15 +523,20 @@ missing endpoints/SDK/UI, not missing reachability):
     module 404s and the broker still boots; and `packages/module` remains
     UNPUBLISHED until item 26.
 
-## Usage and cost accounting (2026-08-30 review)
+## Gateway-review gaps (2026-08-30)
+
+Two items from reviewing an external gateway design note — an independent
+design for the same product, written against herdr upstream rather than
+against this repo. Most of what it proposed is already built here, usually
+with more evidence behind it. These are the two it was right about.
 
 30. **Token usage and cost — nothing reads it today.**
-    Raised by an external gateway design note reviewed 2026-08-30, which
-    proposed a per-agent `usage` route read from the CLI's own transcript.
-    The gap is real and total: no route, no accounting, no price table,
-    and the word `usage` appears nowhere in `src/`. A fleet operator can
-    see what every agent is DOING and nothing about what any of it cost —
-    on the one endpoint class where the answer is already sitting on disk.
+    The note proposed a per-agent `usage` route read from the CLI's own
+    transcript. The gap is real and total: no route, no accounting, no
+    price table, and the word `usage` appears nowhere in `src/`. A fleet
+    operator can see what every agent is DOING and nothing about what any
+    of it cost — on the one endpoint class where the answer is already
+    sitting on disk.
     The transcript machinery items 24/25 built is the right place to read
     it from, and it is NOT free reuse — which is the part worth recording
     before someone starts and discovers it late. `readTail`
@@ -596,6 +601,67 @@ missing endpoints/SDK/UI, not missing reachability):
     it, not because anything is blocking. The cheapest honest first
     slice is `claude` alone, whole-file re-read, raw payload stored and
     priced at read time, absent everywhere else.
+
+31. **Resume — the broker mints a session id, hides it, and deletes it.**
+    The other half of item 30's review. The broker identifies unexpected
+    agent states well and can act on none of them: `grep -i resume src/`
+    returns three comments and zero code. The evidence tier can PROVE an
+    agent finished its turn and died without answering (item 24), and the
+    only remedy on offer is a fresh spawn with no memory of the
+    conversation that was in flight. Identification without continuation.
+    (a) **The id exists and is unreachable.** `spawn` mints
+    `randomUUID()` when the kind has a pin flag
+    (`src/workspace-ops.ts:648`) and stores it as `AgentMeta.sessionId`
+    (`:714`). It is read by exactly one consumer — transcript resolution
+    — and returned by NO endpoint: `sessionId` appears four times in
+    `src/`, three of them comments. A caller cannot learn the id of the
+    conversation it is having.
+    (b) **The row's lifetime is bound to the wrong object.** Agent stop
+    deletes it (`:843`) for a correct reason, stated inline: a reused
+    pane id must not inherit a stale pointer for a future transcript
+    read. Correct for transcripts, exactly backwards for resume — a
+    resumable conversation OUTLIVES its pane, which is the same shape as
+    the "worktrees outlive panes" caution in the same review. The fix is
+    not to stop deleting; it is that a transcript pointer and a
+    resumption handle have different lifetimes and are currently one
+    field.
+    (c) **`--resume` is already reachable, by nobody.** `args` go
+    verbatim to `agent.start` (`:480`, `:657`) and the broker never
+    interprets them, so a caller holding an id could pass
+    `args: ["--resume", "<id>"]` today. Two things stop it: (a), and a
+    collision — `:648` appends the pin flag with a FRESH uuid whenever
+    the profile has one, so a caller-supplied resume flag would ship
+    alongside `--session-id <new>` and the CLI would be told to be two
+    conversations at once. Mode D has to make pin and resume mutually
+    exclusive, which is a one-line rule and an easy one to omit.
+    (d) **Per-kind syntax is a wire fact, not a given** — registered as
+    **WT-11**. The shapes the review listed (`claude --resume <id>`,
+    `copilot --resume=<id>`, `opencode --session <id>`) are unverified
+    here, and WT-2 is the standing precedent for why that matters: `agy`
+    ACCEPTS `--conversation <uuid>`, reaches the terminal title with it,
+    and mints nothing. Accepting a flag is not honoring it.
+    (e) **Shape.** A `resume?: { flag, style }` field beside `pin` on
+    `CliProfile` — same builtin-plus-`[[cli.profiles]]` table as
+    everything else per-kind — and a spawn **mode D** that reattaches
+    where A/B/C start fresh. Keep the id paired with what KIND of handle
+    it is rather than reconstructing a command from a bare string; the
+    review's `sessionRef {kind, value}` warning applies directly, and
+    `codex resume [ID]` versus `claude --resume <id>` is the same trap
+    `pin` already avoids by storing the flag rather than assuming one.
+    (f) **The other gap this exposes: identification is pull-based.**
+    `classifySession` is called from two sites only
+    (`src/http.ts:162` teardown, `src/workspace-ops.ts:144` the orphans
+    route), both on demand, neither at boot. The indices are file-backed
+    and survive a daemon restart, so after one the persisted index and
+    herdr's live truth can disagree until somebody asks. Nothing
+    announces divergence. Not part of mode D, recorded here because a
+    resume verb makes a boot-time reconciliation pass worth having:
+    detecting a diverged row is only useful once there is something to
+    do about it.
+    Ordering against item 30: this one first. Usage tells an operator
+    what a session cost; resume makes every state the evidence tier
+    already detects ACTIONABLE, and that tier is the most expensive
+    thing in the repo to have built.
 
 ## Blocked on herdr (needs a live schema probe)
 
@@ -737,19 +803,22 @@ map!), `pane.close`, `agent.wait`, and `agent.prompt`'s
 
 The numbered roadmap ran 29 of 29 as of 2026-08-29 — every item closed,
 deferred with a stated condition, or documented, and nothing waiting on an
-answer. **Item 30 (usage and cost) opened it back up on 2026-08-30**, and
-it is the only item that is neither built nor gated: unbuilt because
-nobody asked, with a first slice named in its own entry.
+answer. **Items 30 and 31 opened it back up on 2026-08-30** — usage and
+cost, and resume — and they are the only two that are neither built nor
+gated: unbuilt because nobody asked, each with a first slice named in its
+own entry. Take 31 first; its reasoning is at the end of that item.
 
 Publishing is not pending work: interactive OAuth is the recorded decision
 (item 26), and 0.3.0 shipped that way. Of the wire questions, `codex` is
 ANSWERED and off the status tier (item 27's profile, 2b8406f); `copilot`'s
 schema is answered with only its completion signal open, behind a PAT service
-being built elsewhere; and **the two questions with no probe file at all are
-WT-6** (herdr's `pane.exited` exit code) **and WT-10** (whether each CLI's
-store records token counts, and in what shape). WT-8 and WT-9 were added
-2026-08-29 and are answered; WT-10 was registered 2026-08-30 alongside item
-30, and writing it is the first act of that item.
+being built elsewhere; and **three questions have no probe file at all** —
+**WT-6** (herdr's `pane.exited` exit code), **WT-10** (whether each CLI's
+store records token counts, and in what shape) and **WT-11** (whether each
+CLI resumes by id, and with what syntax). WT-8 and WT-9 were added
+2026-08-29 and are answered; WT-10 and WT-11 were registered 2026-08-30
+alongside items 30 and 31, and writing them is the first act of each. They
+share a spawn fixture — see the note under the wire table.
 What else remains is the demand-driven tails recorded in the strike notes
 (skins, framework adapters, federated multi-user, PDF extraction, quotas)
 plus the in-flight model-discovery spikes. In flight, pending credentialed spikes: per-user
