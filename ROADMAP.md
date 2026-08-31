@@ -632,6 +632,13 @@ with more evidence behind it. These are the two it was right about.
     An agent with no pinned id records nothing — an unpinnable CLI has
     nothing to resume BY, and a listing entry that cannot be acted on is
     worse than none.
+    **Verification status.** Unit-tested (9 tests, mutation-checked) and
+    NOT yet wire-verified: WT-11 proved the CLI reattaches, nothing has yet
+    driven `resume` through the broker against a live claude. **WT-12**
+    (`test/wire/resume-mode-d.wire.ts`) is written for exactly that and is
+    UNRUN — it exercises the parts unit tests cannot reach, since a fake
+    herdr proves the argv while only a live run proves the conversation
+    came back.
     **Not fixed here:** (f) below, still.
     The original reasoning, which stands as the case for having built it:
     the broker identified unexpected agent states well and could act on none

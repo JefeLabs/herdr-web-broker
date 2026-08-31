@@ -35,8 +35,14 @@ answer in the spec's wire-truth table and, where it is a per-CLI fact, as a
 WT-3's answer already shipped and needs no probe: `src/cli-profiles.ts`'s
 `opencode` profile (`via: "sqlite"`) and `src/transcript.ts`'s
 `parseOpencode`.
+| WT-12 | does the BROKER's mode D reattach, end to end? WT-11 answered the CLI question by passing `args` straight through; this drives roadmap 31's OWN machinery — archive the id when the pane dies, surface it on `/resumable`, resolve it back to a kind and a directory, assemble an argv that keeps the pin. Three things it must establish: the conversation IS archived when its pane closes; resuming by id with NO cwd lands in the conversation's own directory (the CLI keys transcripts on the path, so anywhere else reattaches nothing); and the resumed agent produces a token it was given before the pane died. API-level throughout — it reads nothing off disk and uses `ask`, so there is no screen to misread and no config dir to resolve | roadmap 31 stays unverified end to end: the unit tests prove the argv, only this proves the conversation came back |
 
-WT-6 and WT-10 have NO PROBE FILE. WT-11's is written and RUN for `claude` only
+WT-6 and WT-10 have NO PROBE FILE. **WT-12's is written but UNRUN**
+(`resume-mode-d.wire.ts`) — it needs a broker daemon and an authenticated
+claude, and it spawns two agents. Its refusal half is a separate test that
+needs neither and runs in milliseconds, so a broken deployment shows up
+before the expensive half, the same split WT-11 uses for discovery.
+WT-11's is written and RUN for `claude` only
 (`claude-resume.wire.ts`) — the one kind with a verified pin AND a `prepare`
 block, so no trust gate stands in front of it, and a `via: "path"` transcript
 that makes "same record vs new record" observable rather than inferred. The
