@@ -709,9 +709,17 @@ with more evidence behind it. These are the two it was right about.
     which of the two possible modes D it should be:
     **fork and KEEP the pin** (`--resume <id> --fork-session`, the
     combination the CLI's own error names), not suppress the pin. It
-    carries prior context — the resumed agent produced a token given to
-    a conversation whose pane had already closed, reproduced across two
-    runs — and the fork lands under **the id the broker minted**, so
+    carries prior context — **re-established 2026-08-31 on evidence that
+    survives scrutiny.** The "reproduced across two runs" this sentence
+    used to rest on was the false positive: both runs searched the fork's
+    BYTES, and `--fork-session` copies the parent conversation in, so they
+    would have passed against an agent that never spoke — as one did. The
+    claim now rests on `claude-context-recall.wire.ts` against an
+    AUTHENTICATED claude: the recalled token appears in a
+    non-`<synthetic>` assistant row in the FORK record, timestamped after
+    a recall prompt that never named it. Same conclusion, evidence that
+    can actually fail — and the fork lands under **the id the broker
+    minted**, so
     `AgentMeta.sessionId` still points at the live record and nothing has
     to be re-captured after spawn. Suppressing the pin would have forced
     the broker to adopt an id it did not mint, giving up the
@@ -986,10 +994,13 @@ with more evidence behind it. These are the two it was right about.
     502 naming its own cause, so the gap costs a clear error instead of
     silent wrong conclusions. That is what makes this a deferral rather than
     a hole.
-    **What it still blocks, unchanged:** WT-11's sub-question 1 (does resume
-    reattach CONTEXT?) and all of WT-12, both of which need a claude that
-    can actually answer; and `ask`, which remains unproven against any live
-    agent — unit-tested against FakeHerdr only.
+    **What it still blocks, narrowed 2026-08-31:** all of WT-12, and `ask`,
+    which remains unproven against any live agent — unit-tested against
+    FakeHerdr only. WT-11's sub-question 1 came OFF this list the same day:
+    it is a CLI-level question, so it was answered by driving claude through
+    herdr directly with the user's own config dir, bypassing the redirect
+    entirely. WT-12 cannot be rescued the same way — it exists to test the
+    BROKER's machinery, so it needs a spawn that goes through `prepare`.
     **Where to start when it is picked up.** `apiKeyHelper` is the branch
     worth probing first: it is a COMMAND the CLI calls, which means the
     broker could point a spawn at the user's existing credential source
@@ -1164,7 +1175,8 @@ slice named in its own entry. **33's detection half landed 2026-08-31** — a br
 logged out, but the broker now refuses the spawn instead of handing back a
 green pane, so it can no longer make other work draw wrong conclusions the way
 it did twice. What remains of it is the credential decision, which blocks
-WT-11(1) and WT-12. 31(f)'s push detection landed 2026-08-31
+WT-12 (WT-11(1) was answered 2026-08-31 by going around the broker, which
+WT-12 by definition cannot do). 31(f)'s push detection landed 2026-08-31
 (`workspace.closed`); its boot-time reconciliation stays a deliberate loose
 thread, and neither 31 nor 32 substituted for that half.
 
