@@ -898,20 +898,37 @@ with more evidence behind it. These are the two it was right about.
     Every one of them. `prepare` redirects `CLAUDE_CONFIG_DIR` to a
     broker-owned directory so a trust dialog is answered inside the
     broker's blast radius rather than the user's global config.
-    **The SYMPTOM is verified and the MECHANISM is not — flagged
-    2026-08-31.** That a broker-spawned claude reports `Not logged in` was
-    observed directly, twice, by WT-13. The sentence that used to continue
-    here — "and that redirect relocates the CLI's WHOLE config tree,
-    credentials with it" — is an inference, and a doubtful one: claude
-    keeps its credentials in the macOS KEYCHAIN (a `Claude Code-credentials`
-    item exists on this machine), which `CLAUDE_CONFIG_DIR` does not move.
-    A control launched through herdr into an already-trusted cwd with NO
-    redirect came up authenticated; the matching redirected arm could not be
-    read, because it parks on an IDE welcome gate that never clears on its
-    own. So the redirect remains the leading suspect and nothing more.
-    This matters for the deferred half rather than for the shipped
-    refusal: "copy credentials into the broker dir" is a fix for a cause
-    that may not be the cause.
+    **MECHANISM, measured 2026-09-01 — and it is not what this item first
+    said.** The original sentence here was "that redirect relocates the
+    CLI's WHOLE config tree, credentials with it". That is wrong, and the
+    fix it implies does not work.
+    Four arms, all read off the pane, no model turns spent:
+    no `CLAUDE_CONFIG_DIR` at all -> **logged in** (`Claude Max`),
+    reproduced three times; `CLAUDE_CONFIG_DIR` at the broker's prepared dir
+    -> **logged out** (WT-13, twice); `CLAUDE_CONFIG_DIR` at a fresh dir
+    holding a **VERBATIM COPY of the real `.claude.json`** -> **still
+    logged out**; `CLAUDE_CONFIG_DIR` at `~/.claude` itself -> first-run
+    onboarding, because `.claude.json` lives at `~/.claude.json` in the HOME
+    ROOT and not inside `~/.claude/`, so that path is a config dir with no
+    config file in it.
+    The third arm is the informative one. Copying the real config file
+    forward does NOT restore login, so the login state does not live in
+    that file — and the credential itself never moved, because it is in the
+    macOS keychain (`Claude Code-credentials`). What actually changes is
+    the MODE: the banner reads `Claude Max` unredirected and
+    `API Usage Billing` redirected. Setting `CLAUDE_CONFIG_DIR` makes claude
+    stop using its OAuth/subscription credential and fall back to
+    API-key auth, which then finds no key.
+    **This narrows the deferred decision to two real options, and kills a
+    third.** "Have `prepare` copy or inherit credentials into the
+    broker-owned dir" is now ruled OUT by measurement rather than
+    left open — the copy was tried and the agent stayed logged out. What
+    remains is (a) supply `ANTHROPIC_API_KEY`/`apiKeyHelper`, which is the
+    mode the redirect forces anyway, or (b) stop redirecting
+    `CLAUDE_CONFIG_DIR` and solve the trust-dialog scoping another way —
+    the cost this item's own opening paragraph weighed and chose against.
+    None of this touches the shipped refusal, which keys on the observed
+    banner and not on any theory of why it appears.
     The pane reads `Not logged in · Please run /login`, each turn ends in
     about zero seconds, and the transcript fills with `<synthetic>`
     assistant rows carrying the CLI's own error.

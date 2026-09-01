@@ -39,11 +39,22 @@ WT-3's answer already shipped and needs no probe: `src/cli-profiles.ts`'s
 | WT-13 | ~~how is a broker-spawned claude supposed to AUTHENTICATE?~~ **PROBE RUN 2026-08-31 (`claude-auth.wire.ts`), the DETECTION half answered; the auth half still open.** Observed on 2.1.252: the pane reads `Not logged in · Run /login` — **"Run", not "Please run"**, which is the wording this item's prose carried and which a matcher written from that prose would never have matched. At the same instant `agent.list` reported `{id, title:"claude", status:"idle"}` and the spawn returned `status:"idle"`: green throughout. Spawn now REFUSES such an agent (`502 agent_unauthenticated`), keeping the workspace so a credentialed mode-B retry can use it — verified live end to end. The auth half is **DEFERRED 2026-08-31 by decision** (roadmap 33): `POST .../env` would carry `ANTHROPIC_API_KEY` today, but the affected user is subscription-authenticated and an API key bills a different account — a product question, not a probe. The refusal is what makes waiting safe. When picked up, probe `apiKeyHelper` first: claude reads strictly that or `ANTHROPIC_API_KEY`, and being a COMMAND it can point at an existing credential source instead of copying a secret into a broker-owned dir | original: how is a broker-spawned claude supposed to AUTHENTICATE? Found 2026-08-31: it is not. `prepare` redirects `CLAUDE_CONFIG_DIR` to a broker-owned dir, and that relocates the whole config tree — credentials included — so every spawned claude reports `Not logged in · Please run /login` and finishes each turn in ~0s writing `<synthetic>` assistant rows. The env registry (`POST .../env` with `ANTHROPIC_API_KEY`) is the mechanism the broker ships, but nothing states claude REQUIRES it, and the redirect silently orphans an already-authenticated user. Open: whether an API key through /env is the intended answer, whether `prepare` should copy or inherit credentials, and what a spawn should do when it can detect the agent is logged out | WT-11(1) and WT-12 both stay unanswerable, `ask` stays unproven against any live agent, and every broker-spawned claude is a no-op that looks like a working one |
 
 WT-6 and WT-10 have NO PROBE FILE (WT-13 and WT-11's sub-question 1 both gained one 2026-08-31). **WT-12's is written and RAN on
-2026-08-31, but could not reach its question**: the seeding `ask` returned
+2026-08-31, and is still BLOCKED as of 2026-09-01**: the seeding `ask` returned
 `agent_unresponsive` with `evidence: "transcript"` — the agent finished a
 turn and wrote no answer file, because it was not logged in (WT-13). That run
 was not wasted: it is what exposed WT-13 and, through it, the false positive
-in WT-11. It also means **`ask` has never been proven against a live
+in WT-11.
+
+**Re-examined 2026-09-01 and still blocked, but for a better-understood
+reason.** WT-12 tests the BROKER's machinery, so unlike WT-11(1) it cannot be
+rescued by driving the CLI directly — a spawn that skips `prepare` is not the
+thing under test. And the obvious workaround does not exist: pointing
+`CLAUDE_CONFIG_DIR` at a copy of the real `.claude.json` was measured and the
+agent stayed logged out (roadmap 33). Overriding it through `POST .../env`
+would also strand `trustProject`, which writes the per-directory trust
+pre-answer into the BROKER's dir — override the one and the other stops
+covering the cwd, so a trust gate replaces the login gate. WT-12 waits on
+roadmap 33's deferred credential decision, and nothing short of it will do. It also means **`ask` has never been proven against a live
 agent** — it is unit-tested against the fake herdr only, and WT-12 is the
 first thing that ever called it for real.
 WT-12's
