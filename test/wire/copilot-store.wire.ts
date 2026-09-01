@@ -2,6 +2,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { existsSync, mkdtempSync, realpathSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
+import { CliProfiles } from "../../src/cli-profiles.js";
+import { configDirFor } from "../../src/prepare-workspace.js";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
@@ -34,7 +36,20 @@ import { DatabaseSync } from "node:sqlite";
 const BASE = process.env.HERDR_BASE ?? "http://127.0.0.1:7591";
 const TOKEN = process.env.HERDR_TOKEN ?? "";
 const S = `${BASE}/v1/instances/runtime/sessions/default`;
-const DB_PATH = join(homedir(), ".copilot", "session-store.db");
+/** Where the store lives for a BROKER-spawned copilot.
+ *
+ * NOT `~/.copilot`. Since 2026-09-01 copilot has a `prepare` block, so
+ * COPILOT_HOME points its whole config dir — session-store.db included — at a
+ * broker-owned directory under the state dir. A probe reading the home copy
+ * would query the USER's own sessions and never see the one it just created:
+ * an instrument pointed at the wrong tree, which is precisely how WT-11's
+ * transcript half went wrong before it.
+ *
+ * Falls back to `~/.copilot` for a copilot the broker did not spawn, so the
+ * discovery half below still works standalone. */
+const STATE_DIR = process.env.HERDR_PLUGIN_STATE_DIR ?? join(homedir(), ".local/state/herdr-web-broker");
+const COPILOT_HOME = configDirFor(new CliProfiles().get("copilot")!, STATE_DIR) ?? join(homedir(), ".copilot");
+const DB_PATH = join(COPILOT_HOME, "session-store.db");
 
 async function call(path: string, method: string, body?: unknown): Promise<unknown> {
   const r = await fetch(`${S}${path}`, {
@@ -142,6 +157,11 @@ async function awaitAgentReady(pane: string, timeoutMs = 45_000): Promise<void> 
  * the probe must see uncommitted-to-main-db pages the way src/transcript.ts's
  * sqlite reader does. */
 function query<T>(sql: string, ...params: string[]): T[] {
+  // Absent is a legitimate state while the spawn is still starting; an empty
+  // result and a missing file must not look the same to the caller's polling
+  // loop, so this reports absence as "no rows yet" and the loop's own timeout
+  // is what fails.
+  if (!existsSync(DB_PATH)) return [];
   const db = new DatabaseSync(DB_PATH, { readOnly: true });
   try {
     return db.prepare(sql).all(...params) as T[];
@@ -151,7 +171,11 @@ function query<T>(sql: string, ...params: string[]): T[] {
 }
 
 test("WT-5: copilot's session-store records a completed turn, not just a session", { skip: !process.env.HERDR_WIRE }, async () => {
-  assert.ok(existsSync(DB_PATH), `no store at ${DB_PATH} — run copilot once before probing`);
+  console.log(`WT-5 store: ${DB_PATH}`);
+  // No pre-existence assert: with COPILOT_HOME redirected the store is created
+  // BY this spawn, so requiring it upfront would fail every first run against
+  // a fresh broker state dir. It is waited for below instead, where "absent"
+  // and "empty" are distinguishable.
 
   // realpath: macOS mkdtemp returns /var/..., the CLI records /private/var/...
   const cwd = realpathSync(mkdtempSync(join(tmpdir(), "hwb-wt5-")));

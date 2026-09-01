@@ -24,7 +24,7 @@ answer in the spec's wire-truth table and, where it is a per-CLI fact, as a
 | WT-2 | ~~does `agy --conversation <fresh-uuid>` mint that id, or reject it?~~ **ANSWERED 2026-08-29** (herdr 0.8.2) — NEITHER, quite: agy ACCEPTS the flag (it reaches the terminal title) but mints nothing under that id within 45s, and `last_conversations.json` never learns it | agy stays on cwd-map + `startedAt` discovery — roadmap 25(d) closes as won't-fix |
 | WT-3 | ~~`opencode export` output shape~~ **ANSWERED 2026-08-27** — opencode's real store is `~/.local/share/opencode/opencode.db` (SQLite+WAL); a finished assistant turn carries `time.completed`, and `session.directory` makes cwd discovery a SQL predicate | — |
 | WT-4 | ~~codex `rollout-*.jsonl` terminal record shape~~ **ANSWERED 2026-08-29** (codex-cli 0.151.0, live) — rollout IS findable by cwd for a freshly spawned session via `session_meta.payload.cwd`, and a finished turn ends `event_msg` with `payload.type: "task_complete"` carrying a top-level ISO `timestamp`. Record kinds seen: `session_meta`, `event_msg/task_started`, `response_item/message`, `world_state`, `turn_context`, `event_msg/item_completed`, `event_msg/task_complete` | — codex CAN leave the status tier: `via: "path"` discovery by cwd, `terminal.done: ["task_complete"]` |
-| WT-5 | copilot `session-store.db` schema — probe RUN 2026-08-29, schema ANSWERED, completion signal still open. `sessions(id, cwd, …)` gains a row per fresh cwd (cwd -> session_id discovery works) and `turns(id, session_id, turn_index, user_message, assistant_response, timestamp)` IS written — a row appears on SUBMISSION, ~65s after the prompt, with `assistant_response` NULL until the turn finishes. Every run hit `Authorization error, you may need to run /login`, so no turn ever completed and `assistant_response` going non-null is UNCONFIRMED | copilot stays on the status tier until an authenticated run confirms the completion signal |
+| WT-5 | ~~copilot `session-store.db` schema, and does a completed turn show in it?~~ **ANSWERED 2026-09-01** (copilot 1.0.82): `assistant_response` DOES go non-null when a turn completes — observed as `{user_message: "say hello", assistant_response: "Hello! \u{1F44B} I'm the GitHub Copilot CLI...", timestamp}` on a turn watched finishing on screen. **copilot CAN leave the status tier**: `sessions(id, cwd)` gives cwd -> session_id and a non-null `assistant_response` is the completion signal. Reader code is not written yet. Earlier state, for context: probe RUN 2026-08-29, schema ANSWERED, completion signal open. `sessions(id, cwd, …)` gains a row per fresh cwd (cwd -> session_id discovery works) and `turns(id, session_id, turn_index, user_message, assistant_response, timestamp)` IS written — a row appears on SUBMISSION, ~65s after the prompt, with `assistant_response` NULL until the turn finishes. Every run hit `Authorization error, you may need to run /login`, so no turn ever completed and `assistant_response` going non-null is UNCONFIRMED | copilot stays on the status tier until an authenticated run confirms the completion signal |
 | WT-6 | does herdr's `pane.exited` carry an exit code? | agent-death cause stays unreported (the exec endpoint is unaffected — it reads its own `; echo $?` drop file, not `pane.exited`) |
 | WT-7 | ~~does `pane.wait_for_output` match the pane's OWN echoed input, or only program output?~~ **ANSWERED 2026-08-29** (herdr 0.8.2) — the pane's OWN echoed input, on `visible` AND `recent`; `matched_line` comes back as the echoed command itself | — **and this answer was then MISAPPLIED.** Roadmap 27's sentinel was built on "when it echoes, the shell is at its prompt", which this answer disproves rather than supports: it matched its own echo and reported cold panes ready. Fixed 26235cd; see the instrument note below |
 | WT-8 | ~~does herdr's agent detection fire for an agent TYPED into a pane, or only one started via `agent.start`?~~ **ANSWERED 2026-08-29** — NOT bound to `agent.start`. A `claude` typed into a pane via `send_input` is detected with `agent=claude` and reaches `agent_status=idle`; sampled every 5s for 60s, the typed path and the `agent.start` control are indistinguishable from the 5s mark. Run by the smithagents session; **not independently reproduced here**, because it spawns a real agent | a command-string runtime would get no detection and would have to drive `agent.start` by kind |
@@ -331,6 +331,27 @@ That is the same hazard as the codex update menu one screen earlier, and the
 same rule applies: a probe must never send input into a screen it has not
 positively identified, because in a menu a prompt is a SELECTION.
 
+**Resolved differently on 2026-09-01, and the PAT was never needed.** copilot
+is logged in on this machine with no PAT at all, so the auth half of this
+deferral was an artifact of the environment it was first run in, not a property
+of copilot. The trust gate is gone too — copilot's `prepare` block pre-answers
+it. What remained was ONE gate, and it is the one this note kept mis-modelling:
+the restore-sessions picker.
+
+**The picker is now a BROKER problem, not just a probe problem.** A
+broker-owned `COPILOT_HOME` starts empty, so the first spawn into it sees no
+picker — verified. But every closed workspace leaves copilot's session marked
+`Interrupted`, so the SECOND spawn and every one after is gated by "Choose
+which sessions to restore". Observed through the real broker path on
+2026-09-01: the probe's prompt went into the picker as a menu selection,
+copilot restored the EARLIER session, and the turn was written against that
+session's cwd — which is exactly the confusion this section describes, and
+which produced WT-5's answer by accident. Whether a flag avoids it is UNKNOWN;
+`-n/--name` was tested and the test was invalid (it hit a trust gate instead,
+having bypassed the broker's own trustProject). Do not record an answer there
+without re-testing through the broker.
+
+Superseded (kept for the reasoning):
 **The way through is to stop driving the TUI at all — DEFERRED 2026-08-29,
 pending a PAT service already in progress.** copilot can start from a PAT, and
 the broker already has the seam for handing one to a spawn: `[[env_hooks]]` in
