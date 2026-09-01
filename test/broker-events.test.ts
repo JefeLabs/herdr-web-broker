@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { BrokerEvents, BROKER_EVENTS } from "../src/broker-events.js";
 
-test("the six broker events are the ones herdr cannot know", () => {
+test("the seven broker events are the ones herdr cannot know", () => {
   assert.deepEqual(
     [...BROKER_EVENTS],
     [
@@ -12,6 +12,12 @@ test("the six broker events are the ones herdr cannot know", () => {
       "broker.ask.unresponsive",
       "broker.repo.pushed",
       "broker.exec.finished",
+      // Roadmap 31(f). The odd one out, and deliberately so: herdr DOES know
+      // it reaped a workspace and says so on its own event channel. What
+      // herdr cannot know is whether that workspace was one the broker had a
+      // row for — `indexed` is the broker's own adopt/orphan judgement
+      // attached to herdr's fact, which is why it belongs on this list.
+      "broker.workspace.reaped",
     ],
   );
 });

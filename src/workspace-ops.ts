@@ -158,19 +158,13 @@ export async function runBrokerMethod(
         if (deps.index.get(session, workspaceId) === undefined) throw e;
         alreadyClosed = true;
       }
-      // Read the cwd BEFORE dropping the row — it is what makes the
-      // archived conversations resumable, and index.remove takes it away.
-      const closedCwd = deps.index.get(session, workspaceId)?.cwd;
-      const closedLabel = deps.index.get(session, workspaceId)?.label;
-      deps.index.remove(session, workspaceId);
       // Every agent row for this workspace dies with it — a pane id herdr
       // later reuses must not inherit a stale kind/sessionId pointing a
       // transcript read at a previous agent that no longer exists. The
       // CONVERSATIONS outlive the panes though (roadmap 31b), so each one is
-      // archived on the way out.
-      for (const meta of deps.agents.removeWorkspace(session, workspaceId)) {
-        deps.resumable.record(session, meta, closedCwd, closedLabel);
-      }
+      // archived on the way out. herdr's own `workspace.closed` event may be
+      // racing this very call; reapWorkspaceRow is why that is safe.
+      reapWorkspaceRow(deps, session, workspaceId);
       // `closed` is the POSTCONDITION, not a report of who did it: an
       // idempotent delete whose goal state holds must not answer false, which
       // a caller would read as failure and retry. `already_closed` carries
@@ -400,6 +394,37 @@ export async function runBrokerMethod(
 interface HerdrWorkspace {
   cwd?: string;
   label?: string;
+}
+
+/** Archive a workspace's conversations, then drop its index row. Returns
+ * whether the broker actually HELD a row for it.
+ *
+ * The one sequence, three callers — `broker.workspace.close`, the reaped-
+ * workspace self-heal in `stopAgent`, and the `workspace.closed` event
+ * handler (roadmap 31f). They race by construction: herdr emits
+ * `workspace.closed` the instant it closes one, so the event can land in the
+ * middle of the close call that caused it. Sharing this makes the race
+ * harmless — whichever arrives first performs the WHOLE job, and the loser
+ * finds an empty `removeWorkspace` and a row already gone.
+ *
+ * Splitting it is what would break: a handler that only removed the row
+ * could win the race between the close call's herdr round trip and its
+ * archiving, taking the cwd away first. `resumable.record` drops any
+ * conversation it cannot pair with a cwd, and drops it SILENTLY, so resume
+ * would quietly stop working with nothing failing anywhere.
+ *
+ * Deliberately NOT used by `broker.worktree.remove`: that call deletes the
+ * checkout, and a conversation whose directory is gone cannot be resumed —
+ * it removes the agent rows without archiving, on purpose. */
+export function reapWorkspaceRow(deps: OpsDeps, session: string, workspaceId: string): boolean {
+  // Read BEFORE removing: index.remove takes the cwd away, and the cwd is
+  // what makes an archived conversation resumable.
+  const meta = deps.index.get(session, workspaceId);
+  for (const m of deps.agents.removeWorkspace(session, workspaceId)) {
+    deps.resumable.record(session, m, meta?.cwd, meta?.label);
+  }
+  deps.index.remove(session, workspaceId);
+  return meta !== undefined;
 }
 
 /** Opportunistic herdr workspace.list. Degrades to an empty map when the
@@ -1110,10 +1135,7 @@ async function stopAgent(deps: OpsDeps, session: string, p: Record<string, unkno
       // workspace tidied. The conversations outlive the panes, so each one
       // is archived on the way out (roadmap 31b); `ws` was read above, so
       // the cwd they are keyed on is still in hand.
-      for (const meta of deps.agents.removeWorkspace(session, wsId)) {
-        deps.resumable.record(session, meta, ws?.cwd, ws?.label);
-      }
-      deps.index.remove(session, wsId);
+      reapWorkspaceRow(deps, session, wsId);
     } catch {
       // The agent IS stopped: pane.close succeeded and its row is already
       // gone. Bookkeeping trouble here — a read-only stateDir, the same

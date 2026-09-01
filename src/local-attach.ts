@@ -59,7 +59,7 @@ function normalizeEventName(name: string): string {
  * events are cheap triggers to re-list agents. */
 export function mapHerdrEvent(
   frame: unknown,
-): { agent: AgentInfo } | { refresh: true } | undefined {
+): { agent: AgentInfo } | { refresh: true } | { reaped: string } | undefined {
   const f = frame as { event?: string; data?: Record<string, unknown> };
   if (typeof f?.event !== "string" || !f.data) return undefined;
   const name = normalizeEventName(f.event);
@@ -71,6 +71,24 @@ export function mapHerdrEvent(
         status: coerceStatus(f.data.agent_status),
       },
     };
+  }
+  // Roadmap 31(f): a NAMED reap, not a refresh nudge.
+  //
+  // SCHEMA-VERIFIED, herdr 0.8.2 / protocol 20 (`herdr api schema --json`):
+  // `EventKind` spells it `workspace_closed` — underscored, which is what
+  // normalizeEventName above produces from either spelling — and its
+  // `EventData` variant declares {type, workspace_id, workspace?} with
+  // **workspace_id REQUIRED**. Worth pinning because the `subscription_event`
+  // schema is only a partial catalogue (three richly-typed pane events; it
+  // omits even the pane.created/pane.exited this broker has always relied
+  // on), so the request-side type list and `EventKind` are the authorities,
+  // not that one.
+  //
+  // Guarded on the id anyway: a frame that names no workspace names nothing
+  // to act on, and a caller guessing which row to drop is the one outcome
+  // worse than the stale row it would be fixing.
+  if (name === "workspace_closed" && typeof f.data.workspace_id === "string") {
+    return { reaped: f.data.workspace_id };
   }
   if (["pane_agent_detected", "pane_created", "pane_exited", "pane_closed"].includes(name)) {
     return { refresh: true };
@@ -162,6 +180,11 @@ function buildSubscriptions(paneIds: string[]): object[] {
     { type: "pane.agent_detected" },
     { type: "pane.created" },
     { type: "pane.exited" },
+    // Roadmap 31(f). The others say "the roster moved, go look"; this one
+    // names a workspace that no longer exists. herdr reaps on its own — a
+    // herdr-side close, a crash — and those reaps reach no broker call, so
+    // without this subscription nothing in the broker ever learns of them.
+    { type: "workspace.closed" },
     ...paneIds.map((pane_id) => ({ type: "pane.agent_status_changed", pane_id })),
   ];
 }
@@ -239,6 +262,11 @@ export class LocalHerdr {
       defaultSocket?: string;
       envSocket?: string;
       rescanMs?: number;
+      /** herdr reaped a workspace (roadmap 31f). A CALLBACK, not the index
+       * itself: this class holds a Registry and no other broker state, and
+       * keeping it that way is why the attach layer stays testable without
+       * a state dir. The daemon wires it to the WorkspaceIndex. */
+      onWorkspaceReaped?: (session: string, workspaceId: string) => void;
     },
   ) {}
 
@@ -295,6 +323,12 @@ export class LocalHerdr {
     if (!mapped) return;
     if ("agent" in mapped) {
       this.opts.registry.applyAgentStatus("runtime", session, mapped.agent);
+    } else if ("reaped" in mapped) {
+      // Both: the hook clears the broker's row for a workspace that is gone,
+      // and the roster still has to be re-listed because its panes went with
+      // it. Neither substitutes for the other.
+      this.opts.onWorkspaceReaped?.(session, mapped.reaped);
+      void this.#refresh(session);
     } else {
       void this.#refresh(session);
     }

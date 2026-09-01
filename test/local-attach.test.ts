@@ -327,3 +327,61 @@ test("forgetSession actively retires a session: roster shrinks, rpc refuses, reg
     await t.fake.close();
   }
 });
+
+// ── workspace.closed: push-based reap detection (roadmap 31f) ─────────────
+
+test("mapHerdrEvent maps workspace.closed to the id that was reaped", () => {
+  // Roadmap 31(f). herdr announces a reap the moment it happens — including
+  // reaps NO broker call caused, like a herdr-side close or a crash, which is
+  // the only path item 32's two removal sites cannot see. The frame carries
+  // the id, so this is a targeted signal rather than a "go re-list" nudge.
+  assert.deepEqual(
+    mapHerdrEvent({ event: "workspace_closed", data: { workspace_id: "w1" } }),
+    { reaped: "w1" },
+  );
+  // A frame with no id names nothing to act on. Acting on it would mean
+  // guessing which row to delete, so it maps to nothing at all.
+  assert.equal(mapHerdrEvent({ event: "workspace_closed", data: {} }), undefined);
+  // its sibling stays a plain refresh trigger — a NEW workspace strands nothing
+  assert.equal(mapHerdrEvent({ event: "workspace_created", data: {} }), undefined);
+});
+
+test("the event channel subscribes to workspace.closed", async () => {
+  const { fake, local } = await setup();
+  try {
+    const sub = fake.received.filter((r) => r.method === "events.subscribe").at(-1);
+    const types = (sub?.params as { subscriptions: { type: string }[] }).subscriptions.map((s) => s.type);
+    assert.ok(types.includes("workspace.closed"), `subscribed types were ${types.join(", ")}`);
+  } finally {
+    local.stop();
+    await fake.close();
+  }
+});
+
+test("a workspace.closed frame reaches the reap hook with its session and id", async () => {
+  // The seam the daemon wires the index to. LocalHerdr deliberately does not
+  // touch broker state itself — it holds a Registry and nothing else — so the
+  // hook is how a reap reaches the WorkspaceIndex without dragging broker
+  // storage into the attach layer.
+  const dir = tmpDir();
+  const fake = new FakeHerdr(join(dir, "h.sock"));
+  fake.agents = [{ pane_id: "w1:p1", name: "claude", agent_status: "idle" }];
+  await fake.listen();
+  const seen: { session: string; workspaceId: string }[] = [];
+  const local = new LocalHerdr({
+    registry: new Registry(),
+    herdrVersion: "0.8.0-test",
+    endpoints: [{ session: "default", socketPath: fake.socketPath }],
+    onWorkspaceReaped: (session, workspaceId) => seen.push({ session, workspaceId }),
+  });
+  await local.start();
+  try {
+    await waitFor(() => fake.eventConnections > 0);
+    fake.emitEvent("workspace.closed", { workspace_id: "w1" });
+    await waitFor(() => seen.length > 0);
+    assert.deepEqual(seen, [{ session: "default", workspaceId: "w1" }]);
+  } finally {
+    local.stop();
+    await fake.close();
+  }
+});

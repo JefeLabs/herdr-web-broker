@@ -34,7 +34,7 @@ import { BrokerEvents } from "./broker-events.js";
 import { loadModules, type LoadedModule } from "./module-loader.js";
 import { TunnelHub } from "./tunnel.js";
 import { verdictFor } from "./version.js";
-import type { OpsDeps } from "./workspace-ops.js";
+import { reapWorkspaceRow, type OpsDeps } from "./workspace-ops.js";
 import { attachUpgradeHandling, type UpgradeHandle } from "./ws-server.js";
 
 export interface DaemonOptions {
@@ -61,6 +61,10 @@ export interface DaemonHandle {
   adminToken: string;
   config: BrokerConfig;
   local: LocalHerdr;
+  /** The broker's own event bus. Exposed so a caller can observe pushes the
+   * HTTP surface does not expose — `broker.workspace.reaped` (roadmap 31f)
+   * is announced here and nowhere else without a WS client. */
+  events: BrokerEvents;
   close(): Promise<void>;
 }
 
@@ -106,8 +110,15 @@ export async function startDaemon(opts: DaemonOptions): Promise<DaemonHandle | u
   const resumable = new ResumableIndex(opts.stateDir);
   const adminToken = ensureAdminToken(opts.stateDir);
 
+  // Roadmap 31(f), late-bound on purpose: LocalHerdr is built before `ops`
+  // (which holds it) and before the event bus, so the hook cannot be handed
+  // in at construction. A reap arriving in that window is simply not healed —
+  // the row waits for the next one or an explicit close, which is the same
+  // degrade as the event channel being down.
+  let onReaped: ((session: string, workspaceId: string) => void) | undefined;
   const local = new LocalHerdr({
     registry,
+    onWorkspaceReaped: (session, workspaceId) => onReaped?.(session, workspaceId),
     herdrVersion,
     endpoints: opts.localEndpoints,
     envSocket: opts.localEndpoints ? undefined : process.env.HERDR_SOCKET_PATH,
@@ -151,6 +162,15 @@ export async function startDaemon(opts: DaemonOptions): Promise<DaemonHandle | u
   // mid-flight leaks whatever the old instance closed over.
   const brokerEvents = new BrokerEvents();
   ops.events = brokerEvents;
+  // Heal AND announce. The heal shares reapWorkspaceRow with the two call
+  // paths in workspace-ops, which is what makes it safe for this to fire in
+  // the middle of the close that caused it. The announcement is the part
+  // 31(f) actually asked for: the divergence used to sit unremarked until
+  // somebody thought to call GET .../orphans.
+  onReaped = (session, workspaceId) => {
+    const indexed = reapWorkspaceRow(ops, session, workspaceId);
+    brokerEvents.emit("broker.workspace.reaped", { session, workspace_id: workspaceId, indexed });
+  };
   const modules: LoadedModule[] = await loadModules(config.modules ?? [], {
     deps: ops,
     session: "default",
@@ -266,6 +286,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<DaemonHandle | u
     adminToken,
     config,
     local,
+    events: brokerEvents,
     async close() {
       link?.stop();
       projection.stop();

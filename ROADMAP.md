@@ -723,7 +723,9 @@ with more evidence behind it. These are the two it was right about.
     `sessionRef {kind, value}` warning applies directly, and
     `codex resume [ID]` versus `claude --resume <id>` is the same trap
     `pin` already avoids by storing the flag rather than assuming one.
-    (f) **The other gap this exposes: identification is pull-based.**
+    (f) ~~**The other gap this exposes: identification is pull-based.**~~
+    **Detection done 2026-08-31 — push, not poll. The boot sweep is
+    deliberately still not built; see the end of this item.**
     **Reproduced live 2026-08-30** while tearing down WT-11's stack: the
     broker listed five workspaces where herdr had one, and had done so
     across a daemon restart, with nothing announcing the divergence. The
@@ -744,6 +746,42 @@ with more evidence behind it. These are the two it was right about.
     resume verb makes a boot-time reconciliation pass worth having:
     detecting a diverged row is only useful once there is something to
     do about it.
+    **What shipped.** The broker now subscribes to herdr's
+    `workspace.closed` — a wire-verified type that was in `SUB_TYPES` for
+    clients all along while the broker's OWN channel asked only for
+    `pane.agent_detected`, `pane.created`, `pane.exited` and per-pane
+    status. The signal was on the wire and nothing was listening. It
+    carries the id, so it is a NAMED reap rather than a "go re-list" nudge;
+    a frame without one maps to nothing, because a handler guessing which
+    row to drop is worse than the stale row it would be fixing.
+    It both heals and announces. `broker.workspace.reaped` joins
+    BROKER_EVENTS with `{session, workspace_id, indexed}`, and `indexed`
+    is classifySession's adopt/orphan split arriving as a push: true means
+    a row of ours, cleared; false means an orphan — announced, untouched,
+    which keeps report-never-reap intact on this path too.
+    **The race is the whole engineering.** herdr emits the event the
+    instant it closes a workspace, so it lands INSIDE the
+    `broker.workspace.close` that caused it. A handler that merely removed
+    the row could win the window between that call's herdr round trip and
+    its archiving, take the cwd away, and make `resumable.record` drop the
+    conversation — silently, since it drops anything it cannot pair with a
+    cwd. So all three callers now share one `reapWorkspaceRow`
+    (archive-then-remove): whichever arrives first does the WHOLE job and
+    the loser finds nothing left to do. Mutation-checked — splitting the
+    helper fails both archiving tests, including one that fires the event
+    from inside the close handler.
+    `LocalHerdr` takes a CALLBACK rather than the index: it holds a
+    Registry and no other broker state, and the daemon late-binds the hook
+    because LocalHerdr is constructed before `ops` and before the bus.
+    A reap in that window is not healed, the same degrade as a downed event
+    channel — this is a heal, never a guarantee.
+    **Still not built, on purpose:** the boot-time sweep. `classifySession`
+    is still called from two on-demand sites only, so a divergence that
+    predates this daemon — rows persisted by an EARLIER process, which is
+    the original WT-11 observation — is still not announced at startup.
+    Push detection covers every reap that happens while the broker is
+    watching; it cannot cover one that already happened. That remainder is
+    small and honest, and it is what is left of this item.
     Ordering against item 30: this one first. Usage tells an operator
     what a session cost; resume makes every state the evidence tier
     already detects ACTIONABLE, and that tier is the most expensive
@@ -1032,8 +1070,9 @@ built; 30 (usage and cost) is unbuilt because nobody asked, with a first
 slice named in its own entry. **Take 33 first** — a broker-spawned claude is
 logged out and every signal the broker has says otherwise, which makes it the
 only open item that can make other work draw wrong conclusions, as it already
-did twice. 31(f)'s boot-time reconciliation stays a deliberate loose thread;
-neither 31 nor 32 substituted for it.
+did twice. 31(f)'s push detection landed 2026-08-31
+(`workspace.closed`); its boot-time reconciliation stays a deliberate loose
+thread, and neither 31 nor 32 substituted for that half.
 
 Publishing is not pending work: interactive OAuth is the recorded decision
 (item 26), and 0.3.0 shipped that way. Of the wire questions, `codex` is

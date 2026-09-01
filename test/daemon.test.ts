@@ -4,6 +4,7 @@ import { spawnSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { startDaemon } from "../src/daemon.js";
+import { AgentIndex, ResumableIndex, WorkspaceIndex } from "../src/state.js";
 import { FakeHerdr } from "./fake-herdr.js";
 import { tmpDir, waitFor } from "./util.js";
 
@@ -144,4 +145,106 @@ test("tls config serves https when openssl is available", async (t) => {
   });
   assert.ok(handle!.base.startsWith("https://"));
   await handle!.close();
+});
+
+// ── workspace.closed: push-based reap detection (roadmap 31f) ─────────────
+
+test("a herdr-side reap the broker never called clears the row and announces it", async () => {
+  // Roadmap 31(f). Item 32 closed the two paths where a BROKER call causes
+  // the reap. This is the third: herdr closes a workspace on its own — a
+  // herdr-side close, a crash — and no broker call is in the chain to notice.
+  // Before this, the row sat there and nothing said so.
+  const { fake, stateDir, handle } = await boot();
+  try {
+    const index = new WorkspaceIndex(stateDir);
+    const agents = new AgentIndex(stateDir);
+    index.set("default", "w1", { cwd: "/work", label: "ui" });
+    agents.set("default", "w1:p1", { kind: "claude", sessionId: "sess-a", startedAt: 1 });
+
+    const seen: Record<string, unknown>[] = [];
+    handle.events.on("broker.workspace.reaped", (e) => void seen.push(e));
+
+    await waitFor(() => fake.eventConnections > 0);
+    fake.emitEvent("workspace.closed", { workspace_id: "w1" });
+    await waitFor(() => index.get("default", "w1") === undefined);
+    await handle.events.drain();
+
+    assert.equal(index.get("default", "w1"), undefined, "the row for a reaped workspace is gone");
+    assert.equal(
+      new ResumableIndex(stateDir).get("default", "sess-a")?.cwd,
+      "/work",
+      "and its conversation was archived with the cwd, not silently dropped",
+    );
+    assert.equal(seen.length, 1);
+    assert.equal(seen[0].session, "default");
+    assert.equal(seen[0].workspace_id, "w1");
+    assert.equal(seen[0].indexed, true, "true means it was OURS and we cleared it");
+  } finally {
+    await handle.close();
+    await fake.close();
+  }
+});
+
+test("a reaped workspace the broker never indexed is announced but nothing is removed", async () => {
+  // classifySession's discipline, kept on the push path: a workspace the
+  // broker has no row for is someone else's work. There is nothing of ours
+  // to clear, and `indexed:false` is how a client tells the two apart
+  // instead of us inventing a removal.
+  const { fake, stateDir, handle } = await boot();
+  try {
+    const index = new WorkspaceIndex(stateDir);
+    index.set("default", "w1", { cwd: "/work" });
+
+    const seen: Record<string, unknown>[] = [];
+    handle.events.on("broker.workspace.reaped", (e) => void seen.push(e));
+
+    await waitFor(() => fake.eventConnections > 0);
+    fake.emitEvent("workspace.closed", { workspace_id: "w9" });
+    await waitFor(() => seen.length > 0);
+    await handle.events.drain();
+
+    assert.equal(seen[0].workspace_id, "w9");
+    assert.equal(seen[0].indexed, false, "false means an orphan — announced, never reaped");
+    assert.equal(index.get("default", "w1")?.cwd, "/work", "an unrelated row is untouched");
+  } finally {
+    await handle.close();
+    await fake.close();
+  }
+});
+
+test("the reap event racing the close that caused it still archives exactly once", async () => {
+  // The reason all three callers share reapWorkspaceRow. herdr emits
+  // workspace.closed the instant it closes one, so the event lands INSIDE the
+  // DELETE that triggered it — here, deliberately, from the close handler
+  // itself. A handler that merely removed the row could win that race between
+  // the herdr round trip and the archiving, take the cwd away, and make
+  // resumable.record drop the conversation without a sound.
+  const { fake, stateDir, handle } = await boot();
+  try {
+    const index = new WorkspaceIndex(stateDir);
+    const agents = new AgentIndex(stateDir);
+    index.set("default", "w1", { cwd: "/work", label: "team" });
+    agents.set("default", "w1:p1", { kind: "claude", sessionId: "sess-a", startedAt: 1 });
+
+    await waitFor(() => fake.eventConnections > 0);
+    fake.handlers.set("workspace.close", () => {
+      fake.emitEvent("workspace.closed", { workspace_id: "w1" });
+      return { type: "ok" };
+    });
+
+    const res = await fetch(`${handle.base}/instances/runtime/sessions/default/workspaces/w1`, {
+      method: "DELETE",
+      headers: { authorization: "Bearer tok" },
+    });
+    assert.equal(res.status, 200);
+    await waitFor(() => index.get("default", "w1") === undefined);
+    await handle.events.drain();
+
+    const archived = new ResumableIndex(stateDir).all("default");
+    assert.equal(archived.length, 1, "archived exactly once, by whichever path got there first");
+    assert.equal(archived[0].cwd, "/work", "with the cwd — the race did not strip it");
+  } finally {
+    await handle.close();
+    await fake.close();
+  }
 });

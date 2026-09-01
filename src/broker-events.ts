@@ -11,6 +11,11 @@ export const BROKER_EVENTS = [
   "broker.ask.unresponsive",
   "broker.repo.pushed",
   "broker.exec.finished",
+  // Roadmap 31(f). herdr reaped a workspace and told us — including reaps no
+  // broker call caused. `indexed` says whether it was one of ours (cleared)
+  // or an orphan (announced, untouched), which is classifySession's
+  // adopt/orphan split arriving as a push instead of a poll.
+  "broker.workspace.reaped",
 ] as const;
 
 export type BrokerEventName = (typeof BROKER_EVENTS)[number];

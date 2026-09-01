@@ -335,7 +335,11 @@ agent.
 Handlers can subscribe to `broker.*` events the broker knows and herdr
 cannot — `broker.agent.spawned`, `broker.agent.spawn_failed`,
 `broker.ask.completed`, `broker.ask.unresponsive` (which carries
-`evidence`, §5a), `broker.repo.pushed`, `broker.exec.finished`. Delivery
+`evidence`, §5a), `broker.repo.pushed`, `broker.exec.finished`, and
+`broker.workspace.reaped` (roadmap 31f: herdr closed a workspace,
+possibly with no broker call involved; `indexed` says whether it was one
+the broker had a row for and cleared, or an orphan it merely reports).
+Delivery
 is at-most-once and fire-and-forget, matching `WS /events`, which is
 live-only with no replay. There is no `api.emit`: module-to-module
 eventing would make the ABI a message bus.
