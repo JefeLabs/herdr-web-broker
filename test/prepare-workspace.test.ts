@@ -192,3 +192,46 @@ test("copilot: a JSONC config is MERGED, not replaced", () => {
   assert.ok(trusted.includes("/already/trusted"), "a folder copilot already trusted stays trusted");
   assert.ok(trusted.includes(cwd), "and the new one is added");
 });
+
+test("copilot: prepare RESETS the open-sessions register so no restore picker appears", () => {
+  // The second gate, found 2026-09-01 after the trust one was fixed. A
+  // broker-owned COPILOT_HOME starts empty, so the FIRST spawn is clean —
+  // which is exactly why the original verification missed this. But closing a
+  // workspace leaves copilot's session marked Interrupted in
+  // open-sessions-state.json, and from the second spawn on copilot opens on
+  // "Choose which sessions to restore" instead of a prompt. Measured: 1 entry
+  // -> picker and no prompt; register cleared -> no picker, at the prompt.
+  //
+  // Resetting states the broker's intent rather than working around a UI: a
+  // spawn creates a NEW agent. Restoring somebody else's interrupted session
+  // is never what POST .../agents means, and mode D would be an explicit verb.
+  const state = tmpDir();
+  const dir = prepareWorkspace(copilot(), state).COPILOT_HOME;
+  const reg = join(dir, "open-sessions-state.json");
+  writeFileSync(reg, JSON.stringify({ "dead-session-a": { openedAt: "x" }, "dead-session-b": { openedAt: "y" } }));
+
+  prepareWorkspace(copilot(), state);
+
+  assert.deepEqual(JSON.parse(readFileSync(reg, "utf8")), {}, "stale open sessions are cleared before the spawn");
+});
+
+test("copilot: the reset creates the register even when it does not exist yet", () => {
+  const state = tmpDir();
+  const dir = prepareWorkspace(copilot(), state).COPILOT_HOME;
+  assert.deepEqual(
+    JSON.parse(readFileSync(join(dir, "open-sessions-state.json"), "utf8")),
+    {},
+    "a first spawn leaves the register in the same state a later one will",
+  );
+});
+
+test("claude: prepare resets nothing — the reset is per-kind, not universal", () => {
+  // claude has no such register, and blanket-resetting files in a config dir
+  // is exactly the kind of thing that quietly destroys CLI state (WT-11).
+  const state = tmpDir();
+  const dir = prepareWorkspace(claude(), state).CLAUDE_CONFIG_DIR;
+  const stray = join(dir, "open-sessions-state.json");
+  writeFileSync(stray, JSON.stringify({ keep: "me" }));
+  prepareWorkspace(claude(), state);
+  assert.deepEqual(JSON.parse(readFileSync(stray, "utf8")), { keep: "me" }, "untouched for a kind that declares no reset");
+});

@@ -338,18 +338,28 @@ of copilot. The trust gate is gone too — copilot's `prepare` block pre-answers
 it. What remained was ONE gate, and it is the one this note kept mis-modelling:
 the restore-sessions picker.
 
-**The picker is now a BROKER problem, not just a probe problem.** A
-broker-owned `COPILOT_HOME` starts empty, so the first spawn into it sees no
-picker — verified. But every closed workspace leaves copilot's session marked
-`Interrupted`, so the SECOND spawn and every one after is gated by "Choose
-which sessions to restore". Observed through the real broker path on
-2026-09-01: the probe's prompt went into the picker as a menu selection,
+**The picker was a BROKER problem, and it is FIXED (2026-09-01).** A
+broker-owned `COPILOT_HOME` starts empty, so the first spawn into it saw no
+picker — which is why the trust fix looked complete. But every closed workspace
+leaves copilot's session marked `Interrupted`, so the SECOND spawn and every
+one after opened on "Choose which sessions to restore". Observed through the
+real broker path: the probe's prompt went into the picker as a menu selection,
 copilot restored the EARLIER session, and the turn was written against that
-session's cwd — which is exactly the confusion this section describes, and
-which produced WT-5's answer by accident. Whether a flag avoids it is UNKNOWN;
-`-n/--name` was tested and the test was invalid (it hit a trust gate instead,
-having bypassed the broker's own trustProject). Do not record an answer there
-without re-testing through the broker.
+session's cwd — the exact confusion this section describes, and how WT-5's
+answer arrived by accident.
+
+There is no flag and no setting for it — the picker is driven purely by
+interrupted sessions existing, and the register is
+`open-sessions-state.json`. Measured both ways: 1 entry -> picker and no
+prompt; register cleared to `{}` -> no picker, at the prompt. `prepare` now
+resets it before every spawn (`resetJson`), which states the broker's intent
+rather than working around a UI: a spawn creates a NEW agent, so restoring
+somebody's interrupted session on startup is never what `POST .../agents`
+means. Three consecutive broker spawns now all reach the prompt.
+
+(`-n/--name` was tested first as a possible bypass and the test was INVALID —
+it bypassed the broker's own trustProject and hit a trust gate instead. Nothing
+is claimed about that flag.)
 
 Superseded (kept for the reasoning):
 **The way through is to stop driving the TUI at all — DEFERRED 2026-08-29,

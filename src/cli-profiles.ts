@@ -53,6 +53,19 @@ export interface CliProfile {
      * `perProject` in the other shape a real CLI uses; a kind declares
      * whichever its config actually has. */
     trustedPaths?: { key: string };
+    /** JSON state files inside the config dir reset to `{}` before EVERY
+     * spawn — copilot's `open-sessions-state.json`.
+     *
+     * This states an intent rather than papering over a UI: a spawn creates a
+     * NEW agent, so a CLI that offers to restore somebody's interrupted
+     * session on startup must be told not to. Restoring is never what
+     * `POST .../agents` means, and a reattach would be an explicit verb
+     * (mode D) rather than a startup prompt.
+     *
+     * Per-kind and opt-in, never blanket: resetting files in a config dir the
+     * broker did not fully understand is how CLI state gets destroyed
+     * silently (WT-11). */
+    resetJson?: string[];
   };
   /** Screen markers proving the CLI started but cannot work — roadmap 33.
    *
@@ -210,6 +223,14 @@ const BUILTIN: Array<Omit<CliProfile, "source">> = [
       fileName: "config.json",
       contents: {},
       trustedPaths: { key: "trustedFolders" },
+      // The SECOND gate, found 2026-09-01 once the trust one was gone. A
+      // broker-owned COPILOT_HOME starts empty, so the first spawn is clean
+      // and the original verification of the trust fix could not see this;
+      // closing a workspace leaves copilot's session Interrupted, and from
+      // the second spawn on it opens on "Choose which sessions to restore"
+      // instead of a prompt. Measured both ways: 1 entry -> picker, no
+      // prompt; register cleared -> no picker, at the prompt.
+      resetJson: ["open-sessions-state.json"],
     },
     settleMs: 2500,
   },

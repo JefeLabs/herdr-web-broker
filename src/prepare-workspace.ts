@@ -99,6 +99,16 @@ export function prepareWorkspace(profile: CliProfile, stateDir: string): Record<
   editConfig(dir, prep.fileName, (cfg) => {
     Object.assign(cfg, prep.contents);
   });
+  // Reset declared state files so the CLI starts fresh rather than offering
+  // to resume something. Written unconditionally, not only when present: a
+  // first spawn should leave the dir in the same state a later one will, so
+  // the second spawn is not the one that behaves differently — which is the
+  // whole failure this exists to prevent.
+  for (const name of prep.resetJson ?? []) {
+    const f = join(dir, name);
+    writeFileSync(f, "{}\n", { mode: 0o600 });
+    chmodSync(f, 0o600);
+  }
   return { [prep.configDirEnv]: dir };
 }
 
