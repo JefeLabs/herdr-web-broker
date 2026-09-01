@@ -886,7 +886,7 @@ with more evidence behind it. These are the two it was right about.
 
 33. **A broker-spawned `claude` is not logged in, and nothing says so.**
     **"Nothing says so" fixed 2026-08-31 — spawn now refuses. The
-    credential question is still open; see the end of this item.**
+    credential half is DEFERRED, deliberately; see the end of this item.**
     Every one of them. `prepare` redirects `CLAUDE_CONFIG_DIR` to a
     broker-owned directory so a trust dialog is answered inside the
     broker's blast radius rather than the user's global config — and that
@@ -958,14 +958,39 @@ with more evidence behind it. These are the two it was right about.
     Degrades like its neighbours: an unreadable pane proceeds exactly as
     before, and an EMPTY read is treated as an instrument at zero rather
     than as proof of health.
-    **Still open, and needing a decision rather than a probe:** whether
-    `ANTHROPIC_API_KEY` through the env registry is the intended answer for
-    a subscription-authenticated user, and whether `prepare` should inherit
-    or copy credentials instead of orphaning them. Detection was taken
-    first on this item's own reasoning — a wrong credential answer is cheap
-    to fix, a silently useless agent is not — and it does not settle
-    either question. WT-11's sub-question 1 and WT-12 stay blocked on them,
-    and `ask` is still unproven against any live agent.
+    **Credential validation: DEFERRED 2026-08-31, by decision, not by
+    blocker.** Nothing technical stands in the way — `POST .../env` already
+    carries `COPILOT_GITHUB_TOKEN` into copilot spawns in the demo stack and
+    would carry `ANTHROPIC_API_KEY` the same way today. What is missing is a
+    reason to believe it is the RIGHT answer, and that is a product
+    question: the affected user is subscription-authenticated, and handing
+    the broker an API key bills a different account against a different
+    quota. Guessing costs more than waiting.
+    The refusal makes waiting safe, which is the point of taking detection
+    first. Before it, a logged-out spawn was indistinguishable from a
+    working one and poisoned whatever it touched — it produced WT-11's false
+    positive and consumed all of WT-12 before anyone noticed. Now it is a
+    502 naming its own cause, so the gap costs a clear error instead of
+    silent wrong conclusions. That is what makes this a deferral rather than
+    a hole.
+    **What it still blocks, unchanged:** WT-11's sub-question 1 (does resume
+    reattach CONTEXT?) and all of WT-12, both of which need a claude that
+    can actually answer; and `ask`, which remains unproven against any live
+    agent — unit-tested against FakeHerdr only.
+    **Where to start when it is picked up.** claude's own `--help` says it
+    reads strictly `ANTHROPIC_API_KEY` or `apiKeyHelper` — OAuth and the
+    keychain are never consulted — so `apiKeyHelper` is the branch worth
+    probing first: it is a COMMAND the CLI calls, which means the broker
+    could point a spawn at the user's existing credential source without
+    copying a secret into a broker-owned directory at all. That would answer
+    the second question (should `prepare` inherit credentials?) without the
+    blast radius that copying implies. `[[env_hooks]]`, keyed by `kind`, is
+    already the right shape for handing it over; what is missing is a
+    builtin hook per kind, not new machinery — the same conclusion WT-5
+    reached for copilot.
+    Deliberately NOT done in the meantime: validating a key the broker was
+    given, or probing whether one works before a spawn. Both presuppose the
+    key is the answer, which is the question being deferred.
     **One hazard found on the way, and it is the probe's, not the
     broker's.** The spawned pane also read `Transcript saving is off —
     inherited CLAUDE_CODE_CHILD_SESSION marker`. That variable is set
