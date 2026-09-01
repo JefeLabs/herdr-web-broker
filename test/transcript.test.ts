@@ -4,6 +4,10 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { CliProfiles } from "../src/cli-profiles.js";
 import { parseTranscript, claudeCwdSlug, decodeBytesRead } from "../src/transcript.js";
+import { DatabaseSync } from "node:sqlite";
+import { mkdirSync } from "node:fs";
+import { readTurnState } from "../src/transcript.js";
+import { tmpDir } from "./util.js";
 
 const P = new CliProfiles();
 const fx = (n: string) => readFileSync(join(import.meta.dirname, "..", "..", "test", "fixtures", "transcripts", n), "utf8");
@@ -175,4 +179,90 @@ test("codex: an override of terminal.done takes effect", () => {
 
 test("codex: a rollout with no event_msg rows yields no evidence", () => {
   assert.equal(parseTranscript("codex", CODEX_META, P.get("codex")!), null);
+});
+
+// ── copilot: sqlite store, structural completion (WT-5) ───────────────────
+
+test("copilot: a non-null assistant_response is done; null is a turn still running", () => {
+  // WT-5, answered 2026-09-01 against copilot 1.0.82. The turns row appears on
+  // SUBMISSION with assistant_response NULL and is filled in when the turn
+  // finishes, so completion here is STRUCTURAL — the presence of a value, not
+  // a vocabulary word. That is why copilot's profile declares no `terminal`:
+  // word lists would name nothing this parser reads, which is the dead-config
+  // trap 25(e) closed for opencode.
+  const P2 = P.get("copilot")!;
+  const done = JSON.stringify({
+    assistant_response: "Hello! I'm the GitHub Copilot CLI, your terminal assistant.",
+    timestamp: "2026-09-01T05:05:03.873Z",
+  });
+  assert.deepEqual(parseTranscript("copilot", done, P2), {
+    state: "done",
+    lastRecordAt: Date.parse("2026-09-01T05:05:03.873Z"),
+  });
+
+  const submitted = JSON.stringify({ assistant_response: null, timestamp: "2026-09-01T05:05:00.000Z" });
+  assert.deepEqual(parseTranscript("copilot", submitted, P2), {
+    state: "working",
+    lastRecordAt: Date.parse("2026-09-01T05:05:00.000Z"),
+  });
+
+  // An empty string is not an answer either — a turn that produced nothing has
+  // not completed, and treating "" as done would report a finished turn with
+  // no reply, which is the shape ask() reads as an answer.
+  const empty = JSON.stringify({ assistant_response: "", timestamp: "2026-09-01T05:05:00.000Z" });
+  assert.equal(parseTranscript("copilot", empty, P2)?.state, "working");
+});
+
+test("copilot: no usable timestamp is no evidence, not a guess", () => {
+  const P2 = P.get("copilot")!;
+  assert.equal(parseTranscript("copilot", JSON.stringify({ assistant_response: "hi" }), P2), null);
+  assert.equal(
+    parseTranscript("copilot", JSON.stringify({ assistant_response: "hi", timestamp: "not a date" }), P2),
+    null,
+  );
+  assert.equal(parseTranscript("copilot", "", P2), null);
+});
+
+test("copilot: never reports blocked — that axis stays with agent_status", () => {
+  // Same contract as opencode: copilot has no live pending-approval store, so
+  // a state this parser cannot emit is one it can never wrongly override.
+  const P2 = P.get("copilot")!;
+  for (const body of [
+    { assistant_response: "done", timestamp: "2026-09-01T05:00:00.000Z" },
+    { assistant_response: null, timestamp: "2026-09-01T05:00:00.000Z" },
+  ]) {
+    assert.notEqual(parseTranscript("copilot", JSON.stringify(body), P2)?.state, "blocked");
+  }
+});
+
+test("copilot: the store is resolved under the BROKER's config dir, not ~/.copilot", () => {
+  // The reason the sqlite branch learned {configDir}. copilot's prepare block
+  // redirects COPILOT_HOME, so its store moves with the config dir; a reader
+  // looking in the home copy would query the USER's own sessions and never see
+  // a broker-spawned one. Mutation-found gap: dropping the templating makes
+  // every read degrade to null, which is SAFE and therefore silent — no other
+  // test noticed.
+  const stateDir = tmpDir();
+  const dir = join(stateDir, "cli-config", "copilot");
+  mkdirSync(dir, { recursive: true });
+  const db = new DatabaseSync(join(dir, "session-store.db"));
+  db.exec("CREATE TABLE sessions (id TEXT PRIMARY KEY, cwd TEXT)");
+  db.exec("CREATE TABLE turns (id TEXT, session_id TEXT, turn_index INTEGER, user_message TEXT, assistant_response TEXT, timestamp TEXT)");
+  db.exec("INSERT INTO sessions VALUES ('s1', '/work/repo')");
+  db.exec("INSERT INTO turns VALUES ('t1', 's1', 0, 'hi', 'hello there', '2026-09-01T05:05:03.873Z')");
+  db.close();
+
+  const profile = new CliProfiles().get("copilot")!;
+  const state = readTurnState(profile, { kind: "copilot", startedAt: 0 }, "/work/repo", undefined, stateDir);
+  assert.deepEqual(state, { state: "done", lastRecordAt: Date.parse("2026-09-01T05:05:03.873Z") });
+
+  // and the unfinished case, through the same real query rather than a fixture
+  const db2 = new DatabaseSync(join(dir, "session-store.db"));
+  db2.exec("UPDATE turns SET assistant_response = NULL");
+  db2.close();
+  assert.equal(
+    readTurnState(profile, { kind: "copilot", startedAt: 0 }, "/work/repo", undefined, stateDir)?.state,
+    "working",
+    "a submitted-but-unfinished turn reads as working through the real SQL",
+  );
 });

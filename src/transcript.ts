@@ -145,6 +145,31 @@ function parseOpencode(text: string, profile: CliProfile): TranscriptState | nul
   return { state: "working", lastRecordAt };
 }
 
+/** copilot's `turns` row, as `{assistant_response, timestamp}` — WT-5,
+ * answered 2026-09-01 against 1.0.82.
+ *
+ * Completion is STRUCTURAL, the same shape opencode has: the row is written on
+ * SUBMISSION with `assistant_response` NULL and filled in when the turn
+ * finishes, so the presence of a value IS the completion signal. That is why
+ * copilot's profile declares no `terminal` block — `done`/`blocked`/`running`
+ * word lists would name nothing this function reads, and config that looks
+ * live and is not is the trap 25(e) closed for opencode.
+ *
+ * An EMPTY string is not an answer either. A completed turn that produced no
+ * text is not what `ask` is waiting for, and reporting it as done would hand
+ * a caller an empty reply as though the agent had spoken.
+ *
+ * Never returns "blocked": copilot exposes no live pending-approval state
+ * here, so that axis stays with agent_status. A state this parser cannot emit
+ * is one it can never wrongly override. */
+function parseCopilot(text: string): TranscriptState | null {
+  const d = JSON.parse(text) as { assistant_response?: unknown; timestamp?: unknown };
+  const lastRecordAt = typeof d.timestamp === "string" ? Date.parse(d.timestamp) : NaN;
+  if (!Number.isFinite(lastRecordAt)) return null;
+  const answered = typeof d.assistant_response === "string" && d.assistant_response.length > 0;
+  return { state: answered ? "done" : "working", lastRecordAt };
+}
+
 /** codex writes one JSON object per line: `{ timestamp, type, payload }`.
  * Turn state lives on `event_msg` rows, whose `payload.type` is the
  * vocabulary — `task_started`, `item_completed`, `task_complete` (WT-4,
@@ -181,6 +206,7 @@ const PARSERS: Record<string, (t: string, p: CliProfile) => TranscriptState | nu
   claude: parseClaude,
   agy: parseAgy,
   opencode: parseOpencode,
+  copilot: parseCopilot,
   codex: parseCodex,
 };
 
@@ -408,7 +434,14 @@ export function readTurnState(
       // check comes first so a CLI that was never run (no db at all)
       // short-circuits without touching node:sqlite. Read-only, and
       // node:sqlite reads through the WAL, so a live session is visible.
-      const dbPath = render(src.dbPath, { home });
+      // {configDir} as well as {home}: copilot's store lives under the
+      // BROKER-owned COPILOT_HOME, not a fixed path, exactly as claude's
+      // transcripts live under CLAUDE_CONFIG_DIR. Unresolvable (no stateDir,
+      // or a kind with no prepare block) leaves the token in place, the file
+      // check below fails, and the reader degrades to "no evidence" — the
+      // designed fallback, rather than a guess at the CLI's default dir.
+      const sqliteConfigDir = stateDir ? configDirFor(profile, stateDir) : undefined;
+      const dbPath = render(src.dbPath, { home, ...(sqliteConfigDir ? { configDir: sqliteConfigDir } : {}) });
       if (!existsSync(dbPath)) return null;
       const { DatabaseSync } = require_("node:sqlite") as typeof import("node:sqlite");
       const db = new DatabaseSync(dbPath, { readOnly: true });

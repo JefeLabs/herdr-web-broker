@@ -19,9 +19,21 @@ test("builtins: each verified kind names its own storage model", () => {
   // id, so it discovers by the cwd the rollout records — a fourth storage
   // model, not a variant of the other three.
   assert.equal(p.get("codex")?.transcript?.via, "scan");
-  // copilot is still unverified: WT-5 ran but could not clear the first-run
-  // trust gate, so whether a completed turn writes a `turns` row is unknown.
-  assert.equal(p.get("copilot")?.transcript, undefined, "unverified formats ship absent, not stubbed");
+  // copilot JOINED the verified set 2026-09-01, when WT-5 finally reached its
+  // question: a completed turn fills `assistant_response`, and `sessions(cwd)`
+  // makes discovery a SQL predicate. Second kind on the sqlite model.
+  assert.equal(p.get("copilot")?.transcript?.via, "sqlite");
+  // Its store moves with COPILOT_HOME, so the path MUST be config-dir
+  // relative. A literal ~/.copilot here would query the USER's own sessions
+  // and never see a broker-spawned one — the wrong-tree failure that cost
+  // WT-11 its transcript half.
+  const cop = p.get("copilot")?.transcript;
+  assert.equal(cop?.via, "sqlite");
+  if (cop?.via !== "sqlite") return;
+  assert.ok(cop.dbPath.includes("{configDir}"), `copilot dbPath must be config-dir relative, got ${cop.dbPath}`);
+  // Completion is structural, so a `terminal` vocabulary would name nothing
+  // the parser reads — dead config that looks live (25(e)).
+  assert.equal(p.get("copilot")?.terminal, undefined, "structural completion needs no word list");
 });
 
 test("builtins: the scan via names a DATE-partitioned directory, not a flat one", () => {

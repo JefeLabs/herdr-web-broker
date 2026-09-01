@@ -218,6 +218,35 @@ const BUILTIN: Array<Omit<CliProfile, "source">> = [
     // `contents` is empty deliberately: a redirected copilot needed no
     // onboarding flag, and trust was the only gate observed. Writing a
     // speculative one would be config that reads live and is not.
+    // WT-5, answered 2026-09-01 (copilot 1.0.82). `sessions(id, cwd)` makes
+    // cwd -> session_id a SQL predicate, and a completed turn fills
+    // `assistant_response`, which is the completion signal that was
+    // unconfirmed until an authenticated run finally produced one.
+    //
+    // json_object() builds the reader's `{data: string}` contract in SQL, so
+    // the sqlite source needs no new shape for a second kind.
+    //
+    // {configDir} because prepare redirects COPILOT_HOME — the store moves
+    // with the config dir, so a reader looking in ~/.copilot would query the
+    // USER's sessions and never see a broker-spawned one.
+    //
+    // KNOWN GAP: copilot records `sessions.cwd` as the REALPATH (a /var/...
+    // spawn is stored as /private/var/...), while queryByCwd is handed the
+    // cwd the broker recorded. Where those differ the row is missed and the
+    // reader degrades to the status tier — safe, not wrong. Matching both
+    // forms needs a two-parameter query, which is a shape change to the
+    // sqlite source and is deliberately not smuggled in here.
+    transcript: {
+      via: "sqlite",
+      dbPath: "{configDir}/session-store.db",
+      queryBySession:
+        "SELECT json_object('assistant_response', assistant_response, 'timestamp', timestamp) AS data" +
+        " FROM turns WHERE session_id = ? ORDER BY turn_index DESC LIMIT 1",
+      queryByCwd:
+        "SELECT json_object('assistant_response', t.assistant_response, 'timestamp', t.timestamp) AS data" +
+        " FROM turns t JOIN sessions s ON s.id = t.session_id" +
+        " WHERE s.cwd = ? ORDER BY t.timestamp DESC LIMIT 1",
+    },
     prepare: {
       configDirEnv: "COPILOT_HOME",
       fileName: "config.json",
