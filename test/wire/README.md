@@ -296,7 +296,30 @@ did not produce a completed turn.
 The schema half stays answered. What is unconfirmed is only the completion
 SIGNAL: `assistant_response` going non-null.
 
-Two gates stand in front of copilot, and BOTH defaults are wrong for a probe.
+**One of those two gates is gone as of 2026-09-01.** copilot now has a
+`prepare` block: `COPILOT_HOME` redirects its config dir to a broker-owned one
+and the spawn's cwd is written into `trustedFolders`, so the directory-trust
+prompt no longer appears for a broker spawn. Verified live — copilot spawned
+into a fresh `mktemp` cwd and reached its input prompt with no gate. Its config
+format was "unverified" only because nobody had read it: `~/.copilot/config.json`
+is JSONC, and trust is a flat `trustedFolders` array of absolute paths, checked
+by copilot's own `trustedFolders.some(f => repoPathsEqual(f, cwd))`.
+
+Two consequences for this table. **`session-store.db` moves with the redirect**
+— it is created inside `COPILOT_HOME`, so WT-5's reader must resolve it through
+`configDirFor` and not `~/.copilot`, exactly the trap claude's transcripts set
+in WT-11. And **copilot's auth SURVIVES the redirect**, unlike claude's with
+`CLAUDE_CONFIG_DIR` (roadmap 33): a redirected copilot showed the full UI with
+no login gate, so containment cost nothing here and no credential question
+stands in front of it.
+
+Also worth re-testing before assuming: WT-5's stated blocker was
+`Authorization error, you may need to run /login` on every run. On this machine
+copilot is logged in and needs no PAT, so the deferral below ("retry once the
+service can mint a copilot PAT") may no longer be what blocks it — the
+restore-sessions picker is the remaining gate, not auth.
+
+Two gates stood in front of copilot, and BOTH defaults are wrong for a probe.
 It opens on a "Restore interrupted sessions" picker where `enter` RESTORES a
 previous session — which is what defeated the first runs: copilot then
 legitimately ran in an EARLIER probe's folder, so the pane showed that folder

@@ -116,3 +116,79 @@ test("re-trusting the same cwd is idempotent", () => {
   trustProject(claude(), state, cwd);
   assert.equal(readFileSync(join(dir, ".claude.json"), "utf8"), before);
 });
+
+// ── copilot: trust pre-answer via COPILOT_HOME ────────────────────────────
+
+const copilot = () => new CliProfiles().get("copilot")!;
+const copilotCfg = (dir: string): Record<string, unknown> =>
+  JSON.parse(readFileSync(join(dir, "config.json"), "utf8")) as Record<string, unknown>;
+
+test("copilot: prepare redirects COPILOT_HOME to a broker-owned dir", () => {
+  // Measured 2026-09-01: COPILOT_HOME really does relocate copilot's config
+  // dir (it wrote config.json, logs/ and session-store.db into one), and —
+  // unlike claude with CLAUDE_CONFIG_DIR — copilot stays LOGGED IN through
+  // the redirect. So containment costs nothing here and no credential
+  // question stands in front of it.
+  const state = tmpDir();
+  const env = prepareWorkspace(copilot(), state);
+  const dir = env.COPILOT_HOME;
+  assert.ok(dir && dir.startsWith(state), "the config dir lives under the broker's state dir");
+  assert.equal(statSync(dir).mode & 0o777, 0o700, "config dir is owner-only");
+});
+
+test("copilot: trust is an ARRAY of paths, and both cwd and realpath are written", () => {
+  // copilot's own check is `trustedFolders.some(f => repoPathsEqual(f, cwd))`
+  // — a flat list, not claude's map keyed by path. Same realpath reason as
+  // claude: on macOS a /var/... cwd resolves to /private/var/...
+  const state = tmpDir();
+  const dir = prepareWorkspace(copilot(), state).COPILOT_HOME;
+  const cwd = tmpDir();
+  trustProject(copilot(), state, cwd);
+  const trusted = copilotCfg(dir).trustedFolders as string[];
+  assert.ok(Array.isArray(trusted), "trustedFolders is a list");
+  assert.ok(trusted.includes(cwd), "the literal cwd is trusted");
+  assert.ok(trusted.includes(realpathSync(cwd)), "and the path the CLI will resolve to");
+});
+
+test("copilot: a second cwd ACCUMULATES, and re-trusting does not duplicate", () => {
+  const state = tmpDir();
+  const dir = prepareWorkspace(copilot(), state).COPILOT_HOME;
+  const a = tmpDir();
+  const b = tmpDir();
+  trustProject(copilot(), state, a);
+  trustProject(copilot(), state, b);
+  trustProject(copilot(), state, a);
+  const trusted = copilotCfg(dir).trustedFolders as string[];
+  assert.ok(trusted.includes(a) && trusted.includes(b), "both directories survive");
+  assert.equal(
+    trusted.filter((p) => p === a).length,
+    1,
+    "a repeated spawn into the same cwd must not grow the list without bound",
+  );
+});
+
+test("copilot: a JSONC config is MERGED, not replaced", () => {
+  // The trap this test exists for. copilot writes `// User settings belong in
+  // settings.json.` at the top of config.json, and that does not parse as
+  // strict JSON. editConfig's catch treats an unparseable file as replaceable,
+  // so a strict parse here would rewrite the file every spawn and wipe both
+  // copilot's own accumulated state AND every trustedFolders entry earlier
+  // spawns added — the exact clobber WT-11 found in claude's prepare, which
+  // was invisible until something had to survive a second spawn.
+  const state = tmpDir();
+  const dir = prepareWorkspace(copilot(), state).COPILOT_HOME;
+  writeFileSync(
+    join(dir, "config.json"),
+    '// User settings belong in settings.json.\n// This file is managed automatically.\n' +
+      '{\n  "firstLaunchAt": "2026-03-11T00:00:00.000Z",\n  "appTipShown": true,\n' +
+      '  "trustedFolders": ["/already/trusted"]\n}\n',
+  );
+  const cwd = tmpDir();
+  trustProject(copilot(), state, cwd);
+  const cfg = copilotCfg(dir);
+  assert.equal(cfg.firstLaunchAt, "2026-03-11T00:00:00.000Z", "the CLI's own state survives");
+  assert.equal(cfg.appTipShown, true);
+  const trusted = cfg.trustedFolders as string[];
+  assert.ok(trusted.includes("/already/trusted"), "a folder copilot already trusted stays trusted");
+  assert.ok(trusted.includes(cwd), "and the new one is added");
+});

@@ -211,7 +211,14 @@ test("spawn mode B: pane.split joins the EXISTING workspace — no new workspace
     assert.equal(out.workspace_id, "w1", "the agent joined the SAME workspace");
     assert.equal(out.pane_id, "w1:p2");
     const split = t.fake.received.find((r) => r.method === "pane.split");
-    assert.deepEqual(split?.params, { workspace_id: "w1", direction: "right", cwd });
+    // The join-relevant params only. `env` also rides this call now that
+    // copilot has a prepare block (COPILOT_HOME) — that is asserted by the
+    // env test below, and pinning the whole object here would make this
+    // test fail for a reason it is not about.
+    const sp = split?.params as { workspace_id: string; direction: string; cwd: string };
+    assert.equal(sp.workspace_id, "w1");
+    assert.equal(sp.direction, "right");
+    assert.equal(sp.cwd, cwd);
     assert.equal(t.fake.received.some((r) => r.method === "workspace.create"), false, "no new workspace created");
     const started = t.fake.received.find((r) => r.method === "agent.start");
     assert.equal((started?.params as { pane_id: string }).pane_id, "w1:p2");
@@ -230,7 +237,10 @@ test("spawn mode B: env-registry values ride pane.split's native env map — no 
     t.fake.handlers.set("agent.start", () => ({ type: "agent_started" }));
     await runBrokerMethod(t.deps, "default", "broker.agent.spawn", { kind: "copilot", workspace_id: "w1" });
     const split = t.fake.received.find((r) => r.method === "pane.split");
-    assert.deepEqual((split?.params as { env: Record<string, string> }).env, { COPILOT_GITHUB_TOKEN: "sekret" });
+    const env = (split?.params as { env: Record<string, string> }).env;
+    assert.equal(env.COPILOT_GITHUB_TOKEN, "sekret", "the registry value rides the native map");
+    // prepare's own var rides the SAME map — one injection path, not two
+    assert.ok(env.COPILOT_HOME, "copilot's config-dir redirect goes native too");
     // native injection — nothing typed into the pane, no file to source
     assert.equal(t.fake.received.some((r) => r.method === "pane.send_input"), false);
   } finally {
@@ -1741,7 +1751,11 @@ test("spawn skips injection entirely when nothing resolves", async () => {
   const t = await setup();
   try {
     armSpawnFake(t.fake);
-    await runBrokerMethod(t.deps, "default", "broker.agent.spawn", { kind: "copilot", cwd: scratchRepo() });
+    // `agy`, not copilot: copilot gained a prepare block (COPILOT_HOME) on
+    // 2026-09-01, so there is now always something to inject for it. The
+    // behaviour under test is unchanged — a kind with NOTHING to inject must
+    // not touch the pane — so it needs a kind that still has no prepare.
+    await runBrokerMethod(t.deps, "default", "broker.agent.spawn", { kind: "agy", cwd: scratchRepo() });
     assert.ok(!t.fake.received.some((r) => r.method === "pane.send_input"));
   } finally {
     await t.teardown();

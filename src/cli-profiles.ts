@@ -47,6 +47,12 @@ export interface CliProfile {
     fileName: string;
     contents: Record<string, unknown>;
     perProject?: Record<string, unknown>;
+    /** Trust expressed as a FLAT LIST of paths rather than a map keyed by
+     * path — copilot's `trustedFolders`, which its own check reads as
+     * `trustedFolders.some(f => repoPathsEqual(f, cwd))`. The same idea as
+     * `perProject` in the other shape a real CLI uses; a kind declares
+     * whichever its config actually has. */
+    trustedPaths?: { key: string };
   };
   /** Screen markers proving the CLI started but cannot work — roadmap 33.
    *
@@ -181,7 +187,32 @@ const BUILTIN: Array<Omit<CliProfile, "source">> = [
   // copilot: spawnable, but its store's turn format is unverified (WT-5 ran
   // but could not clear the first-run trust gate). No `transcript` key =
   // status tier.
-  { kind: "copilot", settleMs: 2500 },
+  {
+    kind: "copilot",
+    // Measured 2026-09-01 (copilot 1.0.81/1.0.82). Every spawn into a fresh
+    // cwd stopped at "Confirm folder trust" and sat there — herdr reported
+    // `agent_status: "blocked"`, which is honest and which nothing acted on.
+    // copilot had no prepare block because its config format was unverified.
+    // It is verified now: `~/.copilot/config.json`, JSONC, with trust as a
+    // flat `trustedFolders` array.
+    //
+    // COPILOT_HOME relocates the whole config dir (a redirected one received
+    // config.json, logs/ and session-store.db), and — the difference from
+    // claude that makes this free — copilot stays LOGGED IN through the
+    // redirect. No credential question stands in front of containment here,
+    // unlike CLAUDE_CONFIG_DIR (roadmap 33).
+    //
+    // `contents` is empty deliberately: a redirected copilot needed no
+    // onboarding flag, and trust was the only gate observed. Writing a
+    // speculative one would be config that reads live and is not.
+    prepare: {
+      configDirEnv: "COPILOT_HOME",
+      fileName: "config.json",
+      contents: {},
+      trustedPaths: { key: "trustedFolders" },
+    },
+    settleMs: 2500,
+  },
 ];
 
 export class CliProfiles {

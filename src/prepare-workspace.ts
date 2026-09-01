@@ -3,15 +3,36 @@ import { join } from "node:path";
 import type { CliProfile } from "./cli-profiles.js";
 
 /** The directory prepareWorkspace writes to (or would write to) for this
- * profile — pure, no side effects. `configDirEnv` (e.g. CLAUDE_CONFIG_DIR)
- * doesn't just relocate the trust-dialog file; it relocates the CLI's
- * WHOLE config dir, transcripts included — so readTurnState (transcript.ts)
+ * profile — pure, no side effects. `configDirEnv` (CLAUDE_CONFIG_DIR,
+ * COPILOT_HOME) doesn't just relocate the trust-dialog file; it relocates the
+ * CLI'"'"'s WHOLE config dir, transcripts included — and for copilot that means
+ * `session-store.db`, the store WT-5 reads, moves with it — so readTurnState (transcript.ts)
  * calls this too, to look for a broker-made spawn's transcript in the same
  * directory the CLI actually wrote it to, not the user's real $HOME.
  * Returns undefined for a kind with no `prepare` block — nothing is ever
  * redirected for it. */
 export function configDirFor(profile: CliProfile, stateDir: string): string | undefined {
   return profile.prepare ? join(stateDir, "cli-config", profile.kind) : undefined;
+}
+
+/** Drop whole-line `//` comments so a JSONC config parses.
+ *
+ * copilot writes `// User settings belong in settings.json.` above the object
+ * in `config.json`, which `JSON.parse` rejects — and the catch below treats an
+ * unparseable file as replaceable, so without this every spawn would rewrite
+ * the file and wipe both the CLI's accumulated state and every trust entry
+ * earlier spawns added. That is the clobber WT-11 found in claude's prepare,
+ * which stayed invisible until something had to survive a second spawn.
+ *
+ * Deliberately only WHOLE-LINE comments, never `//` mid-line: a trailing-
+ * comment stripper has to understand string literals, and every trust entry
+ * here is a path that can legitimately contain `//`. Dropping a line that
+ * merely starts with the marker cannot corrupt a value. */
+function stripLineComments(text: string): string {
+  return text
+    .split("\n")
+    .filter((line) => !line.trimStart().startsWith("//"))
+    .join("\n");
 }
 
 /** Read-modify-write the broker-owned config file.
@@ -41,7 +62,7 @@ function editConfig(dir: string, fileName: string, edit: (cfg: Record<string, un
   let cfg: Record<string, unknown> = {};
   if (existsSync(file)) {
     try {
-      const parsed = JSON.parse(readFileSync(file, "utf8")) as unknown;
+      const parsed = JSON.parse(stripLineComments(readFileSync(file, "utf8"))) as unknown;
       if (parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)) {
         cfg = parsed as Record<string, unknown>;
       }
@@ -67,9 +88,10 @@ function editConfig(dir: string, fileName: string, edit: (cfg: Record<string, un
  * is injected at pane creation. The per-directory half cannot — see
  * trustProject.
  *
- * Kinds without a `prepare` block (agy, codex, copilot, opencode as of this
- * writing — their config formats are unverified) are a no-op: no env, no
- * directory. */
+ * Kinds without a `prepare` block (agy, codex, opencode as of this writing —
+ * their config formats are unverified) are a no-op: no env, no directory.
+ * copilot LEFT that list 2026-09-01, once its format was actually read
+ * rather than assumed. */
 export function prepareWorkspace(profile: CliProfile, stateDir: string): Record<string, string> {
   const prep = profile.prepare;
   const dir = configDirFor(profile, stateDir);
@@ -98,8 +120,7 @@ export function prepareWorkspace(profile: CliProfile, stateDir: string): Record<
 export function trustProject(profile: CliProfile, stateDir: string, cwd: string): void {
   const prep = profile.prepare;
   const dir = configDirFor(profile, stateDir);
-  if (!prep?.perProject || !dir) return;
-  const perProject = prep.perProject;
+  if (!prep || !dir || (!prep.perProject && !prep.trustedPaths)) return;
   const keys = new Set([cwd]);
   try {
     keys.add(realpathSync(cwd));
@@ -107,6 +128,20 @@ export function trustProject(profile: CliProfile, stateDir: string, cwd: string)
     // cwd may not exist yet or may be unreadable — the literal path is
     // still worth writing, so this is not a reason to skip the entry.
   }
+  // The LIST shape (copilot's `trustedFolders`). Append-with-dedupe rather
+  // than a key merge: a repeated spawn into one cwd must not grow the file
+  // without bound, and the CLI's own membership test is an equality scan.
+  if (prep.trustedPaths) {
+    const key = prep.trustedPaths.key;
+    editConfig(dir, prep.fileName, (cfg) => {
+      const raw = cfg[key];
+      const list = Array.isArray(raw) ? raw.filter((p): p is string => typeof p === "string") : [];
+      for (const k of keys) if (!list.includes(k)) list.push(k);
+      cfg[key] = list;
+    });
+    return;
+  }
+  const perProject = prep.perProject!;
   editConfig(dir, prep.fileName, (cfg) => {
     const raw = cfg.projects;
     const projects =

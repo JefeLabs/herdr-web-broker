@@ -43,6 +43,16 @@ export class FakeHerdr {
   constructor(readonly socketPath: string) {
     this.handlers.set("ping", () => ({ type: "pong", version: "0.8.0-test", protocol: 19 }));
     this.handlers.set("agent.list", () => ({ type: "agent_list", agents: this.agents }));
+    // Every real herdr has this (wire-verified, WT-1/WT-9), and spawn reaches
+    // it for any kind whose `prepare` block yields env — which since
+    // 2026-09-01 includes copilot as well as claude. Without a default, giving
+    // a kind a prepare block turns every existing spawn test for it red with
+    // `env injection failed: unknown method pane.send_input`, and worse:
+    // a spawn that throws mid-test skips that test's cleanup, leaking a
+    // daemon whose handles then keep the whole FILE from exiting. A test
+    // wanting the failure path still overrides this, as 27 tests already
+    // override it to assert on what was sent.
+    this.handlers.set("pane.send_input", () => ({ type: "ok" }));
     this.#server = createServer((sock) => {
       this.#conns.add(sock);
       const dec = new NdjsonDecoder();
