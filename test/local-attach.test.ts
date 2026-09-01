@@ -339,6 +339,32 @@ test("mapHerdrEvent maps workspace.closed to the id that was reaped", () => {
     mapHerdrEvent({ event: "workspace_closed", data: { workspace_id: "w1" } }),
     { reaped: "w1" },
   );
+  // A REAL frame, captured verbatim off a live herdr 0.8.2 event channel on
+  // 2026-08-31 by creating a workspace and closing it. Kept whole rather than
+  // trimmed to the two fields the mapper reads: `data.workspace` rides along
+  // carrying the full WorkspaceInfo, and pinning it here is what would catch
+  // herdr moving the id into that object and dropping the flat one.
+  // (It also shows WorkspaceInfo carrying no `cwd` — see herdrWorkspaces.)
+  assert.deepEqual(
+    mapHerdrEvent({
+      event: "workspace_closed",
+      data: {
+        type: "workspace_closed",
+        workspace: {
+          active_tab_id: "w2:t1",
+          agent_status: "unknown",
+          focused: false,
+          label: "reap-probe",
+          number: 2,
+          pane_count: 1,
+          tab_count: 1,
+          workspace_id: "w2",
+        },
+        workspace_id: "w2",
+      },
+    }),
+    { reaped: "w2" },
+  );
   // A frame with no id names nothing to act on. Acting on it would mean
   // guessing which row to delete, so it maps to nothing at all.
   assert.equal(mapHerdrEvent({ event: "workspace_closed", data: {} }), undefined);
