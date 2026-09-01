@@ -1,6 +1,6 @@
 {
   "name": "@jefelabs/herdr-broker-client",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Zero-dependency TypeScript SDK for herdr-web-broker: spawn and steer coding agents, browse repos, stream events \u2014 browser and Node \u2265 20",
   "keywords": [
     "herdr",

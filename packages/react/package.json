@@ -1,6 +1,6 @@
 {
   "name": "@jefelabs/herdr-broker-react",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Headless React layer for herdr-web-broker: every behavior hook (auth gate, pane viewer, repo browser, events panel) with zero markup \u2014 the base for any design-system skin",
   "keywords": [
     "herdr",

@@ -1,6 +1,6 @@
 {
   "name": "@jefelabs/herdr-broker-module",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Types for authoring herdr-web-broker modules: capability-scoped git, file, workspace and agent access",
   "keywords": [
     "herdr",
