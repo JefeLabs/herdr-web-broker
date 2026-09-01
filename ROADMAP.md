@@ -889,8 +889,21 @@ with more evidence behind it. These are the two it was right about.
     credential half is DEFERRED, deliberately; see the end of this item.**
     Every one of them. `prepare` redirects `CLAUDE_CONFIG_DIR` to a
     broker-owned directory so a trust dialog is answered inside the
-    broker's blast radius rather than the user's global config — and that
-    redirect relocates the CLI's WHOLE config tree, credentials with it.
+    broker's blast radius rather than the user's global config.
+    **The SYMPTOM is verified and the MECHANISM is not — flagged
+    2026-08-31.** That a broker-spawned claude reports `Not logged in` was
+    observed directly, twice, by WT-13. The sentence that used to continue
+    here — "and that redirect relocates the CLI's WHOLE config tree,
+    credentials with it" — is an inference, and a doubtful one: claude
+    keeps its credentials in the macOS KEYCHAIN (a `Claude Code-credentials`
+    item exists on this machine), which `CLAUDE_CONFIG_DIR` does not move.
+    A control launched through herdr into an already-trusted cwd with NO
+    redirect came up authenticated; the matching redirected arm could not be
+    read, because it parks on an IDE welcome gate that never clears on its
+    own. So the redirect remains the leading suspect and nothing more.
+    This matters for the deferred half rather than for the shipped
+    refusal: "copy credentials into the broker dir" is a fix for a cause
+    that may not be the cause.
     The pane reads `Not logged in · Please run /login`, each turn ends in
     about zero seconds, and the transcript fills with `<synthetic>`
     assistant rows carrying the CLI's own error.
@@ -977,12 +990,15 @@ with more evidence behind it. These are the two it was right about.
     reattach CONTEXT?) and all of WT-12, both of which need a claude that
     can actually answer; and `ask`, which remains unproven against any live
     agent — unit-tested against FakeHerdr only.
-    **Where to start when it is picked up.** claude's own `--help` says it
-    reads strictly `ANTHROPIC_API_KEY` or `apiKeyHelper` — OAuth and the
-    keychain are never consulted — so `apiKeyHelper` is the branch worth
-    probing first: it is a COMMAND the CLI calls, which means the broker
-    could point a spawn at the user's existing credential source without
-    copying a secret into a broker-owned directory at all. That would answer
+    **Where to start when it is picked up.** `apiKeyHelper` is the branch
+    worth probing first: it is a COMMAND the CLI calls, which means the
+    broker could point a spawn at the user's existing credential source
+    without copying a secret into a broker-owned directory at all.
+    (Corrected 2026-08-31: an earlier version of this paragraph said
+    claude reads "strictly ANTHROPIC_API_KEY or apiKeyHelper, OAuth and
+    keychain never consulted". That is `--bare` mode's contract, quoted out
+    of its flag description — ordinary claude DOES read the keychain, and
+    this machine has a `Claude Code-credentials` item in it.) That would answer
     the second question (should `prepare` inherit credentials?) without the
     blast radius that copying implies. `[[env_hooks]]`, keyed by `kind`, is
     already the right shape for handing it over; what is missing is a

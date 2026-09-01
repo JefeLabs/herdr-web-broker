@@ -286,9 +286,20 @@ correct fixes each revealed another screen, which is the signal that the
 instrument is the wrong KIND of instrument, not that it needs a fifth fix.
 
 The three CLIs each want something different, from their own `--help`: claude
-is "strictly ANTHROPIC_API_KEY or apiKeyHelper (OAuth and keychain are never
-read)", codex takes `--remote-auth-token-env <ENV_VAR>` — the NAME of a
-variable rather than a value — and copilot documents only `login`, so its PAT
-route is an env var it does not advertise. `env_hooks` being keyed by `kind`
+takes `ANTHROPIC_API_KEY` or `apiKeyHelper`, codex takes
+`--remote-auth-token-env <ENV_VAR>` — the NAME of a variable rather than a
+value — and copilot documents only `login`, so its PAT route is an env var it
+does not advertise.
+
+**Correction 2026-08-31.** This paragraph used to quote claude as "strictly
+ANTHROPIC_API_KEY or apiKeyHelper (OAuth and keychain are never read)" as
+though it described claude generally. It does not. Read in full, that sentence
+sits inside the `--bare` flag's description and is a property of **`--bare`
+mode only**; ordinary claude does read the keychain, and a `Claude Code-
+credentials` item is present there on this machine. The clipped version was
+load-bearing in two places — it made an API key look like the only possible
+answer for claude, and it made the config-dir redirect look like a sufficient
+explanation for a logged-out spawn. Neither follows. Quote a `--help` line with
+enough of its context to show what it is scoped to. `env_hooks` being keyed by `kind`
 is the right shape for that spread; what is missing is a builtin hook per
 kind, not new machinery.
