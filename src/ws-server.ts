@@ -37,7 +37,12 @@ export interface WsDeps {
   owners?: OwnerRegistry;
 }
 
-/** The 27 wire-verified herdr subscription types (schema, protocol 19). */
+/** The 27 wire-verified herdr subscription types.
+ *
+ * Re-verified 2026-08-31 against a live herdr 0.8.2 (PROTOCOL 20) by diffing
+ * this list against `herdr api schema --json`: still 27, and identical name
+ * for name. The comment used to say protocol 19, which is where the list was
+ * first captured; nothing in it changed across the bump. */
 const SUB_TYPES = new Set([
   "workspace.created", "workspace.updated", "workspace.metadata_updated", "workspace.renamed",
   "workspace.moved", "workspace.reordered", "workspace.closed", "workspace.focused",

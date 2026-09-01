@@ -119,7 +119,7 @@ undercounts it, because calls wrap across lines.
 | `ping` | `local-attach.ts` | attach fails; the endpoint is never adopted, and the liveness probe that re-checks it has nothing to call |
 | `events.subscribe` | `local-attach.ts`, `ws-server.ts` | the push channel that feeds the registry. The broker still works, but agent status only updates when a client asks with `?fresh=1` |
 | `agent.list` | `http.ts`, `workspace-ops.ts`, `module-api.ts` | no roster: `GET .../agents`, the counts, and spawn-readiness checks all go blind |
-| `workspace.list` | `http.ts`, `workspace-ops.ts` | workspace roster, plus the cwd half of transcript resolution — `lookupCwd` falls back to the broker's own index |
+| `workspace.list` | `http.ts`, `workspace-ops.ts` | the workspace roster and its labels. **Not cwd** — herdr's `WorkspaceInfo` has no such field (verified 0.8.2/protocol 20), so the broker's own `WorkspaceIndex` is the sole source of a workspace cwd, not a fallback for one |
 | `workspace.list` (again) | `workspace-ops.ts` `stopAgent` | **degrades, does not break.** The reaped-workspace self-heal on `DELETE .../agents/{pane}`. A herdr that cannot answer keeps every index row and behaves exactly as it did before the heal existed — only a definite "I do not have it" removes one |
 
 ### Spawn — the four modes

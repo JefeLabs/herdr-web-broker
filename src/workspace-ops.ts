@@ -402,9 +402,23 @@ interface HerdrWorkspace {
   label?: string;
 }
 
-/** Opportunistic herdr workspace.list (spec §4 primary source): if herdr
- * 0.8.0 lacks the method or reports no cwd, this degrades to an empty map
- * and the WorkspaceIndex is the source of truth. One code path either way. */
+/** Opportunistic herdr workspace.list. Degrades to an empty map when the
+ * method is missing or the call fails, so there is one code path either way.
+ *
+ * On CWD, specifically: herdr does not supply one here. Verified 2026-08-31
+ * against a live 0.8.2 (protocol 20) — `WorkspaceInfo` declares
+ * {workspace_id, number, label, focused, pane_count, tab_count,
+ * active_tab_id, agent_status} and no `cwd`, while `AgentInfo` and
+ * `PaneInfo` both carry one. A snapshot of a real workspace agrees.
+ *
+ * So the `w.cwd` read below is belt-and-braces against a future herdr that
+ * adds the field, NOT a live source: today it is always undefined, and the
+ * WorkspaceIndex is the SOLE source of cwd rather than a fallback. Kept
+ * because reading a field that isn't there costs nothing and adopting one
+ * that appears costs nothing either. `label` IS supplied and is used.
+ *
+ * The distinction matters for anyone tempted to "fix" a wrong cwd by
+ * trusting herdr's: there is nothing there to trust. */
 async function herdrWorkspaces(deps: OpsDeps, session: string): Promise<Map<string, HerdrWorkspace>> {
   const out = new Map<string, HerdrWorkspace>();
   const res = (await deps.local.request(session, "workspace.list", {}, 5000).catch(() => undefined)) as
@@ -451,7 +465,12 @@ async function workspaceStillLive(
 }
 
 /** The ONE cwd lookup, shared by every caller: herdr's own view first, the
- * broker's index as fallback.
+ * broker's index behind it.
+ *
+ * "Behind it" is currently "instead of": herdr's workspace records carry no
+ * cwd (see herdrWorkspaces, verified against 0.8.2/protocol 20), so the left
+ * side of the ?? is always undefined and the index answers every call. The
+ * ordering stays so a herdr that starts reporting cwd wins automatically.
  *
  * Non-throwing on purpose (roadmap 25(b)). `wait` and `ask` used to resolve
  * differently — ask through resolveCwd, wait by reading the index directly —
@@ -1030,7 +1049,8 @@ async function waitAgent(deps: OpsDeps, session: string, p: Record<string, unkno
     const raw = String(r?.agent?.agent_status ?? "unknown");
     const meta = deps.agents.get(session, pane);
     const profile = meta ? deps.profiles.get(meta.kind) : undefined;
-    // The same lookup ask uses — herdr's view first, index as fallback — so
+    // The same lookup ask uses — herdr's view first, index behind it (in
+    // practice the index, which is the only side carrying cwd) — so
     // one pane cannot yield two transcript paths. Non-throwing: an
     // unresolvable cwd just means no transcript tier for this wait.
     const cwd = await lookupCwd(deps, session, pane.split(":")[0]);

@@ -57,7 +57,13 @@ export interface WorkspaceMeta {
 
 /** workspace_id → cwd memory per session, following the ChildrenStore
  * pattern: file-backed so daemon restarts don't forget which working set a
- * spawned team belongs to (spec §4 fallback source). */
+ * spawned team belongs to.
+ *
+ * Not a fallback despite the original spec §4 framing: herdr's workspace
+ * records carry no cwd at all (verified against 0.8.2/protocol 20 — see
+ * herdrWorkspaces), so this file is the ONLY place a workspace's cwd exists.
+ * Losing a row here loses the directory for good, which is why both removal
+ * sites read the cwd out before dropping one. */
 export class WorkspaceIndex {
   #path: string;
 
