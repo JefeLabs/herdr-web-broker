@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { CliProfiles } from "../src/cli-profiles.js";
 import { parseTranscript, claudeCwdSlug, decodeBytesRead } from "../src/transcript.js";
 import { DatabaseSync } from "node:sqlite";
-import { mkdirSync } from "node:fs";
+import { mkdirSync, realpathSync } from "node:fs";
 import { readTurnState } from "../src/transcript.js";
 import { tmpDir } from "./util.js";
 
@@ -264,5 +264,119 @@ test("copilot: the store is resolved under the BROKER's config dir, not ~/.copil
     readTurnState(profile, { kind: "copilot", startedAt: 0 }, "/work/repo", undefined, stateDir)?.state,
     "working",
     "a submitted-but-unfinished turn reads as working through the real SQL",
+  );
+});
+
+test("sqlite byCwd matches the REALPATH the CLI recorded, not only the path we were handed", () => {
+  // The gap left open when the reader shipped. copilot stores `sessions.cwd`
+  // as the realpath — a spawn into /var/folders/... is recorded as
+  // /private/var/folders/... on macOS — while the query is handed whatever cwd
+  // the broker recorded. Where those differ the row was missed and the whole
+  // evidence tier silently degraded to agent_status for that agent.
+  //
+  // Not hypothetical and not macOS trivia: /var IS a symlink here, every
+  // mkdtemp spawn goes through it, and WT-5's own probe only avoided the bug
+  // by realpath'ing its cwd before spawning.
+  const stateDir = tmpDir();
+  const dir = join(stateDir, "cli-config", "copilot");
+  mkdirSync(dir, { recursive: true });
+  const literal = tmpDir();
+  const real = realpathSync(literal);
+  assert.notEqual(literal, real, "this test is meaningless unless the two forms differ");
+
+  const db = new DatabaseSync(join(dir, "session-store.db"));
+  db.exec("CREATE TABLE sessions (id TEXT PRIMARY KEY, cwd TEXT)");
+  db.exec("CREATE TABLE turns (id TEXT, session_id TEXT, turn_index INTEGER, user_message TEXT, assistant_response TEXT, timestamp TEXT)");
+  // the CLI records the RESOLVED path, as copilot really does
+  db.prepare("INSERT INTO sessions VALUES ('s1', ?)").run(real);
+  db.exec("INSERT INTO turns VALUES ('t1', 's1', 0, 'hi', 'done', '2026-09-01T05:05:03.873Z')");
+  db.close();
+
+  const profile = new CliProfiles().get("copilot")!;
+  // asked with the UNRESOLVED path, which is what the broker index holds
+  assert.deepEqual(
+    readTurnState(profile, { kind: "copilot", startedAt: 0 }, literal, undefined, stateDir),
+    { state: "done", lastRecordAt: Date.parse("2026-09-01T05:05:03.873Z") },
+    "the row is found through the symlinked form",
+  );
+  // and the already-resolved form still works — this must not become a
+  // realpath-only lookup, which would just move the bug
+  assert.equal(
+    readTurnState(profile, { kind: "copilot", startedAt: 0 }, real, undefined, stateDir)?.state,
+    "done",
+  );
+});
+
+test("sqlite byCwd survives a cwd that no longer exists on disk", () => {
+  // realpathSync throws for a deleted directory. A workspace can be torn down
+  // between the spawn and the read, and losing turn state because the folder
+  // went away would be a regression dressed as a fix.
+  const stateDir = tmpDir();
+  const dir = join(stateDir, "cli-config", "copilot");
+  mkdirSync(dir, { recursive: true });
+  const db = new DatabaseSync(join(dir, "session-store.db"));
+  db.exec("CREATE TABLE sessions (id TEXT PRIMARY KEY, cwd TEXT)");
+  db.exec("CREATE TABLE turns (id TEXT, session_id TEXT, turn_index INTEGER, user_message TEXT, assistant_response TEXT, timestamp TEXT)");
+  db.exec("INSERT INTO sessions VALUES ('s1', '/gone/for/good')");
+  db.exec("INSERT INTO turns VALUES ('t1', 's1', 0, 'hi', 'done', '2026-09-01T05:05:03.873Z')");
+  db.close();
+
+  const profile = new CliProfiles().get("copilot")!;
+  assert.equal(
+    readTurnState(profile, { kind: "copilot", startedAt: 0 }, "/gone/for/good", undefined, stateDir)?.state,
+    "done",
+    "an unresolvable cwd falls back to the literal form rather than throwing",
+  );
+});
+
+test("opencode's byCwd still resolves after gaining the second parameter", () => {
+  // The other sqlite kind. Its query grew from `= ?` to `IN (?, ?)` because
+  // the reader now passes both cwd forms for EVERY sqlite kind, and a
+  // one-parameter statement would throw at runtime — a break that no parser
+  // unit test could see, since those never touch the database.
+  const home = tmpDir();
+  const dir = join(home, ".local", "share", "opencode");
+  mkdirSync(dir, { recursive: true });
+  const db = new DatabaseSync(join(dir, "opencode.db"));
+  db.exec("CREATE TABLE session (id TEXT PRIMARY KEY, directory TEXT)");
+  db.exec("CREATE TABLE message (session_id TEXT, time_created INTEGER, data TEXT)");
+  db.exec("INSERT INTO session VALUES ('s1', '/work/repo')");
+  db.prepare("INSERT INTO message VALUES ('s1', 2000, ?)").run(
+    JSON.stringify({ role: "assistant", time: { created: 1000, completed: 2000 } }),
+  );
+  db.close();
+
+  assert.deepEqual(
+    readTurnState(new CliProfiles().get("opencode")!, { kind: "opencode", startedAt: 0 }, "/work/repo", home),
+    { state: "done", lastRecordAt: 2000 },
+  );
+});
+
+test("sqlite byCwd still matches a CLI that recorded the LITERAL symlinked path", () => {
+  // The mirror of the realpath case, and the reason the fix passes BOTH forms
+  // rather than simply resolving before the query. A CLI that files a session
+  // under the path it was handed — unresolved — would be missed by a
+  // realpath-only lookup on a symlinked cwd, which is the same bug pointed the
+  // other way. Mutation-found: switching the query to realpath-only passed
+  // every other test in this file.
+  const stateDir = tmpDir();
+  const dir = join(stateDir, "cli-config", "copilot");
+  mkdirSync(dir, { recursive: true });
+  const literal = tmpDir();
+  assert.notEqual(literal, realpathSync(literal), "meaningless unless the forms differ");
+
+  const db = new DatabaseSync(join(dir, "session-store.db"));
+  db.exec("CREATE TABLE sessions (id TEXT PRIMARY KEY, cwd TEXT)");
+  db.exec("CREATE TABLE turns (id TEXT, session_id TEXT, turn_index INTEGER, user_message TEXT, assistant_response TEXT, timestamp TEXT)");
+  // recorded UNRESOLVED, the opposite of what copilot does
+  db.prepare("INSERT INTO sessions VALUES ('s1', ?)").run(literal);
+  db.exec("INSERT INTO turns VALUES ('t1', 's1', 0, 'hi', 'done', '2026-09-01T05:05:03.873Z')");
+  db.close();
+
+  assert.equal(
+    readTurnState(new CliProfiles().get("copilot")!, { kind: "copilot", startedAt: 0 }, literal, undefined, stateDir)
+      ?.state,
+    "done",
+    "the literal form must still match — resolving before the query would move the bug, not fix it",
   );
 });

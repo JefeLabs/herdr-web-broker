@@ -162,7 +162,12 @@ const BUILTIN: Array<Omit<CliProfile, "source">> = [
         "SELECT data FROM message WHERE session_id = ? ORDER BY time_created DESC LIMIT 1",
       queryByCwd:
         "SELECT m.data AS data FROM message m JOIN session s ON s.id = m.session_id" +
-        " WHERE s.directory = ? ORDER BY m.time_created DESC LIMIT 1",
+        // IN (?, ?) — the literal cwd and its realpath. opencode has not been
+        // observed storing a resolved path the way copilot does, but the
+        // reader passes both forms for every sqlite kind and a one-parameter
+        // statement would then throw. Taking both is also simply correct: if
+        // opencode ever records a resolved path, this already handles it.
+        " WHERE s.directory IN (?, ?) ORDER BY m.time_created DESC LIMIT 1",
     },
     // Completion is STRUCTURAL for opencode — the presence of
     // time.completed, not a vocabulary word — so `done` names the ROLES
@@ -230,12 +235,13 @@ const BUILTIN: Array<Omit<CliProfile, "source">> = [
     // with the config dir, so a reader looking in ~/.copilot would query the
     // USER's sessions and never see a broker-spawned one.
     //
-    // KNOWN GAP: copilot records `sessions.cwd` as the REALPATH (a /var/...
-    // spawn is stored as /private/var/...), while queryByCwd is handed the
-    // cwd the broker recorded. Where those differ the row is missed and the
-    // reader degrades to the status tier — safe, not wrong. Matching both
-    // forms needs a two-parameter query, which is a shape change to the
-    // sqlite source and is deliberately not smuggled in here.
+    // copilot records `sessions.cwd` as the REALPATH — a /var/... spawn is
+    // filed under /private/var/... — while the broker holds whatever cwd it
+    // was given. Closed 2026-09-01: queryByCwd takes `IN (?, ?)` and the
+    // reader passes the literal form AND the resolved one. Both, not just the
+    // resolved one: a CLI that files a session under the unresolved path it
+    // was handed would be missed by a realpath-only lookup, which is the same
+    // bug pointed the other way (and a mutation proved no test caught it).
     transcript: {
       via: "sqlite",
       dbPath: "{configDir}/session-store.db",
@@ -245,7 +251,7 @@ const BUILTIN: Array<Omit<CliProfile, "source">> = [
       queryByCwd:
         "SELECT json_object('assistant_response', t.assistant_response, 'timestamp', t.timestamp) AS data" +
         " FROM turns t JOIN sessions s ON s.id = t.session_id" +
-        " WHERE s.cwd = ? ORDER BY t.timestamp DESC LIMIT 1",
+        " WHERE s.cwd IN (?, ?) ORDER BY t.timestamp DESC LIMIT 1",
     },
     prepare: {
       configDirEnv: "COPILOT_HOME",

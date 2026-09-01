@@ -1,4 +1,4 @@
-import { closeSync, existsSync, fstatSync, openSync, readFileSync, readSync, readdirSync } from "node:fs";
+import { closeSync, existsSync, fstatSync, openSync, readFileSync, readSync, readdirSync, realpathSync } from "node:fs";
 import { createRequire } from "node:module";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -446,9 +446,28 @@ export function readTurnState(
       const { DatabaseSync } = require_("node:sqlite") as typeof import("node:sqlite");
       const db = new DatabaseSync(dbPath, { readOnly: true });
       try {
+        // TWO cwd forms, because a CLI records the path IT resolved. copilot
+        // stores `sessions.cwd` as the realpath, so a /var/... spawn is filed
+        // under /private/var/... on macOS — and /var is a symlink, so EVERY
+        // mkdtemp-based cwd goes through it. Matching only the path we were
+        // handed missed those rows and degraded the whole evidence tier to
+        // agent_status, silently, for exactly the spawns most likely to be
+        // automated. queryByCwd therefore takes the literal and the resolved
+        // form; identical when nothing is symlinked, which `IN (?, ?)`
+        // handles without a special case.
+        //
+        // realpathSync throws for a cwd that has since been deleted — a
+        // workspace can be torn down between spawn and read — so failure
+        // falls back to the literal path rather than losing the turn state.
+        let resolved = cwd;
+        try {
+          resolved = realpathSync(cwd);
+        } catch {
+          // keep the literal form; see above
+        }
         const row = meta.sessionId
           ? (db.prepare(src.queryBySession).get(meta.sessionId) as { data?: string } | undefined)
-          : (db.prepare(src.queryByCwd).get(cwd) as { data?: string } | undefined);
+          : (db.prepare(src.queryByCwd).get(cwd, resolved) as { data?: string } | undefined);
         return typeof row?.data === "string" ? parseTranscript(profile.kind, row.data, profile) : null;
       } finally {
         db.close();
