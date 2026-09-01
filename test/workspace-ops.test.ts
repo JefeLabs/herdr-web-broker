@@ -2111,3 +2111,84 @@ test("broker.session.resumable lists conversations newest-ended first", async ()
     await t.teardown();
   }
 });
+
+// ── Reaped-workspace self-heal on the agent-delete path (roadmap 32's
+//    remaining half) ───────────────────────────────────────────────────────
+
+test("stopping the LAST agent in a workspace herdr then reaps drops the index row", async () => {
+  // The reported bug. `DELETE .../agents/{pane}` closes the pane, herdr reaps
+  // the now-empty workspace on its own, and nothing removed the broker's row:
+  // index.remove is reached from exactly two sites and a client managing
+  // AGENTS calls neither. listWorkspaces unions the index with herdr's live
+  // set, so the dead id kept being advertised — and a mode-B spawn into it
+  // fails `pane_not_found` forever.
+  const t = await setup();
+  try {
+    const cwd = scratchRepo();
+    t.deps.index.set("default", "w1", { cwd, label: "spawn-probe" });
+    t.deps.agents.set("default", "w1:p1", { kind: "claude", sessionId: "sess-a", startedAt: 1 });
+    t.fake.handlers.set("agent.list", () => ({ type: "agent_list", agents: [{ pane_id: "w1:p1", agent: "claude" }] }));
+    t.fake.handlers.set("pane.close", () => ({ type: "ok" }));
+    // herdr has reaped it by the time we look
+    t.fake.handlers.set("workspace.list", () => ({ type: "workspace_list", workspaces: [] }));
+
+    await runBrokerMethod(t.deps, "default", "broker.agent.stop", { pane_id: "w1:p1" });
+
+    assert.equal(t.deps.index.get("default", "w1"), undefined, "the reaped workspace's row is gone");
+    assert.equal(
+      t.deps.resumable.get("default", "sess-a")?.cwd,
+      cwd,
+      "the conversation still archived WITH its cwd — the row was read before it was dropped",
+    );
+  } finally {
+    await t.teardown();
+  }
+});
+
+test("stopping one agent of a team herdr still lists KEEPS the workspace row", async () => {
+  // The direction that must not regress. A mode-B workspace survives losing
+  // one pane, and dropping its row would make the broker forget the cwd of
+  // panes that are still running — worse than the stale row this fixes.
+  const t = await setup();
+  try {
+    const cwd = scratchRepo();
+    t.deps.index.set("default", "w1", { cwd, label: "team" });
+    t.deps.agents.set("default", "w1:p1", { kind: "claude", sessionId: "sess-a", startedAt: 1 });
+    t.deps.agents.set("default", "w1:p2", { kind: "claude", sessionId: "sess-b", startedAt: 2 });
+    t.fake.handlers.set("agent.list", () => ({ type: "agent_list", agents: [{ pane_id: "w1:p1", agent: "claude" }] }));
+    t.fake.handlers.set("pane.close", () => ({ type: "ok" }));
+    t.fake.handlers.set("workspace.list", () => ({
+      type: "workspace_list",
+      workspaces: [{ workspace_id: "w1", cwd }],
+    }));
+
+    await runBrokerMethod(t.deps, "default", "broker.agent.stop", { pane_id: "w1:p1" });
+
+    assert.equal(t.deps.index.get("default", "w1")?.cwd, cwd, "a live workspace keeps its cwd");
+    assert.equal(t.deps.agents.get("default", "w1:p2")?.sessionId, "sess-b", "its other agent is untouched");
+  } finally {
+    await t.teardown();
+  }
+});
+
+test("a herdr that cannot answer workspace.list keeps every index row", async () => {
+  // The degradation guard. herdrWorkspaces collapses "answered: none" and
+  // "the call failed" into one empty map, so a self-heal reading it naively
+  // would treat a herdr WITHOUT the method as having reaped everything and
+  // erase the index — turning a degraded-but-working setup into data loss.
+  // FakeHerdr has no workspace.list handler here, exactly like herdr 0.8.0.
+  const t = await setup();
+  try {
+    const cwd = scratchRepo();
+    t.deps.index.set("default", "w1", { cwd, label: "ui" });
+    t.deps.agents.set("default", "w1:p1", { kind: "claude", sessionId: "sess-a", startedAt: 1 });
+    t.fake.handlers.set("agent.list", () => ({ type: "agent_list", agents: [{ pane_id: "w1:p1", agent: "claude" }] }));
+    t.fake.handlers.set("pane.close", () => ({ type: "ok" }));
+
+    await runBrokerMethod(t.deps, "default", "broker.agent.stop", { pane_id: "w1:p1" });
+
+    assert.equal(t.deps.index.get("default", "w1")?.cwd, cwd, "no opinion from herdr means no change here");
+  } finally {
+    await t.teardown();
+  }
+});

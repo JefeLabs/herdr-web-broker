@@ -307,7 +307,10 @@ export const CATALOG: EndpointSpec[] = [
       "Rides herdr's pane.close (wire-verified). Requires an agent in the pane — a typo'd pane id answers " +
       "400 'no agent in pane' instead of silently closing someone's shell. For a mid-run cancel that keeps " +
       "the agent alive, send Escape via rpc pane.send_keys instead; to end a whole working set, use " +
-      "DELETE .../workspaces/{w}.",
+      "DELETE .../workspaces/{w}. Closing the LAST pane makes herdr reap the workspace on its own, so this " +
+      "call then asks whether it survived and drops the broker's index row if it did not — otherwise that " +
+      "row would be advertised by GET .../workspaces forever and every mode-B spawn into it would fail " +
+      "pane_not_found. A herdr that cannot answer workspace.list changes nothing.",
     method: "DELETE",
     pathTemplate: "/instances/{instance}/sessions/{session}/agents/{pane_id}",
     auth: "bearer",

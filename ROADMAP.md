@@ -730,6 +730,11 @@ with more evidence behind it. These are the two it was right about.
     stale rows themselves are item 32 — a defect on the removal path, not
     an argument for this — but the fact that the disagreement sat there
     unremarked until somebody asked is precisely this item.
+    Narrowed 2026-08-31: item 32 now covers BOTH removal paths, so this no
+    longer inherits the stale-row example. What is left is the case the
+    broker never observes at all — a reap after a herdr-side close or a
+    crash, with no broker call in the chain to notice it — and the fact
+    that nothing announces the divergence at boot.
     `classifySession` is called from two sites only
     (`src/http.ts:162` teardown, `src/workspace-ops.ts:144` the orphans
     route), both on demand, neither at boot. The indices are file-backed
@@ -801,10 +806,43 @@ with more evidence behind it. These are the two it was right about.
     work; `already_closed` carries who did it. That deliberately reads
     differently from the git verbs (`{committed:false, clean:true}`),
     where false means the thing you expected does not exist.
-    Still true afterwards, and NOT fixed by this: nothing removes the row
-    if a caller never calls close at all. `stopAgent` clears the agent row
-    and cannot know whether herdr reaped the workspace, since a multi-agent
-    workspace survives. That gap is 31(f)'s, not this one's.
+    **The other half, done 2026-08-31 from a user bug report.** The
+    paragraph that stood here said nothing removes the row if a caller
+    never calls close at all, and handed that gap to 31(f). A reported
+    reproduction promoted it, because the stale row is not cosmetic — it
+    permanently breaks spawn. `POST .../agents {workspace_id}` takes the
+    mode-B path and calls `pane.split` on a workspace herdr has destroyed,
+    and the broker surfaces herdr's own `pane_not_found`: deterministic, 4
+    of 4, surviving a sign-out and a broker restart because
+    `workspaces.json` persists it. A client that deletes agents but never
+    deletes workspaces — the natural shape for a UI that manages AGENTS —
+    stranded a row on every cleanup.
+    `stopAgent` now asks. After `pane.close` it probes whether herdr still
+    has the workspace and, ONLY on a definite no, performs the same index
+    removal and `resumable.record` archiving that `broker.workspace.close`
+    performs. Clearing the workspace row while leaving the agent rows was
+    rejected as the worst of the three options: a reaped workspace's pane
+    ids are free for herdr to reuse, which is exactly the stale-pointer bug
+    `AgentIndex.removeWorkspace` exists to prevent, and half-cleaning keeps
+    that bug while reporting the workspace tidied.
+    **The probe is deliberately NOT `herdrWorkspaces`.** That helper
+    degrades to an EMPTY MAP when `workspace.list` fails or is absent,
+    which is right for its three READERS — they fall back to the index and
+    keep working — and catastrophic for a WRITER, which would read "herdr
+    answered nothing" as "herdr reaped everything" and erase the index of
+    every herdr that merely lacks the method (0.8.0 does), turning a
+    degraded-but-working setup into total data loss. So the self-heal owns
+    a three-state probe — live / reaped / no opinion — and only the middle
+    state acts. Same call, two contracts, on purpose.
+    The bookkeeping degrades rather than throwing: `pane.close` has already
+    succeeded, so a failure here would report a stop that plainly happened
+    as failed and invite a retry that can only answer `no agent in pane`.
+    Same postcondition reasoning as `closed: true` above, and the same
+    degrade contract as `prepareWorkspace`/`trustProject` on the spawn path.
+    Three tests, mutation-checked independently: never healing fails only
+    the reaped case, treating no-opinion as reaped fails only the
+    degradation case, and ignoring the still-live answer fails only the
+    surviving-team case.
 
 ## Agent credentials (2026-08-31, found running WT-12)
 

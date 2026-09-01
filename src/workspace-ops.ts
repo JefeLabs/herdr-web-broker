@@ -422,6 +422,34 @@ async function herdrWorkspaces(deps: OpsDeps, session: string): Promise<Map<stri
   return out;
 }
 
+/** Does herdr still have this workspace? The WRITER's counterpart to
+ * herdrWorkspaces, and deliberately not built on it.
+ *
+ * herdrWorkspaces degrades to an EMPTY MAP when the call fails or the method
+ * is absent, which is right for its three readers — they fall back to the
+ * index and keep working. A writer cannot use that contract: an empty map
+ * means both "herdr reaped everything" and "herdr never answered", and acting
+ * on the second erases the index of a herdr that merely lacks
+ * `workspace.list` (0.8.0 does), turning a degraded-but-working setup into
+ * total data loss.
+ *
+ * So this answers THREE states, not two:
+ *   true       herdr answered and still lists it   -> LIVE
+ *   false      herdr answered and does not         -> REAPED
+ *   undefined  herdr did not answer                -> NO OPINION
+ */
+async function workspaceStillLive(
+  deps: OpsDeps,
+  session: string,
+  workspaceId: string,
+): Promise<boolean | undefined> {
+  const res = (await deps.local.request(session, "workspace.list", {}, 5000).catch(() => undefined)) as
+    | { workspaces?: Array<Record<string, unknown>> }
+    | undefined;
+  if (!Array.isArray(res?.workspaces)) return undefined;
+  return res.workspaces.some((w) => w.workspace_id === workspaceId);
+}
+
 /** The ONE cwd lookup, shared by every caller: herdr's own view first, the
  * broker's index as fallback.
  *
@@ -1031,8 +1059,53 @@ async function stopAgent(deps: OpsDeps, session: string, p: Record<string, unkno
   // which is the whole of roadmap 31(b). This is the moment resume exists
   // for — an agent that stopped is exactly the one you want back.
   const ended = deps.agents.remove(session, pane);
-  const ws = deps.index.get(session, pane.split(":")[0]);
+  const wsId = pane.split(":")[0];
+  const ws = deps.index.get(session, wsId);
   if (ended) deps.resumable.record(session, ended, ws?.cwd, ws?.label);
+
+  // Roadmap 32's remaining half. herdr reaps a workspace when its last pane
+  // closes, and the pane.close above is routinely what closes it — so this is
+  // the only site that can notice. `deps.index.remove` is reached from just
+  // two places (broker.workspace.close, broker.worktree.remove) and a client
+  // that manages AGENTS has no reason to call either. Left alone the row is
+  // advertised by listWorkspaces forever, and every mode-B spawn into that id
+  // dies on `pane_not_found` permanently.
+  //
+  // Deliberately AFTER the archive above: resumable.record needs the cwd this
+  // row holds, and silently drops any conversation it cannot pair with one.
+  // Only a DEFINITE no from herdr acts. `undefined` is "no opinion", and it
+  // has to stay inert: a herdr without `workspace.list` (0.8.0) answers that
+  // way for every workspace it owns, so treating it as "reaped" would erase
+  // the whole index of a setup that works fine today — a far worse bug than
+  // the one being fixed, and the same trap that makes herdrWorkspaces the
+  // wrong helper to build this on.
+  if ((await workspaceStillLive(deps, session, wsId)) === false) {
+    try {
+      // The same cleanup broker.workspace.close performs, for its reasons.
+      // herdr took every pane in the workspace with it, so an agent row left
+      // behind is a transcript pointer at a pane id herdr is free to reuse —
+      // exactly what AgentIndex.removeWorkspace exists to prevent. Clearing
+      // the workspace row but not these would be the worst of the three
+      // options: it keeps the stale-pointer bug while reporting the
+      // workspace tidied. The conversations outlive the panes, so each one
+      // is archived on the way out (roadmap 31b); `ws` was read above, so
+      // the cwd they are keyed on is still in hand.
+      for (const meta of deps.agents.removeWorkspace(session, wsId)) {
+        deps.resumable.record(session, meta, ws?.cwd, ws?.label);
+      }
+      deps.index.remove(session, wsId);
+    } catch {
+      // The agent IS stopped: pane.close succeeded and its row is already
+      // gone. Bookkeeping trouble here — a read-only stateDir, the same
+      // class of failure prepareWorkspace and trustProject degrade on above
+      // — must not report that as a failed stop, because the caller's retry
+      // can only answer `no agent in pane` for a pane that is genuinely
+      // closed. Same postcondition reasoning as workspace.close's
+      // `closed: true`. The row survives to be cleared by the next stop in
+      // that workspace, or by an explicit DELETE .../workspaces/{id}.
+    }
+  }
+
   return { stopped: true, pane_id: pane, agent, kind };
 }
 
