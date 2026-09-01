@@ -48,6 +48,16 @@ export interface CliProfile {
     contents: Record<string, unknown>;
     perProject?: Record<string, unknown>;
   };
+  /** Screen markers proving the CLI started but cannot work — roadmap 33.
+   *
+   * Present ONLY for a kind whose banner someone has actually watched. Every
+   * other kind is absent and never probed, the same discipline `prepare`
+   * follows for CLIs whose config format is unverified: a guessed marker that
+   * false-matches fails a working spawn, which is worse than not looking.
+   *
+   * Matched against the VISIBLE pane right after the settle window. Any hit
+   * fails the spawn. */
+  unauthenticated?: { match: string[] };
   /** how long interactive_ready must HOLD before a spawn is believed */
   settleMs?: number;
   source: "builtin" | "config";
@@ -94,6 +104,16 @@ const BUILTIN: Array<Omit<CliProfile, "source">> = [
       // — the trap 25(e) closed for opencode's terminal.done.
       perProject: { hasTrustDialogAccepted: true },
     },
+    // WT-13, observed live 2026-08-31 (2.1.252): the redirect above relocates
+    // the CLI's whole config tree, credentials included, so a broker-spawned
+    // claude sits at this banner while agent.list calls it detected and idle.
+    // The wording is "Not logged in · Run /login" — NOT "Please run /login",
+    // which is what the roadmap prose said and what a matcher written from
+    // that prose would have failed to match, silently and forever.
+    // Only the unambiguous half is matched: a bare "/login" appears in help
+    // text and in anything a user types, and a false positive here fails a
+    // spawn that would have worked.
+    unauthenticated: { match: ["Not logged in"] },
     settleMs: 2500,
   },
   {

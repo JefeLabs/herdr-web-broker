@@ -31,6 +31,11 @@ const STATUS: Record<string, number> = {
   // the request, not a missing resource, so 400 rather than 404.
   resume_unsupported: 400,
   unknown_session_ref: 404,
+  // roadmap 33: the CLI started and is unusable — the broker's own config-dir
+  // redirect orphaned its credentials. 502 because the failure is in the
+  // thing downstream of us, not in the caller's request; the caller's remedy
+  // (POST .../env, then retry) has no 4xx in this table that fits.
+  agent_unauthenticated: 502,
 };
 
 /** Unknown codes are herdr passthrough errors → 502 per spec §6. */

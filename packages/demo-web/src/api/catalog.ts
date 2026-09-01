@@ -343,7 +343,11 @@ export const CATALOG: EndpointSpec[] = [
       "agent.start. Mode C: add worktree {branch, base?} with cwd to branch the repo into an ISOLATED " +
       "worktree checkout and run the agent there — the parallel-agents primitive (spawn N branches, merge " +
       "the winner). On agent_pane_busy the broker retries the same pane internally. Clean up with " +
-      "DELETE .../workspaces/{w} or DELETE .../worktrees/{w}. Response: agent is a STRING; status is top-level.",
+      "DELETE .../workspaces/{w} or DELETE .../worktrees/{w}. Response: agent is a STRING; status is top-level. " +
+      "A started-but-unusable agent is REFUSED rather than handed back: if the pane shows the CLI cannot " +
+      "authenticate, the spawn answers 502 agent_unauthenticated naming the marker it saw. The WORKSPACE " +
+      "survives that refusal by design and its id comes back in the error, so the fix is POST .../env with a " +
+      "credential and a mode-B retry into the same workspace — not a fresh one.",
     response: {
       type: "object",
       properties: {

@@ -967,6 +967,53 @@ async function spawn(deps: OpsDeps, session: string, p: Record<string, unknown>)
     }
   }
 
+  // Roadmap 33 / WT-13. The settle above proves the pane is ALIVE; nothing in
+  // it can tell alive from USABLE. A claude whose credentials the `prepare`
+  // redirect orphaned sits at `Not logged in · Run /login` and reports
+  // interactive_ready the entire time — so the loop that just passed is
+  // precisely the one making the wrong call, which is why the correction goes
+  // here rather than anywhere cheaper.
+  //
+  // Placed BEFORE agents.set below on purpose: a spawn that fails this records
+  // no agent row, so there is nothing to clean up — the same reason the settle
+  // failure above sits where it does.
+  //
+  // No pane teardown. On a mode-A spawn this pane is the workspace's ONLY one,
+  // so closing it would make herdr reap the workspace and the workspace_id
+  // handed back would be dead on arrival. Failing with both ids intact is the
+  // contract agent.start failures already honour (spec §2.1): set a credential
+  // with POST .../env and retry mode B into the SAME workspace.
+  const authMarkers = profile?.unauthenticated?.match;
+  if (authMarkers && authMarkers.length > 0) {
+    // `read.text` is NESTED. The envelope's own `.text` is undefined, which
+    // coerces to "" — that exact mistake cost WT-1 a false finding blaming a
+    // transport bug that did not exist.
+    const screen = (await deps.local
+      .request(session, "pane.read", { pane_id: paneId, source: "visible" }, 5000)
+      .catch(() => undefined)) as { read?: { text?: string } } | undefined;
+    const text = screen?.read?.text ?? "";
+    // No empty-read special case, deliberately: "" cannot contain a non-empty
+    // marker, so an unreadable or unpainted pane falls through to "no banner"
+    // on its own. That IS the degrade — a detection convenience must never
+    // fail a spawn that would otherwise have worked, and the cost of missing
+    // one is exactly today's behaviour, which is the floor either way.
+    // An explicit `text === ""` guard was written here first and removed once
+    // a mutation showed it could not change any outcome; a check that cannot
+    // fail reads as if empty were dangerous, which it is not.
+    const hit = authMarkers.find((m) => text.includes(m));
+    if (hit) {
+      deps.events?.emit("broker.agent.spawn_failed", { kind, code: "agent_unauthenticated", message: hit });
+      throw new BrokerError(
+        "agent_unauthenticated",
+        `the ${kind} in pane '${paneId}' started but is not authenticated — its pane reads ` +
+          `${JSON.stringify(hit)}. The broker points this CLI at its own config dir, which relocates the ` +
+          `CLI's credentials with it. Supply one for the spawn (POST .../env), then retry into workspace ` +
+          `'${workspaceId}'.`,
+        { workspace_id: workspaceId, pane_id: paneId },
+      );
+    }
+  }
+
   // Recorded only once the pane is confirmed to have survived its settle
   // window — a settle failure above must not leave a permanent orphan row
   // (nothing later removes it) for a pane that never became a live agent.

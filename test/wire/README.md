@@ -36,9 +36,9 @@ WT-3's answer already shipped and needs no probe: `src/cli-profiles.ts`'s
 `opencode` profile (`via: "sqlite"`) and `src/transcript.ts`'s
 `parseOpencode`.
 | WT-12 | does the BROKER's mode D reattach, end to end? WT-11 answered the CLI question by passing `args` straight through; this drives roadmap 31's OWN machinery — archive the id when the pane dies, surface it on `/resumable`, resolve it back to a kind and a directory, assemble an argv that keeps the pin. Three things it must establish: the conversation IS archived when its pane closes; resuming by id with NO cwd lands in the conversation's own directory (the CLI keys transcripts on the path, so anywhere else reattaches nothing); and the resumed agent produces a token it was given before the pane died. API-level throughout — it reads nothing off disk and uses `ask`, so there is no screen to misread and no config dir to resolve | roadmap 31 stays unverified end to end: the unit tests prove the argv, only this proves the conversation came back |
-| WT-13 | how is a broker-spawned claude supposed to AUTHENTICATE? Found 2026-08-31: it is not. `prepare` redirects `CLAUDE_CONFIG_DIR` to a broker-owned dir, and that relocates the whole config tree — credentials included — so every spawned claude reports `Not logged in · Please run /login` and finishes each turn in ~0s writing `<synthetic>` assistant rows. The env registry (`POST .../env` with `ANTHROPIC_API_KEY`) is the mechanism the broker ships, but nothing states claude REQUIRES it, and the redirect silently orphans an already-authenticated user. Open: whether an API key through /env is the intended answer, whether `prepare` should copy or inherit credentials, and what a spawn should do when it can detect the agent is logged out | WT-11(1) and WT-12 both stay unanswerable, `ask` stays unproven against any live agent, and every broker-spawned claude is a no-op that looks like a working one |
+| WT-13 | ~~how is a broker-spawned claude supposed to AUTHENTICATE?~~ **PROBE RUN 2026-08-31 (`claude-auth.wire.ts`), the DETECTION half answered; the auth half still open.** Observed on 2.1.252: the pane reads `Not logged in · Run /login` — **"Run", not "Please run"**, which is the wording this item's prose carried and which a matcher written from that prose would never have matched. At the same instant `agent.list` reported `{id, title:"claude", status:"idle"}` and the spawn returned `status:"idle"`: green throughout. Spawn now REFUSES such an agent (`502 agent_unauthenticated`), keeping the workspace so a credentialed mode-B retry can use it — verified live end to end. Still open, and needing a decision rather than a probe: whether `ANTHROPIC_API_KEY` via `POST .../env` is the intended answer, and whether `prepare` should inherit credentials instead of orphaning them | original: how is a broker-spawned claude supposed to AUTHENTICATE? Found 2026-08-31: it is not. `prepare` redirects `CLAUDE_CONFIG_DIR` to a broker-owned dir, and that relocates the whole config tree — credentials included — so every spawned claude reports `Not logged in · Please run /login` and finishes each turn in ~0s writing `<synthetic>` assistant rows. The env registry (`POST .../env` with `ANTHROPIC_API_KEY`) is the mechanism the broker ships, but nothing states claude REQUIRES it, and the redirect silently orphans an already-authenticated user. Open: whether an API key through /env is the intended answer, whether `prepare` should copy or inherit credentials, and what a spawn should do when it can detect the agent is logged out | WT-11(1) and WT-12 both stay unanswerable, `ask` stays unproven against any live agent, and every broker-spawned claude is a no-op that looks like a working one |
 
-WT-6, WT-10 and WT-13 have NO PROBE FILE. **WT-12's is written and RAN on
+WT-6 and WT-10 have NO PROBE FILE (WT-13 gained one 2026-08-31). **WT-12's is written and RAN on
 2026-08-31, but could not reach its question**: the seeding `ask` returned
 `agent_unresponsive` with `evidence: "transcript"` — the agent finished a
 turn and wrote no answer file, because it was not logged in (WT-13). That run
@@ -192,6 +192,28 @@ the copilot `cwd -> session_id` query resolves and its negative control comes
 back empty — so the machinery that defeated WT-1 and WT-2 is already ruled
 out. What remains unverified is the half only a spawn can reach: what a
 FRESHLY created session writes. Do not record either answer until they run.
+
+## Running a probe from inside a Claude Code session poisons the spawns
+
+WT-13's pane carried a second line nobody was looking for:
+
+    ⚠ Transcript saving is off — inherited CLAUDE_CODE_CHILD_SESSION marker
+
+That is the PROBE's environment, not the broker's doing. `CLAUDE_CODE_CHILD_SESSION`
+is set inside a Claude Code session; a broker daemon started from such a shell
+inherits it, the spawned pane inherits it from the daemon, and the spawned
+claude then writes NO transcript at all.
+
+It matters beyond one stray warning, because the broker's entire evidence tier
+reads transcripts. A probe run this way measures a claude that cannot leave
+evidence, and `readTurnState` finding nothing is indistinguishable from an
+agent that produced nothing — an instrument reading zero, the failure this
+directory keeps rediscovering. WT-10 (token counts) and WT-11's sub-question 1
+(does resume reattach context?) are both transcript-derived and would be
+measuring an empty file.
+
+Start the daemon from a plain shell, or unset the marker, before trusting any
+transcript-derived reading.
 
 ## A probe that spawns agents contaminates its own later trials
 

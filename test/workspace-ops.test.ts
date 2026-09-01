@@ -2192,3 +2192,117 @@ test("a herdr that cannot answer workspace.list keeps every index row", async ()
     await t.teardown();
   }
 });
+
+// ── Logged-out agent detection (roadmap 33 / WT-13) ───────────────────────
+
+test("a spawn whose agent reports it is not logged in FAILS instead of looking green", async () => {
+  // Roadmap 33, observed live 2026-08-31 (WT-13). `prepare` redirects
+  // CLAUDE_CONFIG_DIR so a trust dialog stays in the broker's blast radius,
+  // and that relocates the CLI's WHOLE config tree — credentials with it. The
+  // pane then reads `Not logged in · Run /login` while every signal the broker
+  // has stays green: agent.list says detected and idle, agent.prompt succeeds,
+  // and each turn "completes" in ~0s into <synthetic> rows. A silently useless
+  // agent is the expensive failure; a loud one is cheap.
+  const t = await setup();
+  try {
+    const cwd = scratchRepo();
+    t.fake.handlers.set("workspace.create", () => ({ root_pane: { pane_id: "w2:p1" } }));
+    t.fake.handlers.set("agent.start", () => ({ type: "agent_started" }));
+    // claude's prepare block always yields CLAUDE_CONFIG_DIR, so spawn's
+    // env-injection path (drop file + send_input) runs for this kind.
+    t.fake.handlers.set("pane.send_input", () => ({ type: "ok" }));
+    // The REAL banner, copied from the WT-13 run. Note the wording is
+    // "Run /login", not "Please run /login" as the item's prose had it —
+    // which is why the matcher was written from an observation.
+    t.fake.handlers.set("pane.read", () => ({
+      type: "pane_read",
+      read: { text: "  ⏸ manual mode on · ? for shortcuts        Not logged in · Run /login" },
+    }));
+
+    await assert.rejects(
+      runBrokerMethod(t.deps, "default", "broker.agent.spawn", { kind: "claude", cwd }),
+      (e: BrokerError) =>
+        e.code === "agent_unauthenticated" &&
+        // the workspace survives, so a caller can set a key and retry mode B
+        // into it rather than leaking it — the same contract agent.start
+        // failures already honour
+        e.details.workspace_id === "w2" &&
+        e.details.pane_id === "w2:p1",
+    );
+    assert.equal(
+      t.deps.agents.get("default", "w2:p1"),
+      undefined,
+      "no agent row for an agent that never became usable",
+    );
+  } finally {
+    await t.teardown();
+  }
+});
+
+test("a spawn whose pane shows no auth banner is untouched by the check", async () => {
+  const t = await setup();
+  try {
+    const cwd = scratchRepo();
+    t.fake.handlers.set("workspace.create", () => ({ root_pane: { pane_id: "w2:p1" } }));
+    t.fake.handlers.set("agent.start", () => ({ type: "agent_started" }));
+    t.fake.handlers.set("pane.send_input", () => ({ type: "ok" }));
+    t.fake.handlers.set("pane.read", () => ({ type: "pane_read", read: { text: "❯ ready" } }));
+
+    const out = (await runBrokerMethod(t.deps, "default", "broker.agent.spawn", {
+      kind: "claude",
+      cwd,
+    })) as { pane_id: string };
+    assert.equal(out.pane_id, "w2:p1");
+    assert.equal(t.deps.agents.get("default", "w2:p1")?.kind, "claude", "the agent row is recorded as usual");
+  } finally {
+    await t.teardown();
+  }
+});
+
+test("a pane.read the broker cannot get never fails a spawn that otherwise worked", async () => {
+  // Same degrade contract as prepareWorkspace and trustProject: a detection
+  // convenience must not take down a spawn that would have succeeded. The
+  // cost of degrading is today's behaviour, which is the floor anyway.
+  const t = await setup();
+  try {
+    const cwd = scratchRepo();
+    t.fake.handlers.set("workspace.create", () => ({ root_pane: { pane_id: "w2:p1" } }));
+    t.fake.handlers.set("agent.start", () => ({ type: "agent_started" }));
+    t.fake.handlers.set("pane.send_input", () => ({ type: "ok" }));
+    t.fake.handlers.set("pane.read", () => {
+      throw new FakeHerdrError("upstream_error", "pane read exploded");
+    });
+
+    const out = (await runBrokerMethod(t.deps, "default", "broker.agent.spawn", {
+      kind: "claude",
+      cwd,
+    })) as { pane_id: string };
+    assert.equal(out.pane_id, "w2:p1");
+  } finally {
+    await t.teardown();
+  }
+});
+
+test("a kind with no verified auth banner is never probed for one", async () => {
+  // Same discipline as `prepare`, which is absent for every kind whose config
+  // format is unverified: guessing a banner for a CLI nobody has watched would
+  // fail working spawns on a false match, which is worse than not looking.
+  const t = await setup();
+  try {
+    const cwd = scratchRepo();
+    t.fake.handlers.set("workspace.create", () => ({ root_pane: { pane_id: "w2:p1" } }));
+    t.fake.handlers.set("agent.start", () => ({ type: "agent_started" }));
+    t.fake.handlers.set("pane.read", () => ({
+      type: "pane_read",
+      read: { text: "Not logged in · Run /login" },
+    }));
+
+    await runBrokerMethod(t.deps, "default", "broker.agent.spawn", { kind: "copilot", cwd });
+    assert.ok(
+      !t.fake.received.some((r) => r.method === "pane.read"),
+      "copilot has no unauthenticated block, so the pane is never read",
+    );
+  } finally {
+    await t.teardown();
+  }
+});

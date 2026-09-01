@@ -885,6 +885,8 @@ with more evidence behind it. These are the two it was right about.
 ## Agent credentials (2026-08-31, found running WT-12)
 
 33. **A broker-spawned `claude` is not logged in, and nothing says so.**
+    **"Nothing says so" fixed 2026-08-31 — spawn now refuses. The
+    credential question is still open; see the end of this item.**
     Every one of them. `prepare` redirects `CLAUDE_CONFIG_DIR` to a
     broker-owned directory so a trust dialog is answered inside the
     broker's blast radius rather than the user's global config — and that
@@ -922,8 +924,58 @@ with more evidence behind it. These are the two it was right about.
     orphaning them; and whether spawn should DETECT a logged-out agent and
     fail loudly instead of handing back a green pane. The last one matters
     most — a wrong answer is cheap to fix, a silently useless agent is not.
-    Registered as **WT-13**, no probe file. Blocks WT-11's sub-question 1
-    and all of WT-12.
+    Registered as **WT-13**. **Probe written and RUN 2026-08-31**
+    (`test/wire/claude-auth.wire.ts`), against claude 2.1.252 on a live
+    herdr.
+    **The prose above was wrong about the wording, and that is the whole
+    argument for probing.** The pane reads `Not logged in · Run /login` —
+    "Run", not "Please run". A matcher written from this item's own text
+    would have compiled, passed its unit tests against a fixture copied
+    from the same text, and never matched a real agent. The shipped
+    matcher is a verbatim observation instead, and only the unambiguous
+    half of it: a bare `/login` occurs in help output and in anything a
+    user types, and a false positive here FAILS a working spawn.
+    Confirmed in the same run, at the same instant: `agent.list` said
+    `{id, title: "claude", status: "idle"}` and the spawn returned
+    `status: "idle"`. Green throughout, for an agent that cannot work.
+    **What shipped.** `cli-profiles` gains `unauthenticated: {match}` —
+    present ONLY for claude, absent and never probed for every other kind,
+    the same discipline `prepare` follows for unverified config formats.
+    Spawn reads the pane once after the settle window, which is free: the
+    settle already waited, and it is the very loop returning the false
+    green, so the correction belongs there rather than anywhere cheaper.
+    A hit throws `agent_unauthenticated` (502) naming the marker and the
+    remedy.
+    **Two placement decisions carry the design.** The check sits BEFORE
+    `agents.set`, so a refused spawn records no row and there is nothing to
+    clean up — the same reason the settle failure sits where it does. And
+    it does NOT close the pane: on a mode-A spawn that pane is the
+    workspace's only one, so closing it makes herdr reap the workspace and
+    the `workspace_id` handed back would be dead on arrival. Failing with
+    both ids intact is spec §2.1's existing contract — set a credential
+    with `POST .../env`, retry mode B into the SAME workspace. Verified
+    live: the refusal carried `w5`, and `w5` was still listed afterwards.
+    Degrades like its neighbours: an unreadable pane proceeds exactly as
+    before, and an EMPTY read is treated as an instrument at zero rather
+    than as proof of health.
+    **Still open, and needing a decision rather than a probe:** whether
+    `ANTHROPIC_API_KEY` through the env registry is the intended answer for
+    a subscription-authenticated user, and whether `prepare` should inherit
+    or copy credentials instead of orphaning them. Detection was taken
+    first on this item's own reasoning — a wrong credential answer is cheap
+    to fix, a silently useless agent is not — and it does not settle
+    either question. WT-11's sub-question 1 and WT-12 stay blocked on them,
+    and `ask` is still unproven against any live agent.
+    **One hazard found on the way, and it is the probe's, not the
+    broker's.** The spawned pane also read `Transcript saving is off —
+    inherited CLAUDE_CODE_CHILD_SESSION marker`. That variable is set
+    inside a Claude Code session; a daemon started from such a shell passes
+    it to every pane, and the spawned claude then writes no transcript at
+    all. Every transcript-derived measurement — WT-10's token counts,
+    WT-11's reattachment question, the whole evidence tier — would be
+    reading an empty file and could not tell that from an agent that
+    produced nothing. Recorded in the wire README; run probes from a plain
+    shell.
 
 ## Blocked on herdr (needs a live schema probe)
 
@@ -1067,10 +1119,11 @@ The numbered roadmap ran 29 of 29 as of 2026-08-29 — every item closed,
 deferred with a stated condition, or documented, and nothing waiting on an
 answer. **Items 30-33 opened it back up on 2026-08-30/31.** 31 and 32 are
 built; 30 (usage and cost) is unbuilt because nobody asked, with a first
-slice named in its own entry. **Take 33 first** — a broker-spawned claude is
-logged out and every signal the broker has says otherwise, which makes it the
-only open item that can make other work draw wrong conclusions, as it already
-did twice. 31(f)'s push detection landed 2026-08-31
+slice named in its own entry. **33's detection half landed 2026-08-31** — a broker-spawned claude is still
+logged out, but the broker now refuses the spawn instead of handing back a
+green pane, so it can no longer make other work draw wrong conclusions the way
+it did twice. What remains of it is the credential decision, which blocks
+WT-11(1) and WT-12. 31(f)'s push detection landed 2026-08-31
 (`workspace.closed`); its boot-time reconciliation stays a deliberate loose
 thread, and neither 31 nor 32 substituted for that half.
 
